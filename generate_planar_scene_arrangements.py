@@ -17,12 +17,12 @@ from pydrake.all import (
     Box,
     CollisionElement,
     FloatingBaseType,
-    RigidBody,
     RigidBodyFrame,
     RigidBodyTree,
     RollPitchYawFloatingJoint,
     VisualElement
 )
+from pydrake.multibody.rigid_body import RigidBody
 from underactuated import PlanarRigidBodyVisualizer
 
 '''
@@ -56,18 +56,18 @@ object_adders = {
     "small_box": lambda rbt, name, frame: add_cube(
         rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
         color=[1., 0., 0., 1.]),
-    "long_box": lambda rbt, name, frame: add_cube(
-        rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
-        color=[0., 1., 0., 1.])
+    #"long_box": lambda rbt, name, frame: add_cube(
+    #    rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
+    #    color=[0., 1., 0., 1.])
 }
 
 
-def sample_scene_prefer_sorted_grid():
+def sample_scene_prefer_sorted_grid(min_num_objects=1, max_num_objects=10):
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
 
-    num_objects = np.random.randint(10)+1
+    num_objects = np.random.randint(min_num_objects, max_num_objects+1)
     rbt_summary["n_objects"] = num_objects
     for i in range(num_objects):
         class_ind = np.random.randint(len(object_adders.keys()))
@@ -100,12 +100,12 @@ def sample_scene_prefer_sorted_grid():
     return rbt, q0, rbt_summary
 
 
-def sample_scene_uniform_random():
+def sample_scene_uniform_random(min_num_objects=1, max_num_objects=10):
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
 
-    num_objects = np.random.randint(10)+1
+    num_objects = np.random.randint(min_num_objects, max_num_objects+1)
     rbt_summary["n_objects"] = num_objects
     for i in range(num_objects):
         class_ind = np.random.randint(len(object_adders.keys()))
@@ -196,7 +196,7 @@ def main(stdscr, args):
         for k in range(args.n_arrangements):
             has_no_collision = False
             while has_no_collision is False:
-                rbt, q0, rbt_summary = sample_scene_prefer_sorted_grid()
+                rbt, q0, rbt_summary = sample_scene_uniform_random(args.min_num_objects, args.max_num_objects)
 
                 # Check collision distances
                 kinsol = rbt.doKinematics(q0)
@@ -236,6 +236,14 @@ if __name__ == "__main__":
                         type=int,
                         default=1000,
                         help="Number of arrangements to generate.")
+    parser.add_argument("--min_num_objects",
+                        type=int,
+                        default=1,
+                        help="Min number of objects in a scene.")
+    parser.add_argument("--max_num_objects",
+                        type=int,
+                        default=10,
+                        help="Max number of objects in a scene.")
     parser.add_argument("-o", "--output_file",
                         type=str,
                         default=default_output_file,
@@ -248,11 +256,6 @@ if __name__ == "__main__":
                         default=int(time.time()*1000) % (2**32 - 1),
                         help="Random seed for rng, "
                              "including scene generation.")
-    parser.add_argument("--save_dir",
-                        type=str,
-                        default="",
-                        help="Directory to save depth diagnostic images."
-                             " If not specified, does not save images.")
     parser.add_argument("--draw",
                         action="store_true",
                         help="Draw as we go? (Slow)")
