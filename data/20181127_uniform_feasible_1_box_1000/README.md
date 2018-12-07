@@ -1,0 +1,6 @@
+20181127: 1000 1x1 boxes, generated randomly over
+[0:1, 0:1, 0:2pi], with uniformly randomly between
+0 and 10 of them.
+
+20181207: Same, but geometric distribution with p=0.5
+# of boxes, rather than uniform random.
