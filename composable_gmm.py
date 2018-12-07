@@ -178,7 +178,8 @@ class ComposableGMM(GaussianMixture):
                              y.__class__.__name__)
 
     def plot(self, ax, **kwargs):
-        plot_ellipses(ax, self.weights_, self.means_, self.covariances_, **kwargs)
+        plot_ellipses(ax, self.weights_ / (2*max(self.weights_)),
+                      self.means_, self.covariances_, **kwargs)
 
 
 if __name__ == "__main__":

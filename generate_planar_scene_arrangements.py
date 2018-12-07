@@ -56,9 +56,9 @@ object_adders = {
     "small_box": lambda rbt, name, frame: add_cube(
         rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
         color=[1., 0., 0., 1.]),
-    #"long_box": lambda rbt, name, frame: add_cube(
-    #    rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
-    #    color=[0., 1., 0., 1.])
+    "long_box": lambda rbt, name, frame: add_cube(
+        rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
+        color=[0., 1., 0., 1.])
 }
 
 
