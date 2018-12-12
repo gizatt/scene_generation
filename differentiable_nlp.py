@@ -6,6 +6,9 @@ import numpy as np
 import random
 import sys
 
+import torch
+from torch.autograd.function import once_differentiable
+
 from pydrake.all import (AutoDiffXd,
                          GurobiSolver,
                          RigidBodyTree)
@@ -92,6 +95,7 @@ def objects_completely_within_bounds_constraint_constructor_factory(x_min, x_max
 
     return functools.partial(build_constraint, x_min=xmin, x_max=x_max)
 
+
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
     # Interface for extra_constraint_constructors:
     #  constraints += extra_constraint_constructor(rbt)
@@ -171,6 +175,62 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
             # No null space so movements
             dqf_dq0 = np.eye(qf.shape[0])
     return qf, info, dqf_dq0
+
+
+class projectToFeasibilityWithIKTorch(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, q0, rbt, constraints):
+        # q0 being a tensor, rbt and constraints being inputs
+        # to projectToFeasibilityWithIK
+        qf, info, dqf_dq0 = projectToFeasibilityWithIK(
+            rbt, q0.cpu().detach().numpy(), constraints)
+
+        ctx.save_for_backward(qf, info, dqf_dq0)
+        return torch.Tensor(qf)
+
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad):
+        print "I didn't check this yet"
+        return torch.Tensor(dqf_dq0)
+
+
+def approximate_differentiable_manifold_projection_as_multivariate_normal(
+        projection_operator, q0, within_manifold_variance,
+        null_space_variance):
+    """
+    Given a 1-differentiable manifold projection operator that projects
+    from `$q \\in R^N$` to another point `$\\hat{q} \\in $R^N$`,
+    and given an initial point `$q_0$`, and given weights
+    representing downstream uncertainty about points being both
+    off the manifold and along the manifold chart, models
+    the manifold projection operation as a multivariate gaussian
+    with mean `$\\hat{q}$` and variance based on the local chart
+    and the given scaling parameters.
+
+
+    TODO: establish an interface for the
+    feasibility projection operator + the things it needs to tell me.
+    (For example, just knowing the 1st derivative of the projection,
+    dqhat_dq, might be enough, but I'd have to work a little to
+    back out the nullspace -- which I already calculate in the
+    middle of the feasibility projection method itself. SVD is
+    not *that* expensive... but it's still awkward?)
+
+    :param torch.autograd.Function projection_operator:
+        Function that performs projection. Must be once-differentiable --
+        the local chart (as viewed as a mapping between movements in the
+        ambient space and changes in the projected point -- dqhat/dq)
+        is encoded as its first derivative.
+    :param torch.tensor q0: N-dimensional input to projection_operator that
+        represents a point before projection.
+    :param torch.tensor within_manifold_variance: variance within the
+        chart directions.
+    :param torch.tensor null_space_variance: variance in the null space
+        of the projection (off-manifold).
+    :return pyro.distributions.MultivariateNormal
+    """
+    return dist.MultivariateNormal(aaah, aaAAAH)
 
 
 def projectToFeasibilityWithNLP(rbt, q0, board_width, board_height):
