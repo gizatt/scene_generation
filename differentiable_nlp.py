@@ -59,8 +59,8 @@ def nullspace(A, atol=1e-13, rtol=0):
     return ns
 
 
-def object_origins_within_bounds_constraint_constructor_factory(x_min, x_max):
-    
+def object_origins_within_bounds_constraint_constructor_factory(
+        x_min, x_max):
     def build_constraint(rbt, x_min, x_max):
         constraints = []
         for body_i in range(rbt.get_num_bodies()-1):
@@ -76,8 +76,8 @@ def object_origins_within_bounds_constraint_constructor_factory(x_min, x_max):
     return functools.partial(build_constraint, x_min=x_min, x_max=x_max)
 
 
-def objects_completely_within_bounds_constraint_constructor_factory(x_min, x_max):
-    
+def objects_completely_within_bounds_constraint_constructor_factory(
+        x_min, x_max):
     def build_constraint(rbt, x_min, x_max):
         constraints = []
         for body_i in range(rbt.get_num_bodies()-1):
@@ -96,16 +96,33 @@ def objects_completely_within_bounds_constraint_constructor_factory(x_min, x_max
     return functools.partial(build_constraint, x_min=xmin, x_max=x_max)
 
 
-def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
-    # Interface for extra_constraint_constructors:
-    #  constraints += extra_constraint_constructor(rbt)
-    # (should return constraint list and accept rbt)
-    constraints = []
+def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
+                               verbose=False):
+    '''
+    Given:
+    - a Rigid Body Tree (rbt)
+    - a pose (q0, with q0.shape == [rbt.get_num_positions(), 1])
+    - a list of extra constraint constructors that each
+        return a list of RigidBodyConstraints when given
+        an RBT (see just above for some examples)
+    Returns:
+    - qf: The nearest pose that satisfies a MinDistanceConstraint plus
+    all of the listed extra constraints, using RigidBodyTree IK
+    (which is a nonlinear optimization under the hood, probably using
+    SNOPT or IPOPT).
+    - dqf_dq0: A local estimate of how the solution changes w.r.t.
+    the initial configuration, by inspecting the null space
+    of the optimization at the solution point.
+    - constraint_violation_directions: A set of basis vectors that
+    *positively* span the constrained space at the solution point.
+    - constraint_allowance_directions: A set of basis vectors that
+    *positively* span the null space at the solution point.
+    '''
 
+    constraints = []
     constraints.append(ik.MinDistanceConstraint(
         model=rbt, min_distance=0.01, active_bodies_idx=[],
         active_group_names=set()))
-
     for extra_constraint_constructor in extra_constraint_constructors:
         constraints += extra_constraint_constructor(rbt)
 
@@ -119,7 +136,8 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
     qf = results.q_sol[0]
     info = results.info[0]
     dqf_dq0 = np.eye(qf.shape[0])
-    #if info != 1:
+    constraint_violation_directions = []
+    # if info != 1:
     #    print("Warning: returned info = %d != 1" % info)
     if True or info == 1 or info == 100:
         # We've solved an NLP of the form:
@@ -128,7 +146,6 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
         #
         # which projects q_0 into the feasible set $phi(q) >= 0$.
         # We want to return the gradient of qf w.r.t. q_0.
-
         # We'll tackle an approximation of this (which isn't perfect,
         # but is a start):
         # We'll build a linear approximation of the active set at
@@ -136,7 +153,11 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
         # the null space of this active set.
 
         # These vectors all point in directions that would
-        # bring q off of the constraint surfaces.
+        # bring q off of the constraint surfaces into
+        # illegal space.
+        # They *positively* span the infeasible space -- that is,
+        # they all point into it, and if there's not a vector pointing
+        # in a particular direction, that is feasible space.
         constraint_violation_directions = []
 
         cache = rbt.doKinematics(qf)
@@ -148,52 +169,95 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[]):
             phi_ub = ub - c
             for k in range(c.shape[0]):
                 if phi_lb[k] < -1E-6 or phi_ub[k] < -1E-6:
-                    print("Bounds violation detected, "
-                          "solution wasn't feasible")
-                    print("%f <= %f <= %f" % (lb[k], c[k], ub[k]))
-                    print("Constraint type ", type(constraint))
-                    return qf, info, dqf_dq0
+                    if verbose:
+                        print("Bounds violation detected, "
+                              "solution wasn't feasible")
+                        print("%f <= %f <= %f" % (lb[k], c[k], ub[k]))
+                        print("Constraint type ", type(constraint))
+                    return qf, info, dqf_dq0, constraint_violation_directions
 
+                # If ub = lb and ub is active, then lb is also active,
+                # and we'll have double-added this vector. But this is
+                # OK since we care about positive span.
                 if phi_lb[k] < 1E-6:
                     # Not allowed to go down
                     constraint_violation_directions.append(-dc[k, :])
-
-                # If ub = lb and ub is active, then lb is also active,
-                # and we don't need to double-add this vector.
-                if phi_ub[k] < 1E-6 and phi_ub[k] != phi_lb[k]:
-                    # Not allowed to go up
+                if phi_ub[k] < 1E-6:
+                    # Not allowed to go down
                     constraint_violation_directions.append(dc[k, :])
 
         # Build a full matrix C(q0_new - qstar) = 0
         # that approximates the feasible set.
         if len(constraint_violation_directions) > 0:
-            C = np.vstack(constraint_violation_directions)
-            ns = nullspace(C)
+            constraint_violation_directions = np.vstack(
+                constraint_violation_directions)
+            ns = nullspace(constraint_violation_directions)
             dqf_dq0 = np.eye(qf.shape[0])
             dqf_dq0 = np.dot(np.dot(dqf_dq0, ns), ns.T)
         else:
             # No null space so movements
             dqf_dq0 = np.eye(qf.shape[0])
-    return qf, info, dqf_dq0
+
+    if len(constraint_violation_directions) == 0:
+        constraint_violation_directions = np.zeros([0, qf.shape[0]])
+
+    return qf, info, dqf_dq0, constraint_violation_directions
 
 
 class projectToFeasibilityWithIKTorch(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q0, rbt, constraints):
+    def forward(ctx, q0, rbt, constraints, gamma=0.01):
         # q0 being a tensor, rbt and constraints being inputs
         # to projectToFeasibilityWithIK
-        qf, info, dqf_dq0 = projectToFeasibilityWithIK(
-            rbt, q0.cpu().detach().numpy(), constraints)
+        qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
+            rbt, q0.cpu().detach().numpy().copy(), constraints)
+        qf = qf.reshape(-1, 1)
 
-        ctx.save_for_backward(qf, info, dqf_dq0)
-        return torch.Tensor(qf)
+        ctx.save_for_backward(
+            torch.tensor(qf, dtype=q0.dtype),
+            torch.tensor(dqf_dq0, dtype=q0.dtype),
+            torch.tensor(viol_dirs, dtype=q0.dtype),
+            torch.tensor(gamma))
+        return torch.tensor(qf, dtype=q0.dtype, requires_grad=q0.requires_grad)
 
     @staticmethod
     @once_differentiable
     def backward(ctx, grad):
-        print "I didn't check this yet"
-        return torch.Tensor(dqf_dq0)
+        qf, dqf_dq0, viol_dirs, gamma = ctx.saved_tensors
 
+        # Basic gradient descent:
+        # "Regularize" the gradient a bit by suggesting
+        # a little off-axis movement
+        regularized_dqf_dq0 = (
+            torch.eye(qf.shape[0], dtype=grad.dtype)*gamma
+            + (1. - gamma)*dqf_dq0)
+        return (torch.mm(
+                    regularized_dqf_dq0,
+                    grad.view(-1, 1)),
+                None, None, None)
+
+        '''
+        This is dumb, wasn't a good idea.
+        This assumes that the gradient is being asked for in the
+        direction that descent is going to happen.
+        This kind of logic is needed at the gradient descent implementation
+        level.
+        # Do projection into the violation directions to figure out
+        # what gradient directions are "illegal", and remove only
+        # those directions.
+        # viol dirs is N x nq
+        grad_out = grad.clone()
+        viol_dirs_t = torch.t(viol_dirs)
+        # I think this has to be done iteratively to not
+        # overcount / doublecount violations that are are in the
+        # same direction -- viol dirs are not necessarily
+        # all pointing in different dirs.
+        for k in range(viol_dirs.shape[0]):
+            grad_projection = torch.dot(viol_dirs_t[:, k].flatten(), grad_out.flatten())
+            if grad_projection > 0:
+                grad_out -= grad_projection*viol_dirs_t[:, k].view(-1, 1)
+        return (grad_out, None, None)
+        '''
 
 def approximate_differentiable_manifold_projection_as_multivariate_normal(
         projection_operator, q0, within_manifold_variance,

@@ -135,7 +135,8 @@ def build_rbt_from_summary(rbt_summary):
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
 
-    num_objects = rbt_summary["n_objects"]
+    num_objects = int(rbt_summary["n_objects"])
+    q0 = np.zeros(6*num_objects)
     for i in range(num_objects):
         obj = rbt_summary["obj_%04d" % i]
         class_name = obj["class"]
@@ -143,15 +144,16 @@ def build_rbt_from_summary(rbt_summary):
         pose = obj["pose"]
         object_init_frame = RigidBodyFrame(
             "%s_init_frame" % full_name, rbt.world(),
-            [pose[0], pose[1], 0.5],
-            [0., 0., pose[2]])
+            [0., 0., 0.5],
+            [0., 0., 0.])
+        q0[(i*6):(i*6+6)] = np.array([
+            pose[0], pose[1], 0.5, 0., 0., pose[2]])
         object_adders[class_name](rbt, full_name, object_init_frame)
 
     rbt.compile()
 
-    q0 = np.zeros(rbt.get_num_positions())
-
     return rbt, q0
+
 
 def draw_board_state(ax, rbt, q):
     Tview = np.array([[1., 0., 0., 0.],
