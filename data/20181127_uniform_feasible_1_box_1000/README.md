@@ -4,3 +4,5 @@
 
 20181207: Same, but geometric distribution with p=0.5
 # of boxes, rather than uniform random.
+
+20181214: Same, but exactly 2 of them.

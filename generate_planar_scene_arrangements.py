@@ -62,11 +62,13 @@ object_adders = {
 }
 
 
-def sample_scene_prefer_sorted_grid(p=0.5):
+def sample_scene_prefer_sorted_grid(p=0.5, num_objects=None):
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
 
+    if num_objects is None:
+        num_objects = np.random.geometric(p)
     num_objects = np.random.geometric(p)
     rbt_summary["n_objects"] = num_objects
     for i in range(num_objects):
@@ -100,12 +102,13 @@ def sample_scene_prefer_sorted_grid(p=0.5):
     return rbt, q0, rbt_summary
 
 
-def sample_scene_uniform_random(p=0.5):
+def sample_scene_uniform_random(p=0.5, num_objects=None):
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
 
-    num_objects = np.random.geometric(p)
+    if num_objects is None:
+        num_objects = np.random.geometric(p)
     rbt_summary["n_objects"] = num_objects
     for i in range(num_objects):
         class_ind = np.random.randint(len(object_adders.keys()))
@@ -198,7 +201,8 @@ def main(stdscr, args):
         for k in range(args.n_arrangements):
             has_no_collision = False
             while has_no_collision is False:
-                rbt, q0, rbt_summary = sample_scene_uniform_random(args.geometric_p)
+                rbt, q0, rbt_summary = sample_scene_uniform_random(
+                    args.geometric_p, args.num_objects)
 
                 # Check collision distances
                 kinsol = rbt.doKinematics(q0)
@@ -242,6 +246,10 @@ if __name__ == "__main__":
                         type=int,
                         default=0.5,
                         help="p for the geometric distrib for spawning a new object.")
+    parser.add_argument("--num_objects",
+                        type=int,
+                        default=None,
+                        help="Number of objects to spawn in a scene. Overrides geometric distrib.")
     parser.add_argument("-o", "--output_file",
                         type=str,
                         default=default_output_file,

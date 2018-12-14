@@ -9,6 +9,9 @@ import sys
 import torch
 from torch.autograd.function import once_differentiable
 
+import pyro
+import pyro.distributions as dist
+
 from pydrake.all import (AutoDiffXd,
                          GurobiSolver,
                          RigidBodyTree)
@@ -267,10 +270,13 @@ class projectToFeasibilityWithIKTorch(torch.autograd.Function):
         return (grad_out, None, None)
         '''
 
-def approximate_differentiable_manifold_projection_as_multivariate_normal(
-        projection_operator, q0, within_manifold_variance,
+
+def projectToFeasibilityWithIKAsDistribution(
+        q0, within_manifold_variance,
         null_space_variance):
     """
+    TODO: update this properly as I write this out
+
     Given a 1-differentiable manifold projection operator that projects
     from `$q \\in R^N$` to another point `$\\hat{q} \\in $R^N$`,
     and given an initial point `$q_0$`, and given weights
@@ -279,15 +285,6 @@ def approximate_differentiable_manifold_projection_as_multivariate_normal(
     the manifold projection operation as a multivariate gaussian
     with mean `$\\hat{q}$` and variance based on the local chart
     and the given scaling parameters.
-
-
-    TODO: establish an interface for the
-    feasibility projection operator + the things it needs to tell me.
-    (For example, just knowing the 1st derivative of the projection,
-    dqhat_dq, might be enough, but I'd have to work a little to
-    back out the nullspace -- which I already calculate in the
-    middle of the feasibility projection method itself. SVD is
-    not *that* expensive... but it's still awkward?)
 
     :param torch.autograd.Function projection_operator:
         Function that performs projection. Must be once-differentiable --
@@ -303,12 +300,3 @@ def approximate_differentiable_manifold_projection_as_multivariate_normal(
     :return pyro.distributions.MultivariateNormal
     """
     return dist.MultivariateNormal(aaah, aaAAAH)
-
-
-def projectToFeasibilityWithNLP(rbt, q0, board_width, board_height):
-    # More generic than above... instead of using IK to quickly
-    # assembly the nlp solve that goes to snopt, build it ourselves.
-    # (Gives us lower-level control at the cost of complexity.)
-
-    print("TODO, I think this requires a few new drake bindings"
-          " for generic nonlinear constraints")
