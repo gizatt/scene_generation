@@ -225,6 +225,14 @@ class projectToFeasibilityWithIKTorch(torch.autograd.Function):
     def backward(ctx, grad):
         qf, dqf_dq0, viol_dirs, gamma = ctx.saved_tensors
 
+        # Better way to do this:
+        # only regularize within the null space, rather than
+        # uniformly across the matrix.
+        # Should only make a meaningful difference when the
+        # dqf/dq_0 is not identity in the feasible set, I think,
+        # and I think gradient will still be in at least approximately
+        # the right direction in that case.
+
         # Basic gradient descent:
         # "Regularize" the gradient a bit by suggesting
         # a little off-axis movement
