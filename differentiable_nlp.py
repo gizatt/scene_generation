@@ -8,6 +8,7 @@ import sys
 
 import torch
 from torch.autograd.function import once_differentiable
+from torch.distributions import constraints
 
 import pyro
 import pyro.distributions as dist
@@ -207,6 +208,11 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
     return qf, info, dqf_dq0, constraint_violation_directions
 
 
+def buildRegularizedGradient(dqf_dq0, viol_dirs, gamma):
+    return (torch.eye(dqf_dq0.shape[0], dtype=dqf_dq0.dtype)*gamma
+            + (1. - gamma)*dqf_dq0)
+
+
 class projectToFeasibilityWithIKTorch(torch.autograd.Function):
     @staticmethod
     def forward(ctx, q0, rbt, constraints, gamma=0.01):
@@ -239,9 +245,8 @@ class projectToFeasibilityWithIKTorch(torch.autograd.Function):
         # Basic gradient descent:
         # "Regularize" the gradient a bit by suggesting
         # a little off-axis movement
-        regularized_dqf_dq0 = (
-            torch.eye(qf.shape[0], dtype=grad.dtype)*gamma
-            + (1. - gamma)*dqf_dq0)
+        regularized_dqf_dq0 = buildRegularizedGradient(
+            dqf_dq0, viol_dirs, gamma)
         return (torch.mm(
                     regularized_dqf_dq0,
                     grad.view(-1, 1)),
@@ -271,32 +276,135 @@ class projectToFeasibilityWithIKTorch(torch.autograd.Function):
         '''
 
 
-def projectToFeasibilityWithIKAsDistribution(
-        q0, within_manifold_variance,
-        null_space_variance):
-    """
-    TODO: update this properly as I write this out
+class PassthroughWithGradient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, dx):
+        ctx.save_for_backward(dx.clone())
+        return x.clone()
 
-    Given a 1-differentiable manifold projection operator that projects
-    from `$q \\in R^N$` to another point `$\\hat{q} \\in $R^N$`,
-    and given an initial point `$q_0$`, and given weights
-    representing downstream uncertainty about points being both
-    off the manifold and along the manifold chart, models
-    the manifold projection operation as a multivariate gaussian
-    with mean `$\\hat{q}$` and variance based on the local chart
-    and the given scaling parameters.
+    @staticmethod
+    @once_differentiable
+    def backward(ctx, grad):
+        dx = ctx.saved_tensors
+        return (dx, None)
 
-    :param torch.autograd.Function projection_operator:
-        Function that performs projection. Must be once-differentiable --
-        the local chart (as viewed as a mapping between movements in the
-        ambient space and changes in the projected point -- dqhat/dq)
-        is encoded as its first derivative.
-    :param torch.tensor q0: N-dimensional input to projection_operator that
-        represents a point before projection.
-    :param torch.tensor within_manifold_variance: variance within the
-        chart directions.
-    :param torch.tensor null_space_variance: variance in the null space
-        of the projection (off-manifold).
-    :return pyro.distributions.MultivariateNormal
+
+class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
     """
-    return dist.MultivariateNormal(aaah, aaAAAH)
+        Given a point q0 to project to feasibility (as well as
+        supporting rbt + constraint list, for input to
+        projectToFeasibilityWithIK), and weights representing
+        uncertainty about points varying within the feasible
+        set + outside of it, enable forward sampling of
+        projected qf as well as log-likelihood calculation.
+
+        At construction time, the actual projection (qf) is computed
+        by a call to projectToFeasibilityWithIK, and this result
+        is stored for any time a call to "sample" is made. Sampling
+        is deterministic.
+
+        However, to enable SVI, the log prob calculation is done by
+        representing the projection as a draw from the composition
+        of two multivariate normals:
+        - If the value is in the cone of local infeasible space
+        (as represented by the vector of infeasible directions returned
+        by the original projection call), the log likelihood is the same
+        as a multivariate normal centered at qf with variance
+        outside_feasible_set_variance.
+        - Otherwise, the log likelihood is the same as a multivariate
+        normal centered at qf with variance within_feasible_set_variance.
+
+        Gamma is a regularization to soften the derivative of the
+        sample w.r.t. the input -- see the Torch autograd function above.
+    """
+    has_rsample = False
+    arg_constraints = {"q0": constraints.real,
+                       "within_feasible_set_variance": constraints.positive,
+                       "outside_feasible_set_variance": constraints.positive}
+
+    def __init__(self, rbt, q0, constraints,
+                 within_feasible_set_variance,
+                 outside_feasible_set_variance,
+                 gamma=0.01,
+                 validate_args=False):
+        self.batch_mode = q0.dim > 1
+        print "constructor q0: ", q0
+        batch_shape = q0.shape[:-1]
+        event_shape = (q0.shape[-1],)
+        print "batch shape: ", batch_shape
+        print "event shape: ", event_shape
+
+        if isinstance(within_feasible_set_variance, float):
+            within_feasible_set_variance = torch.tensor(
+                within_feasible_set_variance, dtype=q0.dtype)
+        if isinstance(outside_feasible_set_variance, float):
+            outside_feasible_set_variance = torch.tensor(
+                outside_feasible_set_variance, dtype=q0.dtype)
+
+        # Basically repeat what the Torch autograd implementation does,
+        # but we need to extract some intermediate state to build
+        # the log prob multivariate distribs.
+        nq = rbt.get_num_positions()
+        assert(len(batch_shape) == 1)
+        all_qfs = []
+        all_regularized_dqf_dq0s = []
+        all_viol_dirs = []
+        for k in range(batch_shape[0]):
+            qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
+                rbt, q0[k, :].cpu().detach().numpy().copy().reshape(nq, 1), constraints)
+            qf = torch.tensor(qf.reshape(1, -1), dtype=q0.dtype)
+            dqf_dq0 = torch.tensor(dqf_dq0, dtype=q0.dtype)
+            viol_dirs = torch.tensor(viol_dirs, dtype=q0.dtype)
+            regularized_dqf_dq0 = buildRegularizedGradient(
+                dqf_dq0, viol_dirs, gamma)
+            all_qfs.append(qf)
+            all_regularized_dqf_dq0s.append(regularized_dqf_dq0)
+            all_viol_dirs.append(viol_dirs)
+
+        all_qfs = torch.stack(all_qfs)
+        all_regularized_dqf_dq0s = torch.stack(all_regularized_dqf_dq0s)
+
+        self._nq = qf.shape[0]
+        self._rsample = PassthroughWithGradient.apply(qf, regularized_dqf_dq0)
+        self._viol_dirs = all_viol_dirs
+        self._within_feasible_set_distrib = dist.Normal(
+            qf,
+            within_feasible_set_variance.expand(qf.shape[0])).to_event(1)
+        self._outside_feasible_set_distrib = dist.Normal(
+            qf,
+            outside_feasible_set_variance.expand(qf.shape[0])).to_event(1)
+
+        super(ProjectToFeasibilityWithIKAsDistribution, self).__init__(
+            batch_shape, event_shape, validate_args=validate_args)
+
+    def expand(self, batch_shape, _instance=None):
+        print "Expanding to ", batch_shape
+        new = self._get_checked_instance(
+            ProjectToFeasibilityWithIKAsDistribution, _instance)
+        new.batch_mode = True
+        batch_shape = torch.Size(batch_shape)
+        new._nq = self._nq
+        new._rsample = self._rsample.expand(batch_shape + self.event_shape)
+        new._viol_dirs = self._viol_dirs
+
+        if batch_shape != self.batch_shape:
+            raise NotImplementedError("Not handling viol_dirs properly")
+
+        new._within_feasible_set_distrib = self._within_feasible_set_distrib.expand(batch_shape)
+        new._outside_feasible_set_distrib = self._outside_feasible_set_distrib.expand(batch_shape)
+
+        super(ProjectToFeasibilityWithIKAsDistribution, new).__init__(batch_shape, self.event_shape, validate_args=False)
+        new._validate_args = self._validate_args
+        return new
+
+    def log_prob(self, value):
+        assert value.dim() == 1 and value.size(0) == self._nq
+        # TODO: project onto viol dirs, figure out if we're in the
+        # infeasible cone
+        return self._within_feasible_set_distrib.log_prob(value)
+
+    def sample(self, sample_shape=torch.Size()):
+        print "Sample shape: ", sample_shape
+        print "Self.event_shape: ", self.event_shape
+        print "Self.batch_shape: ", self.batch_shape
+        return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
