@@ -8,7 +8,6 @@ import sys
 
 import torch
 from torch.autograd.function import once_differentiable
-from torch.distributions import constraints
 
 import pyro
 import pyro.distributions as dist
@@ -66,16 +65,16 @@ def nullspace(A, atol=1e-13, rtol=0):
 def object_origins_within_bounds_constraint_constructor_factory(
         x_min, x_max):
     def build_constraint(rbt, x_min, x_max):
-        constraints = []
+        ik_constraints = []
         for body_i in range(rbt.get_num_bodies()-1):
             # Origin of body must be inside of the
             # bounds of the board
             points = np.zeros([3, 1])
             lb = np.array(x_min.reshape(3, 1))
             ub = np.array(x_max.reshape(3, 1))
-            constraints.append(ik.WorldPositionConstraint(
+            ik_constraints.append(ik.WorldPositionConstraint(
                 rbt, body_i+1, points, lb, ub))
-        return constraints
+        return ik_constraints
 
     return functools.partial(build_constraint, x_min=x_min, x_max=x_max)
 
@@ -83,7 +82,7 @@ def object_origins_within_bounds_constraint_constructor_factory(
 def objects_completely_within_bounds_constraint_constructor_factory(
         x_min, x_max):
     def build_constraint(rbt, x_min, x_max):
-        constraints = []
+        ik_constraints = []
         for body_i in range(rbt.get_num_bodies()-1):
             # All corners on body must be inside of the
             # bounds of the board
@@ -93,12 +92,36 @@ def objects_completely_within_bounds_constraint_constructor_factory(
                 points = visual_elements[0].getGeometry().getPoints()
                 lb = np.tile(np.array(x_min), (points.shape[1], 1)).T
                 ub = np.tile(np.array(x_max), (points.shape[1], 1)).T
-                constraints.append(ik.WorldPositionConstraint(
+                ik_constraints.append(ik.WorldPositionConstraint(
                     rbt, body_i+1, points, lb, ub))
-        return constraints
+        return ik_constraints
 
     return functools.partial(build_constraint, x_min=xmin, x_max=x_max)
 
+def object_at_specified_pose_constraint_constructor_factory(
+        body_i, q):
+    if q.shape[0] != 6:
+        raise ValueError("Expected q is 6x1")
+
+    def build_constraint(rbt, body_i, q):
+        ik_constraints = []
+        body = rbt.get_body(body_i+1)
+        # Abuse that everything is a floating body
+        # the "proper" way to do this is a PostureConstraint,
+        # but that RigidBodyConstraint type doesn't have an
+        # eval method.
+        points = np.zeros([3, 1])
+        lb_pos = np.array(q[0:3].reshape(3, 1))
+        ub_pos = np.array(q[0:3].reshape(3, 1))
+        ik_constraints.append(ik.WorldPositionConstraint(
+            rbt, body_i+1, points, lb_pos, ub_pos))
+        lb_rot = np.array(q[3:6].reshape(3, 1))
+        ub_rot = np.array(q[3:6].reshape(3, 1))
+        ik_constraints.append(ik.WorldPositionConstraint(
+            rbt, body_i+1, points, lb_rot, ub_rot))
+        return ik_constraints
+
+    return functools.partial(build_constraint, body_i=body_i, q=q)
 
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
                                verbose=False):
@@ -123,19 +146,19 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
     *positively* span the null space at the solution point.
     '''
 
-    constraints = []
-    constraints.append(ik.MinDistanceConstraint(
-        model=rbt, min_distance=0.01, active_bodies_idx=[],
+    ik_constraints = []
+    ik_constraints.append(ik.MinDistanceConstraint(
+        model=rbt, min_distance=0.001, active_bodies_idx=[],
         active_group_names=set()))
     for extra_constraint_constructor in extra_constraint_constructors:
-        constraints += extra_constraint_constructor(rbt)
+        ik_constraints += extra_constraint_constructor(rbt)
 
     options = ik.IKoptions(rbt)
     options.setDebug(True)
     options.setMajorIterationsLimit(10000)
     options.setIterationsLimit(100000)
     results = ik.InverseKin(
-        rbt, q0, q0, constraints, options)
+        rbt, q0, q0, ik_constraints, options)
 
     qf = results.q_sol[0]
     info = results.info[0]
@@ -165,7 +188,7 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
         constraint_violation_directions = []
 
         cache = rbt.doKinematics(qf)
-        for i, constraint in enumerate(constraints):
+        for i, constraint in enumerate(ik_constraints):
             c, dc = constraint.eval(0, cache)
             lb, ub = constraint.bounds(0)
 
@@ -178,6 +201,7 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
                               "solution wasn't feasible")
                         print("%f <= %f <= %f" % (lb[k], c[k], ub[k]))
                         print("Constraint type ", type(constraint))
+                        print("qf: ", qf)
                     return qf, info, dqf_dq0, constraint_violation_directions
 
                 # If ub = lb and ub is active, then lb is also active,
@@ -215,11 +239,11 @@ def buildRegularizedGradient(dqf_dq0, viol_dirs, gamma):
 
 class projectToFeasibilityWithIKTorch(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, q0, rbt, constraints, gamma=0.01):
+    def forward(ctx, q0, rbt, ik_constraints, gamma=0.01):
         # q0 being a tensor, rbt and constraints being inputs
         # to projectToFeasibilityWithIK
         qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
-            rbt, q0.cpu().detach().numpy().copy(), constraints)
+            rbt, q0.cpu().detach().numpy().copy(), ik_constraints)
         qf = qf.reshape(-1, 1)
 
         ctx.save_for_backward(
@@ -318,22 +342,16 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         sample w.r.t. the input -- see the Torch autograd function above.
     """
     has_rsample = False
-    arg_constraints = {"q0": constraints.real,
-                       "within_feasible_set_variance": constraints.positive,
-                       "outside_feasible_set_variance": constraints.positive}
-
-    def __init__(self, rbt, q0, constraints,
+    def __init__(self, rbt, q0,
+                 ik_constraints,
                  within_feasible_set_variance,
                  outside_feasible_set_variance,
                  gamma=0.01,
                  validate_args=False):
         self.batch_mode = q0.dim > 1
-        print "constructor q0: ", q0
         batch_shape = q0.shape[:-1]
         event_shape = (q0.shape[-1],)
-        print "batch shape: ", batch_shape
-        print "event shape: ", event_shape
-
+        
         if isinstance(within_feasible_set_variance, float):
             within_feasible_set_variance = torch.tensor(
                 within_feasible_set_variance, dtype=q0.dtype)
@@ -351,7 +369,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         all_viol_dirs = []
         for k in range(batch_shape[0]):
             qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
-                rbt, q0[k, :].cpu().detach().numpy().copy().reshape(nq, 1), constraints)
+                rbt, q0[k, :].cpu().detach().numpy().copy().reshape(nq, 1), ik_constraints)
             qf = torch.tensor(qf.reshape(1, -1), dtype=q0.dtype)
             dqf_dq0 = torch.tensor(dqf_dq0, dtype=q0.dtype)
             viol_dirs = torch.tensor(viol_dirs, dtype=q0.dtype)
@@ -378,7 +396,6 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
             batch_shape, event_shape, validate_args=validate_args)
 
     def expand(self, batch_shape, _instance=None):
-        print "Expanding to ", batch_shape
         new = self._get_checked_instance(
             ProjectToFeasibilityWithIKAsDistribution, _instance)
         new.batch_mode = True
@@ -398,13 +415,10 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         return new
 
     def log_prob(self, value):
-        assert value.dim() == 1 and value.size(0) == self._nq
+        #assert value.dim() == 1 and value.size(0) == self._nq
         # TODO: project onto viol dirs, figure out if we're in the
         # infeasible cone
         return self._within_feasible_set_distrib.log_prob(value)
 
     def sample(self, sample_shape=torch.Size()):
-        print "Sample shape: ", sample_shape
-        print "Self.event_shape: ", self.event_shape
-        print "Self.batch_shape: ", self.batch_shape
         return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
