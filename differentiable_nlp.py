@@ -360,6 +360,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
                  within_feasible_set_variance,
                  outside_feasible_set_variance,
                  gamma=0.01,
+                 noisy_projection=False,
                  validate_args=False):
         batch_shape = q0.shape[:-1]
         event_shape = (q0.shape[-1],)
@@ -395,6 +396,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         all_regularized_dqf_dq0s_tensor = torch.stack(all_regularized_dqf_dq0s)
 
         self._nq = qf.shape[0]
+        self._noisy_projection = noisy_projection
         self._rsample = PassthroughWithGradient.apply(q0, all_qfs_tensor, all_regularized_dqf_dq0s_tensor)
         self._viol_dirs = all_viol_dirs
         self._within_feasible_set_distrib = dist.Normal(
@@ -412,6 +414,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
             ProjectToFeasibilityWithIKAsDistribution, _instance)
         batch_shape = torch.Size(batch_shape)
         new._nq = self._nq
+        new._noisy_projection = self._noisy_projection
         new._rsample = self._rsample.expand(batch_shape + self.event_shape)
         new._viol_dirs = self._viol_dirs
 
@@ -436,4 +439,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         return self._within_feasible_set_distrib.log_prob(value)
 
     def rsample(self, sample_shape=torch.Size()):
-        return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
+        if self._noisy_projection:
+            return self._within_feasible_set_distrib.sample(sample_shape)
+        else:
+            return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
