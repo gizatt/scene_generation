@@ -302,15 +302,20 @@ class projectToFeasibilityWithIKTorch(torch.autograd.Function):
 
 class PassthroughWithGradient(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, dx):
-        ctx.save_for_backward(dx.clone())
-        return x.clone()
+    def forward(ctx, x, y, dy_dx):
+        ctx.save_for_backward(dy_dx.clone())
+        return y.clone()
 
     @staticmethod
     @once_differentiable
     def backward(ctx, grad):
-        dx = ctx.saved_tensors
-        return (dx, None)
+        dy_dx,  = ctx.saved_tensors
+        nq = dy_dx.shape[1]
+        n_batch = dy_dx.shape[0]
+        return (torch.bmm(dy_dx,
+                          torch.unsqueeze(grad, -1)).squeeze(),
+                torch.bmm(torch.eye(nq, nq).expand(n_batch, nq, nq),
+                          torch.unsqueeze(grad, -1)).squeeze(), None)
 
 
 class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
@@ -341,14 +346,16 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         Gamma is a regularization to soften the derivative of the
         sample w.r.t. the input -- see the Torch autograd function above.
     """
-    has_rsample = False
+    has_rsample = True
+    arg_constraints = {"q0": torch.distributions.constraints.real,
+                       "within_feasible_set_variance": torch.distributions.constraints.positive,
+                       "outside_feasible_set_variance": torch.distributions.constraints.positive}
     def __init__(self, rbt, q0,
                  ik_constraints,
                  within_feasible_set_variance,
                  outside_feasible_set_variance,
                  gamma=0.01,
                  validate_args=False):
-        self.batch_mode = q0.dim > 1
         batch_shape = q0.shape[:-1]
         event_shape = (q0.shape[-1],)
         
@@ -370,7 +377,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         for k in range(batch_shape[0]):
             qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
                 rbt, q0[k, :].cpu().detach().numpy().copy().reshape(nq, 1), ik_constraints)
-            qf = torch.tensor(qf.reshape(1, -1), dtype=q0.dtype)
+            qf = torch.tensor(qf, dtype=q0.dtype)
             dqf_dq0 = torch.tensor(dqf_dq0, dtype=q0.dtype)
             viol_dirs = torch.tensor(viol_dirs, dtype=q0.dtype)
             regularized_dqf_dq0 = buildRegularizedGradient(
@@ -379,17 +386,17 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
             all_regularized_dqf_dq0s.append(regularized_dqf_dq0)
             all_viol_dirs.append(viol_dirs)
 
-        all_qfs = torch.stack(all_qfs)
-        all_regularized_dqf_dq0s = torch.stack(all_regularized_dqf_dq0s)
+        all_qfs_tensor = torch.stack(all_qfs)
+        all_regularized_dqf_dq0s_tensor = torch.stack(all_regularized_dqf_dq0s)
 
         self._nq = qf.shape[0]
-        self._rsample = PassthroughWithGradient.apply(qf, regularized_dqf_dq0)
+        self._rsample = PassthroughWithGradient.apply(q0, all_qfs_tensor, all_regularized_dqf_dq0s_tensor)
         self._viol_dirs = all_viol_dirs
         self._within_feasible_set_distrib = dist.Normal(
-            qf,
+            self._rsample,
             within_feasible_set_variance.expand(qf.shape[0])).to_event(1)
         self._outside_feasible_set_distrib = dist.Normal(
-            qf,
+            self._rsample,
             outside_feasible_set_variance.expand(qf.shape[0])).to_event(1)
 
         super(ProjectToFeasibilityWithIKAsDistribution, self).__init__(
@@ -398,7 +405,6 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
     def expand(self, batch_shape, _instance=None):
         new = self._get_checked_instance(
             ProjectToFeasibilityWithIKAsDistribution, _instance)
-        new.batch_mode = True
         batch_shape = torch.Size(batch_shape)
         new._nq = self._nq
         new._rsample = self._rsample.expand(batch_shape + self.event_shape)
@@ -413,6 +419,10 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         super(ProjectToFeasibilityWithIKAsDistribution, new).__init__(batch_shape, self.event_shape, validate_args=False)
         new._validate_args = self._validate_args
         return new
+    
+    @torch.distributions.constraints.dependent_property
+    def support(self):
+        return torch.distributions.constraints.real
 
     def log_prob(self, value):
         #assert value.dim() == 1 and value.size(0) == self._nq
@@ -420,5 +430,5 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         # infeasible cone
         return self._within_feasible_set_distrib.log_prob(value)
 
-    def sample(self, sample_shape=torch.Size()):
+    def rsample(self, sample_shape=torch.Size()):
         return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
