@@ -148,9 +148,9 @@ def build_rbt_from_summary(rbt_summary):
         object_init_frame = RigidBodyFrame(
             "%s_init_frame" % full_name, rbt.world(),
             [0., 0., 0.5],
-            [0., 0., 0.])
+            [0., 0., 0.0])
         q0[(i*6):(i*6+6)] = np.array([
-            pose[0], pose[1], 0.5, 0., 0., pose[2]])
+            pose[0], pose[1], 0.0, 0., 0., pose[2]])
         object_adders[class_name](rbt, full_name, object_init_frame)
 
     rbt.compile()

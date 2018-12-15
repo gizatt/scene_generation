@@ -99,11 +99,11 @@ def objects_completely_within_bounds_constraint_constructor_factory(
     return functools.partial(build_constraint, x_min=xmin, x_max=x_max)
 
 def object_at_specified_pose_constraint_constructor_factory(
-        body_i, q):
-    if q.shape[0] != 6:
+        body_i, lb_q, ub_q):
+    if lb_q.shape[0] != 6 or ub_q.shape[0] != 6:
         raise ValueError("Expected q is 6x1")
 
-    def build_constraint(rbt, body_i, q):
+    def build_constraint(rbt, body_i, lb_q, ub_q):
         ik_constraints = []
         body = rbt.get_body(body_i+1)
         # Abuse that everything is a floating body
@@ -111,20 +111,20 @@ def object_at_specified_pose_constraint_constructor_factory(
         # but that RigidBodyConstraint type doesn't have an
         # eval method.
         points = np.zeros([3, 1])
-        lb_pos = np.array(q[0:3].reshape(3, 1))
-        ub_pos = np.array(q[0:3].reshape(3, 1))
+        lb_pos = np.array(lb_q[0:3].reshape(3, 1))
+        ub_pos = np.array(ub_q[0:3].reshape(3, 1))
         ik_constraints.append(ik.WorldPositionConstraint(
             rbt, body_i+1, points, lb_pos, ub_pos))
-        lb_rot = np.array(q[3:6].reshape(3, 1))
-        ub_rot = np.array(q[3:6].reshape(3, 1))
-        ik_constraints.append(ik.WorldPositionConstraint(
-            rbt, body_i+1, points, lb_rot, ub_rot))
+        lb_rot = np.array(lb_q[3:6].reshape(3, 1))
+        ub_rot = np.array(ub_q[3:6].reshape(3, 1))
+        ik_constraints.append(ik.WorldEulerConstraint(
+            rbt, body_i+1, lb_rot, ub_rot))
         return ik_constraints
 
-    return functools.partial(build_constraint, body_i=body_i, q=q)
+    return functools.partial(build_constraint, body_i=body_i, lb_q=lb_q, ub_q=ub_q)
 
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
-                               verbose=False):
+                               verbose=True, max_num_retries=10):
     '''
     Given:
     - a Rigid Body Tree (rbt)
@@ -153,19 +153,24 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
     for extra_constraint_constructor in extra_constraint_constructors:
         ik_constraints += extra_constraint_constructor(rbt)
 
-    options = ik.IKoptions(rbt)
-    options.setDebug(True)
-    options.setMajorIterationsLimit(10000)
-    options.setIterationsLimit(100000)
-    results = ik.InverseKin(
-        rbt, q0, q0, ik_constraints, options)
+    for k in range(max_num_retries):
+        options = ik.IKoptions(rbt)
+        options.setDebug(True)
+        options.setMajorIterationsLimit(10000)
+        options.setIterationsLimit(100000)
+        # Each retry, add more random noise to the
+        # seed, to try to break out of the broken initial seed.
+        results = ik.InverseKin(
+            rbt, q0 + np.random.normal(scale=k*0.1), q0, ik_constraints, options)
+        if results.info[0] == 1:
+            break
 
     qf = results.q_sol[0]
     info = results.info[0]
     dqf_dq0 = np.eye(qf.shape[0])
     constraint_violation_directions = []
-    # if info != 1:
-    #    print("Warning: returned info = %d != 1" % info)
+    if info != 1:
+       print("Warning: returned info = %d != 1 after %d retries"  % (info, max_num_retries))
     if True or info == 1 or info == 100:
         # We've solved an NLP of the form:
         # qf = argmin_q || q - q_0 ||
@@ -195,14 +200,14 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
             phi_lb = c - lb
             phi_ub = ub - c
             for k in range(c.shape[0]):
-                if phi_lb[k] < -1E-6 or phi_ub[k] < -1E-6:
+                if phi_lb[k] < -1E-4 or phi_ub[k] < -1E-4:
                     if verbose:
                         print("Bounds violation detected, "
                               "solution wasn't feasible")
                         print("%f <= %f <= %f" % (lb[k], c[k], ub[k]))
                         print("Constraint type ", type(constraint))
                         print("qf: ", qf)
-                    return qf, info, dqf_dq0, constraint_violation_directions
+                        print("q0: ", q0.reshape(1, -1))
 
                 # If ub = lb and ub is active, then lb is also active,
                 # and we'll have double-added this vector. But this is
