@@ -115,8 +115,12 @@ def sample_scene_uniform_random(p=0.5, num_objects=None):
         class_name = object_adders.keys()[class_ind]
         full_name = "%s_%03d" % (class_name, i)
         # Planar pose random on [0:1, 0:1, 0:2pi]
-        pose = [np.random.random(), np.random.random(),
-                np.random.random()*np.pi*2.]
+        if class_name == "long_box":
+            pose = [np.random.random()*0.5, np.random.random(),
+                    np.random.random()*np.pi*2.]
+        else:
+            pose = [np.random.random()*0.5 + 0.5, np.random.random(),
+                    np.random.random()*np.pi*2.]
         object_init_frame = RigidBodyFrame(
             "%s_init_frame" % full_name, rbt.world(),
             [pose[0], pose[1], 0.5],

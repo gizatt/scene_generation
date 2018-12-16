@@ -133,7 +133,7 @@ def rbt_at_posture_constraint_constructor_factory(
     return functools.partial(build_constraint, inds=inds, lb_q=lb_q, ub_q=ub_q)
 
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
-                               verbose=False, max_num_retries=10):
+                               verbose=False, max_num_retries=4):
     '''
     Given:
     - a Rigid Body Tree (rbt)
