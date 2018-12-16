@@ -133,7 +133,7 @@ def rbt_at_posture_constraint_constructor_factory(
     return functools.partial(build_constraint, inds=inds, lb_q=lb_q, ub_q=ub_q)
 
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
-                               verbose=True, max_num_retries=10):
+                               verbose=False, max_num_retries=10):
     '''
     Given:
     - a Rigid Body Tree (rbt)
@@ -179,7 +179,8 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
     dqf_dq0 = np.eye(qf.shape[0])
     constraint_violation_directions = []
     if info != 1:
-       print("Warning: returned info = %d != 1 after %d retries"  % (info, max_num_retries))
+        if verbose:
+            print("Warning: returned info = %d != 1 after %d retries"  % (info, max_num_retries))
     if True or info == 1 or info == 100:
         # We've solved an NLP of the form:
         # qf = argmin_q || q - q_0 ||
@@ -388,37 +389,52 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
             outside_feasible_set_variance = torch.tensor(
                 outside_feasible_set_variance, dtype=q0.dtype)
 
+        if not isinstance(rbt, list):
+            rbt = [rbt]
+
         # Basically repeat what the Torch autograd implementation does,
         # but we need to extract some intermediate state to build
         # the log prob multivariate distribs.
-        nq = rbt.get_num_positions()
+        nq = q0.shape[-1]
+        if q0_fixed is not None:
+            nq += q0_fixed.shape[-1]
         assert(len(batch_shape) == 1)
         all_qfs = []
         all_regularized_dqf_dq0s = []
         all_viol_dirs = []
         for k in range(batch_shape[0]):
-            q0_variable_part = q0[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
-            extra_ik_constraints = []
-            if q0_fixed is None:
-                q0_full = q0_variable_part
-                extract_inds = range(nq)
+            if rbt[min(k, len(rbt)-1)] is not None:
+                q0_variable_part = q0[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
+                extra_ik_constraints = []
+                if q0_fixed is None:
+                    q0_full = q0_variable_part
+                    extract_inds = range(nq)
+                else:
+                    q0_fixed_part = q0_fixed[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
+                    q0_full = np.vstack([q0_fixed_part, q0_variable_part])
+                    extract_inds = range(q0_fixed_part.shape[0], nq)
+                    # It's OK to use a PostureConstraint here
+                    # as this should *always* be satisfied or we have
+                    # series numerical problems, and this is only a constraint
+                    # on non-variable elements anyway and won't appear in gradients.
+                    extra_ik_constraints.append(rbt_at_posture_constraint_constructor_factory(
+                        range(q0_fixed_part.shape[0]), q0_fixed_part, q0_fixed_part))
+                qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
+                    rbt[min(k, len(rbt)-1)], q0_full, ik_constraints + extra_ik_constraints)
+                qf = torch.tensor(qf[extract_inds], dtype=q0.dtype)
+                dqf_dq0 = torch.tensor(dqf_dq0[extract_inds, :][:, extract_inds], dtype=q0.dtype)
+                viol_dirs = torch.tensor(viol_dirs[:, extract_inds], dtype=q0.dtype)
+                regularized_dqf_dq0 = buildRegularizedGradient(
+                    dqf_dq0, viol_dirs, gamma)
             else:
-                q0_fixed_part = q0_fixed[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
-                q0_full = np.vstack([q0_fixed_part, q0_variable_part])
-                extract_inds = range(q0_fixed_part.shape[0], nq)
-                # It's OK to use a PostureConstraint here
-                # as this should *always* be satisfied or we have
-                # series numerical problems, and this is only a constraint
-                # on non-variable elements anyway and won't appear in gradients.
-                extra_ik_constraints.append(rbt_at_posture_constraint_constructor_factory(
-                    range(q0_fixed_part.shape[0]), q0_fixed_part, q0_fixed_part))
-            qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
-                rbt, q0_full, ik_constraints + extra_ik_constraints)
-            qf = torch.tensor(qf[extract_inds], dtype=q0.dtype)
-            dqf_dq0 = torch.tensor(dqf_dq0[extract_inds, :][:, extract_inds], dtype=q0.dtype)
-            viol_dirs = torch.tensor(viol_dirs[:, extract_inds], dtype=q0.dtype)
-            regularized_dqf_dq0 = buildRegularizedGradient(
-                dqf_dq0, viol_dirs, gamma)
+                # Direct passthrough. Being passed "None" for RBT will happen
+                # during batched analysis of variable-length scenes when scenes
+                # that are "done" generating are still being processed.
+                # Their log prob should be frozen, so whatever we produce is irrelevant.
+                qf = q0[k, :].clone().flatten()
+                regularized_dqf_dq0 = torch.eye(qf.shape[-1])
+                viol_dirs = torch.empty(0, qf.shape[-1])
+
             all_qfs.append(qf)
             all_regularized_dqf_dq0s.append(regularized_dqf_dq0)
             all_viol_dirs.append(viol_dirs)
@@ -464,10 +480,25 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         return torch.distributions.constraints.real
 
     def log_prob(self, value):
-        #assert value.dim() == 1 and value.size(0) == self._nq_variable
-        # TODO: project onto viol dirs, figure out if we're in the
-        # infeasible cone
-        return self._within_feasible_set_distrib.log_prob(value)
+        assert value.shape[-1] == self._nq_variable
+
+        # Difference of each new value from the projected point
+        diff_values = value - self._rsample
+        # Project that into the infeasible cone -- we're moving out
+        # towards local infeasible space if any of these inner products
+        # is positive.
+        # I'll use a "large" threshold of violation for now...
+        # TODO(gizatt) What's a good val for eps?
+        eps = 1E-2
+        use_outside_feasible_set_distrib = torch.zeros(self.batch_shape[0])
+        for k in range(self.batch_shape[0]):
+            if self._viol_dirs[k].shape[0] > 0:
+                use_outside_feasible_set_distrib[k] = torch.any(
+                    torch.mm(self._viol_dirs[k], diff_values[k, :].view(-1, 1)) >= eps)
+        # Get log probs from both distribs, and choose across
+        # the batch based on presence in the infeasible cone
+        return ((1. - use_outside_feasible_set_distrib) * self._within_feasible_set_distrib.log_prob(value) +
+                (use_outside_feasible_set_distrib) * self._outside_feasible_set_distrib.log_prob(value))
 
     def rsample(self, sample_shape=torch.Size()):
         if self._noisy_projection:
