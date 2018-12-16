@@ -123,6 +123,15 @@ def object_at_specified_pose_constraint_constructor_factory(
 
     return functools.partial(build_constraint, body_i=body_i, lb_q=lb_q, ub_q=ub_q)
 
+def rbt_at_posture_constraint_constructor_factory(
+        inds, lb_q, ub_q):
+    def build_constraint(rbt, inds, lb_q, ub_q):
+        posture_constraint = ik.PostureConstraint(rbt)
+        posture_constraint.setJointLimits(inds, lb_q, ub_q)
+        return [posture_constraint]
+
+    return functools.partial(build_constraint, inds=inds, lb_q=lb_q, ub_q=ub_q)
+
 def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
                                verbose=True, max_num_retries=10):
     '''
@@ -194,6 +203,8 @@ def projectToFeasibilityWithIK(rbt, q0, extra_constraint_constructors=[],
 
         cache = rbt.doKinematics(qf)
         for i, constraint in enumerate(ik_constraints):
+            if not isinstance(constraint, ik.SingleTimeKinematicConstraint):
+                continue
             c, dc = constraint.eval(0, cache)
             lb, ub = constraint.bounds(0)
 
@@ -348,6 +359,10 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         - Otherwise, the log likelihood is the same as a multivariate
         normal centered at qf with variance within_feasible_set_variance.
 
+        q0_fixed is prepended to q0 to build the full configuration vector
+        for the RBT, and qf is constrained to equal q0_fixed for those
+        first indices.
+
         Gamma is a regularization to soften the derivative of the
         sample w.r.t. the input -- see the Torch autograd function above.
     """
@@ -359,6 +374,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
                  ik_constraints,
                  within_feasible_set_variance,
                  outside_feasible_set_variance,
+                 q0_fixed=None,
                  gamma=0.01,
                  noisy_projection=False,
                  validate_args=False):
@@ -381,11 +397,26 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         all_regularized_dqf_dq0s = []
         all_viol_dirs = []
         for k in range(batch_shape[0]):
+            q0_variable_part = q0[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
+            extra_ik_constraints = []
+            if q0_fixed is None:
+                q0_full = q0_variable_part
+                extract_inds = range(nq)
+            else:
+                q0_fixed_part = q0_fixed[k, :].cpu().detach().numpy().copy().reshape(-1, 1)
+                q0_full = np.vstack([q0_fixed_part, q0_variable_part])
+                extract_inds = range(q0_fixed_part.shape[0], nq)
+                # It's OK to use a PostureConstraint here
+                # as this should *always* be satisfied or we have
+                # series numerical problems, and this is only a constraint
+                # on non-variable elements anyway and won't appear in gradients.
+                extra_ik_constraints.append(rbt_at_posture_constraint_constructor_factory(
+                    range(q0_fixed_part.shape[0]), q0_fixed_part, q0_fixed_part))
             qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
-                rbt, q0[k, :].cpu().detach().numpy().copy().reshape(nq, 1), ik_constraints)
-            qf = torch.tensor(qf, dtype=q0.dtype)
-            dqf_dq0 = torch.tensor(dqf_dq0, dtype=q0.dtype)
-            viol_dirs = torch.tensor(viol_dirs, dtype=q0.dtype)
+                rbt, q0_full, ik_constraints + extra_ik_constraints)
+            qf = torch.tensor(qf[extract_inds], dtype=q0.dtype)
+            dqf_dq0 = torch.tensor(dqf_dq0[extract_inds, :][:, extract_inds], dtype=q0.dtype)
+            viol_dirs = torch.tensor(viol_dirs[:, extract_inds], dtype=q0.dtype)
             regularized_dqf_dq0 = buildRegularizedGradient(
                 dqf_dq0, viol_dirs, gamma)
             all_qfs.append(qf)
@@ -395,7 +426,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         all_qfs_tensor = torch.stack(all_qfs)
         all_regularized_dqf_dq0s_tensor = torch.stack(all_regularized_dqf_dq0s)
 
-        self._nq = qf.shape[0]
+        self._nq_variable = qf.shape[0]
         self._noisy_projection = noisy_projection
         self._rsample = PassthroughWithGradient.apply(q0, all_qfs_tensor, all_regularized_dqf_dq0s_tensor)
         self._viol_dirs = all_viol_dirs
@@ -413,7 +444,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         new = self._get_checked_instance(
             ProjectToFeasibilityWithIKAsDistribution, _instance)
         batch_shape = torch.Size(batch_shape)
-        new._nq = self._nq
+        new._nq_variable = self._nq_variable
         new._noisy_projection = self._noisy_projection
         new._rsample = self._rsample.expand(batch_shape + self.event_shape)
         new._viol_dirs = self._viol_dirs
@@ -433,7 +464,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         return torch.distributions.constraints.real
 
     def log_prob(self, value):
-        #assert value.dim() == 1 and value.size(0) == self._nq
+        #assert value.dim() == 1 and value.size(0) == self._nq_variable
         # TODO: project onto viol dirs, figure out if we're in the
         # infeasible cone
         return self._within_feasible_set_distrib.log_prob(value)
