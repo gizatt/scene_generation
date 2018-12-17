@@ -1,5 +1,11 @@
 # Scene Generation
 
+Notebooks relevant to the 9.660 final project report:
+- 20181204 Planar Scene Arrangements Pyro, Single Object, Single Multivariate Normal, with Projections
+- 20181213 Differentiable Feasibility Projection Sandbox.ipynb
+- 20181216 Planar Scene Arrangements Pyro, Two Object, with Projections.ipynb
+
+
 Mostly a project sandbox. Personal notes:
 - On `FateAmenableToChange`, the env is `py27_pyro`.
 - On `ProblemChild`, the env is `py27`.
