@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import random
 import sys
+import time
 
 import torch
 from torch.autograd.function import once_differentiable
@@ -481,6 +482,8 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
 
     def log_prob(self, value):
         assert value.shape[-1] == self._nq_variable
+        if value.dim() > 1:
+            assert value.shape[0] == self.batch_shape[0]
 
         # Difference of each new value from the projected point
         diff_values = value - self._rsample
@@ -489,7 +492,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         # is positive.
         # I'll use a "large" threshold of violation for now...
         # TODO(gizatt) What's a good val for eps?
-        eps = 1E-2
+        eps = 1E-5
         use_outside_feasible_set_distrib = torch.zeros(self.batch_shape[0])
         for k in range(self.batch_shape[0]):
             if self._viol_dirs[k].shape[0] > 0:
