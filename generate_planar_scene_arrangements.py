@@ -125,7 +125,7 @@ def sample_scene_uniform_random(p=0.5, num_objects=None):
             pose = [np.random.random()*0.5, np.random.random(),
                     np.random.random()*np.pi*2.]
         else:
-            pose = [np.random.random()*0.5 + 0.5, np.random.random(),
+            pose = [np.random.random()*0.5 + 0.25, np.random.random(),
                     np.random.random()*np.pi*2.]
         object_init_frame = RigidBodyFrame(
             "%s_init_frame" % full_name, rbt.world(),

@@ -6,3 +6,7 @@
 # of boxes, rather than uniform random.
 
 20181214: Same, but exactly 2 of them.
+
+20190104: 1000 1x1 boxes, generated randomly over
+[0.25:0.75, 0:1, 0:2pi], with geometric distribution as
+in 20181207.
