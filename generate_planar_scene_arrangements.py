@@ -56,15 +56,15 @@ object_adders = {
     "small_box": lambda rbt, name, frame: add_cube(
         rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
         color=[1., 0., 0., 1.]),
-    "small_box_blue": lambda rbt, name, frame: add_cube(
-        rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
-        color=[0.3, 0.5, 0.9, 1.]),
-    "long_box": lambda rbt, name, frame: add_cube(
-        rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
-        color=[0.9, 0.5, 0.1, 1.]),
-    "long_box_blue": lambda rbt, name, frame: add_cube(
-        rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
-        color=[0.3, 0.5, 0.9, 1.])
+    #"small_box_blue": lambda rbt, name, frame: add_cube(
+    #    rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
+    #    color=[0.3, 0.5, 0.9, 1.]),
+    #"long_box": lambda rbt, name, frame: add_cube(
+    #    rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
+    #    color=[0.9, 0.5, 0.1, 1.]),
+    #"long_box_blue": lambda rbt, name, frame: add_cube(
+    #    rbt, name=name, size=[0.5, 0.1, 0.1], frame=frame,
+    #    color=[0.3, 0.5, 0.9, 1.])
 }
 
 
@@ -83,7 +83,6 @@ def sample_scene_prefer_sorted_grid(p=0.5, num_objects=None):
 
         theta = (np.random.random()-0.5)*0.1 + np.random.randint(5)*np.pi/2.
         if class_name == "small_box":
-            # Small box on -x half
             pose = [np.random.random()*0.5, np.random.random(),
                     theta]
         elif class_name == "long_box":
@@ -125,6 +124,10 @@ def sample_scene_uniform_random(p=0.5, num_objects=None):
             pose = [np.random.random()*0.5, np.random.random(),
                     np.random.random()*np.pi*2.]
         else:
+            pose = (np.array([np.random.randn(3)]) *
+                    np.array([0.125, 0.25, np.pi]) +
+                    np.array([0.5, 0.5, np.pi])).reshape(3)
+            pose = [float(x) for x in pose]
             pose = [np.random.random()*0.5 + 0.25, np.random.random(),
                     np.random.random()*np.pi*2.]
         object_init_frame = RigidBodyFrame(
