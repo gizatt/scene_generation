@@ -256,7 +256,7 @@ if __name__ == "__main__":
                         default=1000,
                         help="Number of arrangements to generate.")
     parser.add_argument("--geometric_p",
-                        type=int,
+                        type=float,
                         default=0.5,
                         help="p for the geometric distrib for spawning a new object.")
     parser.add_argument("--num_objects",
