@@ -51,7 +51,8 @@ def add_cube(rbt, name, size, frame, color):
     rbt.addCollisionElement(collision_element, link, "default")
 
 
-# Factories for each object
+# Factories for each object. Edit this list to
+# change what objects might be spawned.
 object_adders = {
     "small_box": lambda rbt, name, frame: add_cube(
         rbt, name=name, size=[0.1, 0.1, 0.1], frame=frame,
@@ -69,6 +70,11 @@ object_adders = {
 
 
 def sample_scene_prefer_sorted_grid(p=0.5, num_objects=None):
+    '''
+    Samples scenes with small_box on the left hand plane,
+    and long_box on the right hand plane.
+    '''
+
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
@@ -107,7 +113,50 @@ def sample_scene_prefer_sorted_grid(p=0.5, num_objects=None):
     return rbt, q0, rbt_summary
 
 
-def sample_scene_uniform_random(p=0.5, num_objects=None):
+def sample_scene_normal_random(
+        mu=np.array([0.5, 0.5, np.pi]),
+        sigma=np.array([0.1, 0.1, np.pi/2.]),
+        p=0.5, num_objects=None):
+    '''
+    Sample scenes with all object types distributed
+    with normal distributions.
+    '''
+    rbt = RigidBodyTree()
+    AddFlatTerrainToWorld(rbt)
+    rbt_summary = {}
+
+    if num_objects is None:
+        num_objects = np.random.geometric(p)
+    rbt_summary["n_objects"] = num_objects
+    for i in range(num_objects):
+        class_ind = np.random.randint(len(object_adders.keys()))
+        class_name = object_adders.keys()[class_ind]
+        full_name = "%s_%03d" % (class_name, i)
+        # Planar pose random on [0:1, 0:1, 0:2pi]
+        pose = np.random.randn(3)*sigma + mu
+        pose = [float(x) for x in pose]
+        object_init_frame = RigidBodyFrame(
+            "%s_init_frame" % full_name, rbt.world(),
+            [pose[0], pose[1], 0.5],
+            [0., 0., pose[2]])
+        object_adders[class_name](rbt, full_name, object_init_frame)
+        rbt_summary["obj_%04d" % i] = {
+            "class": class_name,
+            "pose":  pose
+        }
+
+    rbt.compile()
+
+    q0 = np.zeros(rbt.get_num_positions())
+
+    return rbt, q0, rbt_summary
+
+
+def sample_scene_anisotropic_uniform_random(p=0.5, num_objects=None):
+    '''
+    Sample scenes with all object types uniformly
+    randomly distributed over the unit box.
+    '''
     rbt = RigidBodyTree()
     AddFlatTerrainToWorld(rbt)
     rbt_summary = {}
@@ -121,14 +170,11 @@ def sample_scene_uniform_random(p=0.5, num_objects=None):
         full_name = "%s_%03d" % (class_name, i)
         # Planar pose random on [0:1, 0:1, 0:2pi]
         if class_name == "long_box":
-            pose = [np.random.random()*0.5, np.random.random(),
+            pose = [np.random.random(), np.random.random(),
                     np.random.random()*np.pi*2.]
         else:
-            pose = (np.array([np.random.randn(3)]) *
-                    np.array([0.125, 0.25, np.pi]) +
-                    np.array([0.5, 0.5, np.pi])).reshape(3)
-            pose = [float(x) for x in pose]
-            pose = [np.random.random()*0.5 + 0.25, np.random.random(),
+            pose = [np.random.random()*0.5 + 0.5,
+                    np.random.random(),
                     np.random.random()*np.pi*2.]
         object_init_frame = RigidBodyFrame(
             "%s_init_frame" % full_name, rbt.world(),
