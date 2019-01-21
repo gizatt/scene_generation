@@ -65,6 +65,8 @@ consistent object relationships
   - High difficulty, but really interesting: Small boxes tend to form pyramids in the the global +x direction.
   - High difficulty, but really interesting: Small boxes tend to form pyramids in the the box +x direction. (These two pick apart whether we should represent pairwise relationships in object or world frame... hmm... object frame is probably more natural, but both would be nice... when would world-frame ever be important?)
 - Implement pairwise object relationships.
+- Establish a way of doing model comparison. One of my core claims is that having projection enables simpler models to have higher accuracy (as long as the projection reflects reality in a useful way), since the models no longer need to explicitly capture that complex manifold. Can I just straight-up compare ELBO on a held-out test set? (Literature *sort of implies* yes, with a little controversy.)
+
 
 ### SPECIFIC THINGS
 - Review the background in [Manipulation-based Active Search for Occluded Objects (ICRA 2013)](http://people.csail.mit.edu/lsw/papers/icra2013-search.pdf)
@@ -72,4 +74,7 @@ and make sure I am aware of everything he mentions.
 - Deep dive into Drake MBT random support -- try porting the generative model over to that language.
   - Can I ask for the same derivatives (w.r.t. the primitive distribution inputs)?
   - Can I at least sample feasible configurations?
-- Resolve the improper X vs Y scaling fitting that I observed at the end of the 9.660 final project push: make a simple single-object model distributed with higher variance in X than Y (or vice versa) and make sure that works properly, and that making that fix improves the fits in the 2-object case.
+- Finish resolving the improper X vs Y scaling fitting that I observed at the end of the 9.660 final project push: make a simple single-object model distributed with higher variance in X than Y (or vice versa) and make sure that works properly, and that making that fix improves the fits in the 2-object case. I think the fixes I've made (mostly due to my misunderstanding of how VI was working and what latent variables needed to exist) should have fixed this now.
+- Refactor:
+  - Move models into a subfolder to start simplifying new notebooks.
+  - Clean out and reorganize data with proper train/valid/test split.
