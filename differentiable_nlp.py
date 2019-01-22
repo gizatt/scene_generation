@@ -379,10 +379,15 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
                  q0_fixed=None,
                  gamma=0.01,
                  noisy_projection=False,
-                 validate_args=False):
+                 validate_args=False,
+                 event_select_inds=None):
         batch_shape = q0.shape[:-1]
-        event_shape = (q0.shape[-1],)
-        
+        if event_select_inds is not None:
+            self.event_select_inds = event_select_inds
+        else:
+            self.event_select_inds = torch.tensor(range(q0.shape[-1]))
+        event_shape = (self.event_select_inds.shape[0],)
+
         if isinstance(within_feasible_set_variance, float):
             within_feasible_set_variance = torch.tensor(
                 within_feasible_set_variance, dtype=q0.dtype)
@@ -445,14 +450,16 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
 
         self._nq_variable = qf.shape[0]
         self._noisy_projection = noisy_projection
-        self._rsample = PassthroughWithGradient.apply(q0, all_qfs_tensor, all_regularized_dqf_dq0s_tensor)
+        self._rsample = PassthroughWithGradient.apply(
+            q0, all_qfs_tensor, all_regularized_dqf_dq0s_tensor).index_select(
+                -1, self.event_select_inds)
         self._viol_dirs = all_viol_dirs
         self._within_feasible_set_distrib = dist.Normal(
             self._rsample,
-            within_feasible_set_variance.expand(qf.shape[0])).to_event(1)
+            within_feasible_set_variance.expand(event_shape)).to_event(1)
         self._outside_feasible_set_distrib = dist.Normal(
             self._rsample,
-            outside_feasible_set_variance.expand(qf.shape[0])).to_event(1)
+            outside_feasible_set_variance.expand(event_shape)).to_event(1)
 
         super(ProjectToFeasibilityWithIKAsDistribution, self).__init__(
             batch_shape, event_shape, validate_args=validate_args)
@@ -461,6 +468,7 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         new = self._get_checked_instance(
             ProjectToFeasibilityWithIKAsDistribution, _instance)
         batch_shape = torch.Size(batch_shape)
+        new.event_select_inds = self.event_select_inds
         new._nq_variable = self._nq_variable
         new._noisy_projection = self._noisy_projection
         new._rsample = self._rsample.expand(batch_shape + self.event_shape)
@@ -475,13 +483,13 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         super(ProjectToFeasibilityWithIKAsDistribution, new).__init__(batch_shape, self.event_shape, validate_args=False)
         new._validate_args = self._validate_args
         return new
-    
+
     @torch.distributions.constraints.dependent_property
     def support(self):
         return torch.distributions.constraints.real
 
     def log_prob(self, value):
-        assert value.shape[-1] == self._nq_variable
+        assert value.shape[-1] == self.event_shape[0]
         if value.dim() > 1:
             assert value.shape[0] == self.batch_shape[0]
 
@@ -497,7 +505,8 @@ class ProjectToFeasibilityWithIKAsDistribution(dist.TorchDistribution):
         for k in range(self.batch_shape[0]):
             if self._viol_dirs[k].shape[0] > 0:
                 use_outside_feasible_set_distrib[k] = torch.any(
-                    torch.mm(self._viol_dirs[k], diff_values[k, :].view(-1, 1)) >= eps)
+                    torch.mm(self._viol_dirs[k].index_select(-1, self.event_select_inds),
+                             diff_values[k, :].view(-1, 1)) >= eps)
         # Get log probs from both distribs, and choose across
         # the batch based on presence in the infeasible cone
         return ((1. - use_outside_feasible_set_distrib) * self._within_feasible_set_distrib.log_prob(value) +
