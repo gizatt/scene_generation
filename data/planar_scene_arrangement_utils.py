@@ -14,19 +14,21 @@ except ImportError:
 
 import pydrake
 from pydrake.solvers import ik
-from pydrake.all import (
+from pydrake.attic.multibody.shapes import (
+    Box,
+    VisualElement
+)
+from pydrake.attic.multibody.collision import CollisionElement
+from pydrake.attic.multibody.rigid_body import RigidBody
+from pydrake.attic.multibody.joints import RollPitchYawFloatingJoint
+from pydrake.attic.multibody.rigid_body_tree import (
     AddFlatTerrainToWorld,
     AddModelInstancesFromSdfString,
     AddModelInstanceFromUrdfFile,
-    Box,
-    CollisionElement,
     FloatingBaseType,
-    RigidBodyFrame,
     RigidBodyTree,
-    RollPitchYawFloatingJoint,
-    VisualElement
+    RigidBodyFrame
 )
-from pydrake.multibody.rigid_body import RigidBody
 from underactuated import PlanarRigidBodyVisualizer
 
 
