@@ -1,5 +1,8 @@
 from collections import namedtuple
+import datetime
 import io
+import matplotlib
+matplotlib.use('Agg')  # noqa: E402
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,6 +31,7 @@ import torch
 import torch.distributions.constraints as constraints
 
 import scene_generation.data.planar_scene_arrangement_utils as psa_utils
+import scene_generation.differentiable_nlp as diff_nlp
 
 
 class DataWrapperForObs:
@@ -86,7 +90,7 @@ class ObjectWorldPriorDescription:
             dist.LogNormal(
                 prior_vars_by_class[class_name]["mean"],
                 prior_vars_by_class[class_name]["var"]).to_event(1))
-        self.dist = dist.MultivariateNormal(self.mean, torch.diag(self.var))
+        self.dist = dist.Normal(self.mean, self.var).to_event(1)
 
 
 class MultiObjectMultiClassModel():
@@ -134,12 +138,11 @@ class MultiObjectMultiClassModel():
         n_samples[:] = 0
         for i, env in enumerate(envs):
             n_samples[i] = env["n_objects"]
-            for k in range(self.n_object_classes):
-                if k < env["n_objects"]:
-                    obj = env["obj_%04d" % k]
-                    idents[i, k] = self.object_class_to_index[obj["class"]]
-                    poses[i, (k*3):(k*3+3)] = torch.Tensor(obj["pose"])
-                    present[i, k] = 1
+            for k in range(env["n_objects"]):
+                obj = env["obj_%04d" % k]
+                idents[i, k] = self.object_class_to_index[obj["class"]]
+                poses[i, (k*3):(k*3+3)] = torch.Tensor(obj["pose"])
+                present[i, k] = 1
         return VectorizedEnvironments(
             idents=idents, poses=poses,
             present=present, n_samples=n_samples)
@@ -171,14 +174,14 @@ class MultiObjectMultiClassModel():
             return None
         previous_object_classes = generated_data.idents[row_i, 0:iter_i+1].cpu().detach().numpy()
         previous_object_classes[-1] = ci[row_i]
-        class_string = "_".join([object_classes[cj] for cj in previous_object_classes])
+        class_string = "_".join([self.object_classes[cj] for cj in previous_object_classes])
 
         if class_string not in self.rbts_cache.keys():
             # Cache miss, generate the RBT
             env = {"n_objects": iter_i+1}
             for iter_j in range(iter_i+1):
                 env["obj_%04d" % iter_j] = {
-                    "class": object_classes[previous_object_classes[iter_j]],
+                    "class": self.object_classes[previous_object_classes[iter_j]],
                     "pose": np.zeros(3)
                 }
             new_rbt, _ = psa_utils.build_rbt_from_summary(env)
@@ -216,8 +219,10 @@ class MultiObjectMultiClassModel():
         # AutoGuideList does not support sequential pyro.plate.
         for k in pyro.plate("class_prior_mixture_%d" % (i),
                             self.n_object_classes):
-            pre_poses_part = pyro.sample('pre_poses_%d_%d' % (i, k),
-                                         object_world_priors[k].dist)
+            pre_poses_part = poutine.mask(
+                lambda: pyro.sample('pre_poses_%d_%d' % (i, k),
+                                    object_world_priors[k].dist),
+                keep_going)()
             pre_poses_by_class.append(pre_poses_part)
 
         # Turn ci indices into a one-hot so we can select out the poses.
@@ -229,7 +234,6 @@ class MultiObjectMultiClassModel():
 
         # Replace projection with a fixed-variance operation that
         # doesn't move the pose far, with the same site name.
-        #print ci, i, keep_going, pre_poses
         if not self.use_projection:
             new_pose = poutine.mask(
                 lambda: pyro.sample(
@@ -253,7 +257,7 @@ class MultiObjectMultiClassModel():
                 q0_fixed = None
 
             # Build an RBT for each row in the batch...
-            rbts = [build_rbt_from_generated_row_and_new_object(
+            rbts = [self._buildRbtFromGeneratedRowAndNewObject(
                         generated_data, k, i, ci)
                     for k in range(generated_data.poses.shape[0])]
 
@@ -330,9 +334,11 @@ class MultiObjectMultiClassModel():
             # (since we can directly observe this from data)
             gt_n_samples = None
             if data is not None:
-                gt_n_samples = data.n_samples[subsample_inds]
-            num_samples = pyro.sample("num_samples", sample_distribution,
-                                      obs=gt_n_samples)
+                gt_n_samples = data.n_samples[subsample_inds] - \
+                               self.min_num_objects
+            num_samples = pyro.sample(
+                    "num_samples", sample_distribution,
+                    obs=gt_n_samples) + self.min_num_objects
             generated_data.n_samples[:] = num_samples
 
             # Go and spawn each object in order!
@@ -344,7 +350,6 @@ class MultiObjectMultiClassModel():
                     gt_class = data.idents[subsample_inds, i]
                     gt_pose = data.poses[subsample_inds, (i*3):(i*3+3)]
                     gt_keep_going = data.present[subsample_inds, i]
-
                 keep_going = (i < num_samples)
                 ci = self._SampleObjectClass(generated_data, i,
                                              keep_going, gt_class)
@@ -362,7 +367,7 @@ class MultiObjectMultiClassModel():
                 generated_data.present[:, i] = keep_going
         return generated_data
 
-    def generation_guide(self, data, subsample_size=None):
+    def generation_guide(self, data=None, subsample_size=None):
         for class_name in self.object_classes:
             pyro.module(class_name + "_inference_module",
                         self.inference_modules[class_name])
@@ -406,8 +411,11 @@ class MultiObjectMultiClassModel():
                            constraint=constraints.simplex)).to_event(1))
         sample_distribution = dist.Categorical(sample_rates)
 
+
         # Generate in vectorized form for easier batch conversion at the end
-        data_batch_size = 1
+        if data is None:
+            return
+        data_batch_size = 0
         if not isinstance(data, VectorizedEnvironments):
             raise ValueError("Expected VectorizedEnvironments input")
         if (data.idents.shape[1] != self.max_num_objects and
@@ -418,6 +426,7 @@ class MultiObjectMultiClassModel():
         projection_var = pyro.param(
             "projection_var", torch.tensor([0.05, 0.05, 0.05]),
             constraint=constraints.positive)
+
         with pyro.plate('data', size=data_batch_size,
                         subsample_size=subsample_size) as subsample_inds:
             # Go and spawn each object in order!
@@ -438,9 +447,10 @@ class MultiObjectMultiClassModel():
                 for k in pyro.plate("class_prior_mixture_%d" % (i),
                                     self.n_object_classes):
                     # Predict prior pose from appropriate network
-                    pred_pose = self.inference_modules[self.object_classes[k]](
-                        pose)
-                    pre_poses_part = poutine.mask(lambda: pyro.sample(
+                    pred_pose = pose # self.inference_modules[self.object_classes[k]](
+                        # pose)
+                    pre_poses_part = poutine.mask(
+                        lambda: pyro.sample(
                             'pre_poses_%d_%d' % (i, k),
                             dist.Normal(pred_pose, projection_var).to_event(1)),
                         keep_going)()
@@ -483,9 +493,36 @@ def draw_environment(environment, ax):
     draw_rbt(ax, rbt, q)
 
 
+def sample_drawn_environments_to_tensorboard(writer, model, global_step=None, use_curr_params=True):
+    plt.figure().set_size_inches(12, 12)
+    print "Selection of environments from prior / generative model"
+    N = 3
+
+    def draw_from_model():
+        if use_curr_params:
+            guide_trace = poutine.trace(model.generation_guide).get_trace()
+            return poutine.replay(model.model, guide_trace)()
+        else:
+            return model.model()
+    for i in range(N):
+        for j in range(N):
+            plt.subplot(N, N, i*N+j+1)
+            draw_environment(model.devectorizeEnvironments(
+                draw_from_model())[0], plt.gca())
+            plt.grid(True)
+    plt.tight_layout()
+    writer.add_figure('GeneratedEnvsSample', plt.gcf(),
+                      global_step=global_step)
+    plt.close()
+
+
+def write_np_array(writer, name, x, i):
+    for yi, y in enumerate(x):
+        writer.add_scalar(name + "_%d" % yi, y, i)
+
+
 if __name__ == "__main__":
     pyro.enable_validation(True)
-    writer = SummaryWriter()
 
     # These scenes include normally randomly distributed nonpenetrating
     # object arrangements with mu = 0.5, 0.5, pi and sigma=0.1, 0.1, pi/2
@@ -495,25 +532,17 @@ if __name__ == "__main__":
 
     max_num_objects = 2
     model = MultiObjectMultiClassModel(
-        use_projection=False,
+        use_projection=True,
         use_amortization=True,
         max_num_objects=max_num_objects,
         min_num_objects=0)
 
-    plt.figure().set_size_inches(12, 12)
-    print "Selection of environments from prior / generative model"
-    N = 3
-
-    for i in range(N):
-        for j in range(N):
-            plt.subplot(N, N, i*N+j+1)
-            draw_environment(model.devectorizeEnvironments(
-                model.model())[0], plt.gca())
-            plt.grid(True)
-    plt.tight_layout()
-    writer.add_figure('GeneratedEnvsSample', plt.gcf())
-    plt.close()
-
+    log_dir = "runs/min{}_max{}/proj{}/".format(
+        model.min_num_objects,
+        model.max_num_objects,
+        model.use_projection) + datetime.datetime.now().strftime(
+            "%Y-%m-%d-%H-%m-%s")
+    writer = SummaryWriter(log_dir)
 
     data = model.vectorizeEnvironments(environments["train"])
 
@@ -553,7 +582,7 @@ if __name__ == "__main__":
     scheduler = pyro.optim.StepLR(
         {"optimizer": optimizer,
          'optim_args': per_param_args,
-         'gamma': 0.25, 'step_size': 100})
+         'gamma': 0.25, 'step_size': 250})
     elbo = Trace_ELBO(max_plate_nesting=1, num_particles=4)
     svi = SVI(model.model, model.generation_guide, scheduler, loss=elbo)
 
@@ -564,20 +593,23 @@ if __name__ == "__main__":
     snapshots = {}
     start_time = time.time()
     avg_duration = None
-    num_iters = 301
+    num_iters = 501
     for i in range(num_iters):
         loss = svi.step(data, subsample_size=25)
         losses.append(loss)
-        loss_valid = svi.evaluate_loss(data_valid, subsample_size=50)
-        losses_valid.append(loss_valid)
-
         writer.add_scalar('loss', loss, i)
-        writer.add_scalar('loss_valid', loss_valid, i)
+
+        if (i % 10 == 0):
+            loss_valid = svi.evaluate_loss(data_valid, subsample_size=50)
+            losses_valid.append(loss_valid)
+            writer.add_scalar('loss_valid', loss_valid, i)
 
         for p in interesting_params:
             if p not in snapshots.keys():
                 snapshots[p] = []
             snapshots[p].append(pyro.param(p).cpu().detach().numpy().copy())
+            if p == "auto_small_box_mean_mean":
+                write_np_array(writer, p, snapshots[p][-1], i)
 
         elapsed = time.time() - start_time
         if avg_duration is None:
@@ -586,7 +618,10 @@ if __name__ == "__main__":
             avg_duration = avg_duration*0.9 + elapsed*0.1
         start_time = time.time()
         if (i % 10 == 0):
-            print "Loss %f (%f), Per iter: %f, To go: %f" % (loss, loss_valid, elapsed, (num_iters - i)*elapsed)
-        if (i % 10 == 0):
+            print "Loss %f (%f), Per iter: %f, To go: %f" % (
+                loss, loss_valid, elapsed, (num_iters - i)*elapsed)
             print select_interesting()
+        if (i % 25 == 0):
+            sample_drawn_environments_to_tensorboard(writer, model, global_step=i)
+
     print "Done"
