@@ -447,8 +447,8 @@ class MultiObjectMultiClassModel():
                 for k in pyro.plate("class_prior_mixture_%d" % (i),
                                     self.n_object_classes):
                     # Predict prior pose from appropriate network
-                    pred_pose = pose # self.inference_modules[self.object_classes[k]](
-                        # pose)
+                    pred_pose = self.inference_modules[self.object_classes[k]](
+                        pose)
                     pre_poses_part = poutine.mask(
                         lambda: pyro.sample(
                             'pre_poses_%d_%d' % (i, k),
@@ -518,7 +518,7 @@ def sample_drawn_environments_to_tensorboard(writer, model, global_step=None, us
 
 def write_np_array(writer, name, x, i):
     for yi, y in enumerate(x):
-        writer.add_scalar(name + "_%d" % yi, y, i)
+        writer.add_scalar(name + "/%d" % yi, y, i)
 
 
 if __name__ == "__main__":
@@ -532,7 +532,7 @@ if __name__ == "__main__":
 
     max_num_objects = 2
     model = MultiObjectMultiClassModel(
-        use_projection=True,
+        use_projection=False,
         use_amortization=True,
         max_num_objects=max_num_objects,
         min_num_objects=0)
@@ -564,10 +564,14 @@ if __name__ == "__main__":
     print "GUIDE WITH ARGS RUN SUCCESSFULLY"
     #print(trace.format_shapes())
 
+    #interesting_params = pyro.get_param_store().get_all_param_names()
+    #print interesting_params
     interesting_params = ["auto_small_box_mean_mean",
                           "auto_small_box_var_mean",
-                          #"auto_long_box_mean", "auto_long_box_var",
-                          "auto_num_objects_weights"]
+                          "auto_small_box_mean_var",
+                          "auto_small_box_var_var",
+                          "auto_num_objects_weights",
+                          "projection_var"]
 
     def select_interesting():
         return dict((p, pyro.param(p)) for p in interesting_params)
@@ -576,13 +580,13 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam
     def per_param_args(module_name, param_name):
         if module_name == 'inference_module':
-            return {"lr": 0.01, 'betas': [0.9, 0.99]}
+            return {"lr": 0.05, 'betas': [0.9, 0.99]}
         else:
-            return {'lr': 0.1, 'betas': [0.9, 0.99]}
+            return {'lr': 0.2, 'betas': [0.9, 0.99]}
     scheduler = pyro.optim.StepLR(
         {"optimizer": optimizer,
          'optim_args': per_param_args,
-         'gamma': 0.25, 'step_size': 250})
+         'gamma': 0.5, 'step_size': 100})
     elbo = Trace_ELBO(max_plate_nesting=1, num_particles=4)
     svi = SVI(model.model, model.generation_guide, scheduler, loss=elbo)
 
@@ -593,13 +597,13 @@ if __name__ == "__main__":
     snapshots = {}
     start_time = time.time()
     avg_duration = None
-    num_iters = 501
+    num_iters = 1001
     for i in range(num_iters):
         loss = svi.step(data, subsample_size=25)
         losses.append(loss)
         writer.add_scalar('loss', loss, i)
 
-        if (i % 10 == 0):
+        if (i % 5 == 0):
             loss_valid = svi.evaluate_loss(data_valid, subsample_size=50)
             losses_valid.append(loss_valid)
             writer.add_scalar('loss_valid', loss_valid, i)
@@ -608,8 +612,7 @@ if __name__ == "__main__":
             if p not in snapshots.keys():
                 snapshots[p] = []
             snapshots[p].append(pyro.param(p).cpu().detach().numpy().copy())
-            if p == "auto_small_box_mean_mean":
-                write_np_array(writer, p, snapshots[p][-1], i)
+            write_np_array(writer, p, snapshots[p][-1], i)
 
         elapsed = time.time() - start_time
         if avg_duration is None:
