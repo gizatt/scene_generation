@@ -34,6 +34,8 @@ from pydrake.multibody.plant import (
 
 
 class ScenesDataset(Dataset):
+    ''' Each entry in the dataset is an environment dictionary entry
+    from the scene yaml file without further processing. '''
     def __init__(self, yaml_file):
         with open(yaml_file, "r") as f:
             raw_yaml_environments = yaml.load(f, Loader=Loader)
@@ -48,6 +50,79 @@ class ScenesDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.yaml_environments[idx]
+
+
+class ScenesDatasetVectorized(Dataset):
+    '''
+        Each entry is a set of the following:
+        - a keep_going binary vector 1 x max_num_objects in size
+        - a class integer vector, 1 x max_num_objects in size,
+            with mapping to object names queriable from this class.
+        - a list of n_classes float vectors of size
+                1 x max_num_objects x pose_size + param_size
+            representing generated object poses, with zeros for those
+            classes not generated.
+    '''
+
+    def __init__(self, yaml_file, max_num_objects=None):
+        with open(yaml_file, "r") as f:
+            raw_yaml_environments = yaml.load(f, Loader=Loader)
+
+        # Get them into a list format for more efficient extraction.
+        self.yaml_environments, self.yaml_environments_names = zip(*[
+            (raw_yaml_environments[k], k) for k in raw_yaml_environments.keys()
+            ])
+
+        self.class_name_to_id = {}
+        self.class_id_to_name = []
+
+        # If we don't know the max # of objs, figure it out
+        if max_num_objects is None:
+            max_num_objects = max([
+                env["n_objects"] for env in self.yaml_environments])
+
+        # Vectorize
+        self.n_envs = len(self.yaml_environments)
+        self.keep_going = torch.zeros(self.n_envs, max_num_objects,
+                                      dtype=torch.int8)
+        self.classes = torch.zeros(self.n_envs, max_num_objects,
+                                   dtype=torch.int8) - 1
+        self.params_by_class = []
+
+        for env_i, env in enumerate(self.yaml_environments):
+            self.keep_going[env_i, 0:env["n_objects"]] = 1
+            for k in range(env["n_objects"]):
+                obj_yaml = env["obj_%04d" % k]
+                # New object, initialize its generated params
+                pose = obj_yaml["pose"]
+                params = obj_yaml["params"]
+                if obj_yaml["class"] not in self.class_name_to_id.keys():
+                    class_id = len(self.class_name_to_id)
+                    self.class_id_to_name.append(obj_yaml["class"])
+                    self.class_name_to_id[obj_yaml["class"]] = class_id
+                    self.params_by_class.append(
+                        torch.zeros(self.n_envs, max_num_objects,
+                                    len(pose) + len(params)))
+                else:
+                    class_id = self.class_name_to_id[obj_yaml["class"]]
+                self.classes[env_i, k] = class_id
+                self.params_by_class[class_id][env_i, k, :] = torch.tensor(
+                    pose + params)
+
+    def get_class_name_from_id(self, i):
+        if i == -1:
+            return 'none'
+        return self.class_id_to_name[i]
+
+    def __len__(self):
+        return self.n_envs
+
+    # This might not / should not get used if we're using Pyro,
+    # since Pyro handles its own subsampling / batching.
+    def __getitem__(self, idx):
+        return (self.keep_going[idx, :],
+                self.classes[idx, :],
+                [p[idx, :] for p in self.params_by_class])
 
 
 def RegisterVisualAndCollisionGeometry(
@@ -136,11 +211,11 @@ def BuildMbpAndSgFromYamlEnvironment(
             mbp.AddJoint(body_joint_theta)
 
             if obj_yaml["class"] == "2d_sphere":
-                radius = obj_yaml["radius"]
+                radius = obj_yaml["params"][0]
                 body_shape = Sphere(radius)
             elif obj_yaml["class"] == "2d_box":
-                length = obj_yaml["length"]
-                height = obj_yaml["height"]
+                height = obj_yaml["params"][0]
+                length = obj_yaml["params"][1]
                 body_shape = Box(length, 0.25, height)
             else:
                 raise NotImplementedError(
@@ -179,7 +254,12 @@ def BuildMbpAndSgFromYamlEnvironment(
 
 
 if __name__ == "__main__":
-    dataset = ScenesDataset("../planar_bin_static_scenes.yaml")
+    dataset = ScenesDataset("planar_bin/planar_bin_static_scenes.yaml")
     print dataset[10]
     print BuildMbpAndSgFromYamlEnvironment(dataset[10], "planar_bin")
+
+    dataset_vectorized = ScenesDatasetVectorized(
+        "planar_bin/planar_bin_static_scenes.yaml")
+    print len(dataset_vectorized), dataset_vectorized[10]
+
     print("Done")
