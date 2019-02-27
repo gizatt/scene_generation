@@ -123,7 +123,8 @@ def generate_example():
             body_shape = Sphere(radius)
             output_dict["obj_%04d" % k] = {
                 "class": "2d_sphere",
-                "radius": radius,
+                "params": [radius],
+                "params_names": ["radius"],
                 "color": color.tolist(),
                 "pose": [0, 0, 0]
             }
@@ -134,8 +135,8 @@ def generate_example():
             color = np.array([0.5, 0.25, np.random.uniform(0.5, 0.8), 1.0])
             output_dict["obj_%04d" % k] = {
                 "class": "2d_box",
-                "length": length,
-                "height": height,
+                "params": [height, length],
+                "params_names": ["height", "length"],
                 "color": color.tolist(),
                 "pose": [0, 0, 0]
             }
