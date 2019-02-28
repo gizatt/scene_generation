@@ -5,6 +5,8 @@ import matplotlib
 matplotlib.use('Agg')  # noqa: E402
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+# Must be before torch.
+import pydrake
 import numpy as np
 import scipy as sp
 import scipy.stats
@@ -195,6 +197,12 @@ class MultiObjectMultiClassModel():
         else:
             data_batch_size = data.batch_size
 
+        generated_keep_going = []
+        generated_classes = []
+        generated_params_by_class = [[] for i in range(self.num_classes)]
+        generated_encodings = []
+        generated_contexts = []
+
         with pyro.plate('data', size=data_batch_size) as subsample_inds:
             if data is not None:
                 data_sub = dataset_utils.SubsampleVectorizedEnvironments(
@@ -218,6 +226,24 @@ class MultiObjectMultiClassModel():
                             object_i, data, minibatch_size, context),
                         keep_going)()
 
+                generated_keep_going.append(keep_going)
+                generated_classes.append(new_class)
+                for k in range(self.num_classes):
+                    generated_params_by_class[k].append(sampled_params[k])
+                generated_encodings.append(encoded_params)
+                generated_contexts.append(context)
+
+        # Reassemble the output VectorizedEnvironments
+        generated_data = dataset_utils.VectorizedEnvironments(
+            batch_size=minibatch_size,
+            keep_going=torch.stack(generated_keep_going, -1),
+            classes=torch.stack(generated_classes, -1),
+            params_by_class=[
+                torch.stack(p, -2) for p in generated_params_by_class])
+        return (generated_data,
+                torch.stack(generated_encodings, -1),
+                torch.stack(generated_contexts, -1))
+
 
 if __name__ == "__main__":
     pyro.enable_validation(True)
@@ -233,21 +259,34 @@ if __name__ == "__main__":
     writer = SummaryWriter(log_dir)
 
     pyro.clear_param_store()
-    trace = poutine.trace(model.model).get_trace()
-    trace.compute_log_prob()
-    print "MODEL WITH NO ARGS RUN SUCCESSFULLY"
-    # print(trace.format_shapes())
+    generated_data, generated_encodings, generated_contexts = model.model()
+    print generated_data, generated_encodings, generated_contexts
 
-    pyro.clear_param_store()
-    trace = poutine.trace(model.model).get_trace(
-        dataset_utils.SubsampleVectorizedEnvironments(
-            data, [0, 1, 2]))
-    trace.compute_log_prob()
-    print "MODEL WITH ARGS RUN SUCCESSFULLY"
-    #print(trace.format_shapes())
+    # Convert that data back to a YAML environment, which is easier to
+    # handle.
+    scene_yaml = scenes_dataset.convert_vectorized_environment_to_yaml(
+        generated_data)
+    print dataset_utils.BuildMbpAndSgFromYamlEnvironment(
+        scene_yaml[0], "planar_bin")
+    dataset_utils.DrawYamlEnvironment(scene_yaml[0], "planar_bin")
 
-    pyro.clear_param_store()
-    trace = poutine.trace(model.generation_guide).get_trace(data, subsample_size=5)
-    trace.compute_log_prob()
-    print "GUIDE WITH ARGS RUN SUCCESSFULLY"
-    #print(trace.format_shapes())
+    #pyro.clear_param_store()
+    #trace = poutine.trace(model.model).get_trace()
+    #trace.compute_log_prob()
+    #print "MODEL WITH NO ARGS RUN SUCCESSFULLY"
+    ## print(trace.format_shapes())
+#
+    #pyro.clear_param_store()
+    #trace = poutine.trace(model.model).get_trace(
+    #    dataset_utils.SubsampleVectorizedEnvironments(
+    #        data, [0, 1, 2]))
+    #trace.compute_log_prob()
+    #print "MODEL WITH ARGS RUN SUCCESSFULLY"
+    ##print(trace.format_shapes())
+#
+    #pyro.clear_param_store()
+    #trace = poutine.trace(model.generation_guide).get_trace(data, subsample_size=5)
+    #trace.compute_log_prob()
+    #print "GUIDE WITH ARGS RUN SUCCESSFULLY"
+    ##print(trace.format_shapes())
+#

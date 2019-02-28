@@ -13,7 +13,9 @@ except ImportError:
     from yaml import Loader
 
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
+from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
+from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.geometry import (
     Box,
     HalfSpace,
@@ -104,6 +106,7 @@ class ScenesDatasetVectorized(Dataset):
         self.classes = torch.zeros(self.n_envs, self.max_num_objects,
                                    dtype=torch.long)
         self.params_by_class = []
+        self.params_names_by_class = []
 
         for env_i, env in enumerate(self.yaml_environments):
             self.keep_going[env_i, 0:env["n_objects"]] = 1
@@ -119,6 +122,7 @@ class ScenesDatasetVectorized(Dataset):
                     self.params_by_class.append(
                         torch.zeros(self.n_envs, self.max_num_objects,
                                     len(pose) + len(params)))
+                    self.params_names_by_class.append(obj_yaml["params_names"])
                 else:
                     class_id = self.class_name_to_id[obj_yaml["class"]]
                 self.classes[env_i, k] = class_id
@@ -126,6 +130,7 @@ class ScenesDatasetVectorized(Dataset):
                     pose + params)
 
     def get_num_params_by_class(self):
+        # Returns TOTAL # of params, including pose params.
         return [
             self.params_by_class[i].shape[-1]
             for i in range(self.get_num_classes())
@@ -148,6 +153,36 @@ class ScenesDatasetVectorized(Dataset):
         if i == -1:
             return 'none'
         return self.class_id_to_name[i]
+
+    def convert_vectorized_environment_to_yaml(self, data):
+        assert(isinstance(data, VectorizedEnvironments))
+        yaml_environments = []
+        for env_i in range(data.batch_size):
+            env = {}
+            for obj_i in range(self.max_num_objects):
+                if data.keep_going[env_i, obj_i] != 0:
+                    class_i = data.classes[env_i, obj_i]
+                    params_for_this_class = len(
+                        self.params_names_by_class[class_i])
+                    params = data.params_by_class[class_i][env_i, obj_i, :]
+                    pose_split = params[:-params_for_this_class]
+                    params_split = params[-params_for_this_class:]
+                    # Decode those, splitting off the last params as
+                    # params, and the first few as poses.
+                    # TODO(gizatt) Maybe I should collapse pose into params
+                    # in my datasets too...
+                    obj_entry = {"class": self.class_id_to_name[class_i],
+                                 "color": [np.random.uniform(0.5, 0.8), 1., 1., 0.5],
+                                 "pose": pose_split.tolist(),
+                                 "params": params_split.tolist(),
+                                 "params_names": self.params_names_by_class[
+                                    class_i]}
+                    env["obj_%04d" % obj_i] = obj_entry
+                else:
+                    break
+            env["n_objects"] = obj_i + 1
+            yaml_environments.append(env)
+        return yaml_environments
 
     def __len__(self):
         return self.n_envs
@@ -286,6 +321,31 @@ def BuildMbpAndSgFromYamlEnvironment(
             raise NotImplementedError(
                 "Haven't done position setting for 6DOF floating bases yet.")
     return builder, mbp, scene_graph, q0
+
+
+def DrawYamlEnvironment(yaml_environment, base_environment_type):
+    builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
+        yaml_environment, base_environment_type)
+    visualizer = builder.AddSystem(MeshcatVisualizer(
+                scene_graph,
+                zmq_url="tcp://127.0.0.1:6000",
+                draw_period=0.001))
+    builder.Connect(scene_graph.get_pose_bundle_output_port(),
+                    visualizer.get_input_port(0))
+    diagram = builder.Build()
+
+    diagram_context = diagram.CreateDefaultContext()
+    mbp_context = diagram.GetMutableSubsystemContext(
+        mbp, diagram_context)
+
+    sim = Simulator(diagram, diagram_context)
+    sim.Initialize()
+
+    poses = scene_graph.get_pose_bundle_output_port().Eval(
+        diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    mbp.SetPositions(mbp_context, q0)
+    visualizer._DoPublish(mbp_context, [])
+    visualizer._DoPublish(mbp_context, [])
 
 
 if __name__ == "__main__":

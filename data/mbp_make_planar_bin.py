@@ -78,7 +78,7 @@ def generate_example():
         wall_shape, "wall_px",
         np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
 
-    n_bodies = np.random.randint(1, 20)
+    n_bodies = min(np.random.geometric(0.2), 20)
     output_dict = {"n_objects": n_bodies}
 
     for k in range(n_bodies):
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     for example_num in range(1000):
         try:
             output_dict = generate_example()
-            with open("planar_bin_static_scenes.yaml", "a") as file:
+            with open("planar_bin_static_scenes_geometric.yaml", "a") as file:
                 yaml.dump({"env_%d" % int(round(time.time() * 1000)):
                            output_dict},
                           file)
