@@ -57,6 +57,9 @@ class MultiObjectMultiClassModel():
                     torch.nn.Linear(H, output_size),
                 )
             )
+        self.context_updater = torch.nn.GRU(
+            input_size=self.context_size,
+            hidden_size=10)
 
     def _create_empty_context(self, minibatch_size):
         return torch.zeros(minibatch_size, self.context_size)
@@ -153,16 +156,15 @@ class MultiObjectMultiClassModel():
         one_hot = torch.zeros(new_class.shape + (self.num_classes,))
         one_hot.scatter_(1, new_class.unsqueeze(1), 1)
         one_hot = one_hot.view(-1, 1, self.num_classes)
-        print "one_hot: ", one_hot.shape, one_hot
-        print "encoded components: ", encoded_components[0].shape, encoded_components
         stacked_components = torch.stack(encoded_components, dim=1)
-        print "Stacked components: ", stacked_components.shape, stacked_components
         collapsed_components = one_hot.matmul(stacked_components).view(
             new_class.shape[0], self.context_size)
         return collapsed_components
 
-    def _update_context(self, context, encoded_params):
-        return context + encoded_params
+    def _update_context(self, encoded_params, context):
+        return self.context_updater(
+            encoded_params.view(1, -1, self.class_general_encoded_size),
+            context.view(1, -1, self.context_size))[-1]
 
     def _sample_single_object(self, object_i, data, batch_size, context):
         # Sample the new object type
@@ -175,21 +177,16 @@ class MultiObjectMultiClassModel():
             data, object_i)
         sampled_params = self._sample_class_specific_generators(
             object_i, batch_size, context, new_class, observed_params)
-        print "Generated classes: ", new_class
-        for class_i in range(self.num_classes):
-            print "Class {}:".format(class_i)
-            print sampled_params[class_i]
-            print "vs observed: ",
-            print observed_params[class_i]
         # Update the context by encoding the new params
         # into a fixed-size vector through a class-specific encoder.
         encoded_params = self._apply_class_specific_encoders(
             context, new_class, sampled_params)
         context = self._update_context(
-            context, encoded_params)
-        return context
+            encoded_params, context)
+        return new_class, sampled_params, encoded_params, context
 
     def model(self, data=None):
+        pyro.module("context_updater_module", self.context_updater)
         for class_i in range(self.num_classes):
             pyro.module("class_encoder_module_{}".format(class_i),
                         self.class_encoders[class_i])
@@ -215,10 +212,11 @@ class MultiObjectMultiClassModel():
                     object_i, minibatch_size, context, observed_keep_going)
 
                 # Do a generation step
-                context = poutine.mask(
-                    lambda: self._sample_single_object(
-                        object_i, data, minibatch_size, context),
-                    keep_going)()
+                new_class, sampled_params, encoded_params, context = \
+                    poutine.mask(
+                        lambda: self._sample_single_object(
+                            object_i, data, minibatch_size, context),
+                        keep_going)()
 
 
 if __name__ == "__main__":
