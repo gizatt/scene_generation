@@ -1,3 +1,4 @@
+from collections import namedtuple
 import os
 # Pydrake must be imported before torch to avoid a weird segfault?
 import pydrake
@@ -52,6 +53,20 @@ class ScenesDataset(Dataset):
         return self.yaml_environments[idx]
 
 
+VectorizedEnvironments = namedtuple(
+    "VectorizedEnvironments",
+    ["batch_size", "keep_going", "classes", "params_by_class"],
+    verbose=False)
+
+
+def SubsampleVectorizedEnvironments(data, subsample_inds):
+    return VectorizedEnvironments(
+        batch_size=len(subsample_inds),
+        keep_going=data.keep_going[subsample_inds, ...],
+        classes=data.classes[subsample_inds, ...],
+        params_by_class=[p[subsample_inds, ...] for p in data.params_by_class])
+
+
 class ScenesDatasetVectorized(Dataset):
     '''
         Each entry is a set of the following:
@@ -78,15 +93,16 @@ class ScenesDatasetVectorized(Dataset):
 
         # If we don't know the max # of objs, figure it out
         if max_num_objects is None:
-            max_num_objects = max([
+            self.max_num_objects = max([
                 env["n_objects"] for env in self.yaml_environments])
+        else:
+            self.max_num_objects = max_num_objects
 
         # Vectorize
         self.n_envs = len(self.yaml_environments)
-        self.keep_going = torch.zeros(self.n_envs, max_num_objects,
-                                      dtype=torch.int8)
-        self.classes = torch.zeros(self.n_envs, max_num_objects,
-                                   dtype=torch.int8) - 1
+        self.keep_going = torch.zeros(self.n_envs, self.max_num_objects)
+        self.classes = torch.zeros(self.n_envs, self.max_num_objects,
+                                   dtype=torch.long)
         self.params_by_class = []
 
         for env_i, env in enumerate(self.yaml_environments):
@@ -101,13 +117,32 @@ class ScenesDatasetVectorized(Dataset):
                     self.class_id_to_name.append(obj_yaml["class"])
                     self.class_name_to_id[obj_yaml["class"]] = class_id
                     self.params_by_class.append(
-                        torch.zeros(self.n_envs, max_num_objects,
+                        torch.zeros(self.n_envs, self.max_num_objects,
                                     len(pose) + len(params)))
                 else:
                     class_id = self.class_name_to_id[obj_yaml["class"]]
                 self.classes[env_i, k] = class_id
                 self.params_by_class[class_id][env_i, k, :] = torch.tensor(
                     pose + params)
+
+    def get_num_params_by_class(self):
+        return [
+            self.params_by_class[i].shape[-1]
+            for i in range(self.get_num_classes())
+        ]
+
+    def get_max_num_objects(self):
+        return self.max_num_objects
+
+    def get_num_classes(self):
+        return len(self.class_id_to_name)
+
+    def get_full_dataset(self):
+        return VectorizedEnvironments(
+            batch_size=self.n_envs,
+            keep_going=self.keep_going,
+            classes=self.classes,
+            params_by_class=self.params_by_class)
 
     def get_class_name_from_id(self, i):
         if i == -1:
@@ -261,5 +296,6 @@ if __name__ == "__main__":
     dataset_vectorized = ScenesDatasetVectorized(
         "planar_bin/planar_bin_static_scenes.yaml")
     print len(dataset_vectorized), dataset_vectorized[10]
+    print dataset_vectorized.get_full_dataset()
 
     print("Done")
