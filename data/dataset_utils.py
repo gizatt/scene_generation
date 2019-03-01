@@ -159,8 +159,10 @@ class ScenesDatasetVectorized(Dataset):
         yaml_environments = []
         for env_i in range(data.batch_size):
             env = {}
+            max_obj_i = 0
             for obj_i in range(self.max_num_objects):
                 if data.keep_going[env_i, obj_i] != 0:
+                    max_obj_i = obj_i
                     class_i = data.classes[env_i, obj_i]
                     params_for_this_class = len(
                         self.params_names_by_class[class_i])
@@ -180,7 +182,7 @@ class ScenesDatasetVectorized(Dataset):
                     env["obj_%04d" % obj_i] = obj_entry
                 else:
                     break
-            env["n_objects"] = obj_i + 1
+            env["n_objects"] = max_obj_i
             yaml_environments.append(env)
         return yaml_environments
 
@@ -329,7 +331,7 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type):
     visualizer = builder.AddSystem(MeshcatVisualizer(
                 scene_graph,
                 zmq_url="tcp://127.0.0.1:6000",
-                draw_period=0.001))
+                draw_period=0.0))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
     diagram = builder.Build()
