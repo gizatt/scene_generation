@@ -88,7 +88,7 @@ class MultiObjectMultiClassModel():
         # which is uniform...
         keep_going_params = pyro.param(
             "keep_going_weights".format(object_i),
-            torch.ones(self.max_num_objects)*0.5,
+            torch.ones(self.max_num_objects)*0.9,
             constraint=constraints.interval(0, 1))[object_i]
         return pyro.sample("keep_going_%d" % object_i,
                            dist.Bernoulli(keep_going_params),
