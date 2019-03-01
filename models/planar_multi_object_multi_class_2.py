@@ -2,7 +2,6 @@ from collections import namedtuple
 import datetime
 import io
 import matplotlib
-matplotlib.use('Agg')  # noqa: E402
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 # Must be before torch.
@@ -88,9 +87,9 @@ class MultiObjectMultiClassModel():
         # TODO(gizatt) This is a bad fit for the data I just generated,
         # which is uniform...
         keep_going_params = pyro.param(
-            "keep_going_weight",
-            torch.ones(1),
-            constraint=constraints.positive)
+            "keep_going_weights".format(object_i),
+            torch.ones(self.max_num_objects)*0.5,
+            constraint=constraints.interval(0, 1))[object_i]
         return pyro.sample("keep_going_%d" % object_i,
                            dist.Bernoulli(keep_going_params),
                            obs=observed_keep_going) == 1.
@@ -125,10 +124,10 @@ class MultiObjectMultiClassModel():
         for class_i in range(self.num_classes):
             def sample_params():
                 params_means = pyro.param(
-                    "params_means_{}_{}".format(object_i, class_i),
+                    "params_means_{}".format(class_i),
                     torch.zeros(self.num_params_by_class[class_i]))
                 params_vars = pyro.param(
-                    "params_vars_{}_{}".format(object_i, class_i),
+                    "params_vars_{}".format(class_i),
                     torch.ones(self.num_params_by_class[class_i]),
                     constraint=constraints.positive)
                 return pyro.sample(
@@ -187,7 +186,7 @@ class MultiObjectMultiClassModel():
             encoded_params, context)
         return new_class, sampled_params, encoded_params, context
 
-    def model(self, data=None):
+    def model(self, data=None, subsample_size=None):
         pyro.module("context_updater_module", self.context_updater)
         for class_i in range(self.num_classes):
             pyro.module("class_encoder_module_{}".format(class_i),
@@ -258,32 +257,45 @@ if __name__ == "__main__":
         "%Y-%m-%d-%H-%m-%s")
     writer = SummaryWriter(log_dir)
 
+    start = time.time()
     pyro.clear_param_store()
     generated_data, generated_encodings, generated_contexts = model.model()
-    print generated_data, generated_encodings, generated_contexts
 
     # Convert that data back to a YAML environment, which is easier to
     # handle.
     scene_yaml = scenes_dataset.convert_vectorized_environment_to_yaml(
         generated_data)
-    print dataset_utils.BuildMbpAndSgFromYamlEnvironment(
-        scene_yaml[0], "planar_bin")
     dataset_utils.DrawYamlEnvironment(scene_yaml[0], "planar_bin")
+    end = time.time()
+    print "Time to generate and draw one scene: %fs" % (end - start)
 
-    #pyro.clear_param_store()
-    #trace = poutine.trace(model.model).get_trace()
-    #trace.compute_log_prob()
-    #print "MODEL WITH NO ARGS RUN SUCCESSFULLY"
-    ## print(trace.format_shapes())
+    start = time.time()
+    pyro.clear_param_store()
+    trace = poutine.trace(model.model).get_trace()
+    trace.compute_log_prob()
+    end = time.time()
+    #print(trace.format_shapes())
+    print "Time to run and do log probs with no args: %fs" % (end - start)
 #
-    #pyro.clear_param_store()
-    #trace = poutine.trace(model.model).get_trace(
-    #    dataset_utils.SubsampleVectorizedEnvironments(
-    #        data, [0, 1, 2]))
-    #trace.compute_log_prob()
-    #print "MODEL WITH ARGS RUN SUCCESSFULLY"
-    ##print(trace.format_shapes())
+    start = time.time()
+    pyro.clear_param_store()
+    trace = poutine.trace(model.model).get_trace(
+        dataset_utils.SubsampleVectorizedEnvironments(
+            data, [0, 1, 2]))
+    trace.compute_log_prob()
+    end = time.time()
+    print "Time to run and do log probs with 3 datapoints: %fs" % (end - start)
+    #print(trace.format_shapes())
 #
+
+    start = time.time()
+    pyro.clear_param_store()
+    trace = poutine.trace(model.model).get_trace(data)
+    trace.compute_log_prob()
+    end = time.time()
+    print "Time to run and do log probs with %d datapoints: %fs" % (
+        data.batch_size, end - start)
+
     #pyro.clear_param_store()
     #trace = poutine.trace(model.generation_guide).get_trace(data, subsample_size=5)
     #trace.compute_log_prob()
