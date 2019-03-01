@@ -159,7 +159,7 @@ class ScenesDatasetVectorized(Dataset):
         yaml_environments = []
         for env_i in range(data.batch_size):
             env = {}
-            max_obj_i = 0
+            max_obj_i = -1
             for obj_i in range(self.max_num_objects):
                 if data.keep_going[env_i, obj_i] != 0:
                     max_obj_i = obj_i
@@ -174,7 +174,7 @@ class ScenesDatasetVectorized(Dataset):
                     # TODO(gizatt) Maybe I should collapse pose into params
                     # in my datasets too...
                     obj_entry = {"class": self.class_id_to_name[class_i],
-                                 "color": [np.random.uniform(0.5, 0.8), 1., 1., 0.5],
+                                 "color": [np.random.uniform(0.5, 0.8), 0., 1., 1.0],
                                  "pose": pose_split.tolist(),
                                  "params": params_split.tolist(),
                                  "params_names": self.params_names_by_class[
@@ -182,7 +182,7 @@ class ScenesDatasetVectorized(Dataset):
                     env["obj_%04d" % obj_i] = obj_entry
                 else:
                     break
-            env["n_objects"] = max_obj_i
+            env["n_objects"] = max_obj_i + 1
             yaml_environments.append(env)
         return yaml_environments
 
@@ -348,6 +348,29 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type):
     mbp.SetPositions(mbp_context, q0)
     visualizer._DoPublish(mbp_context, [])
     visualizer._DoPublish(mbp_context, [])
+
+
+def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
+                              **kwargs):
+    builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
+        yaml_environment, base_environment_type)
+
+    from underactuated.planar_multibody_visualizer import (
+        PlanarMultibodyVisualizer)
+    visualizer = builder.AddSystem(
+        PlanarMultibodyVisualizer(scene_graph, **kwargs))
+    builder.Connect(scene_graph.get_pose_bundle_output_port(),
+                    visualizer.get_input_port(0))
+    diagram = builder.Build()
+
+    diagram_context = diagram.CreateDefaultContext()
+    mbp_context = diagram.GetMutableSubsystemContext(
+        mbp, diagram_context)
+    poses = scene_graph.get_pose_bundle_output_port().Eval(
+        diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    mbp.SetPositions(mbp_context, q0)
+    visualizer.draw(diagram.GetMutableSubsystemContext(
+        visualizer, diagram_context))
 
 
 if __name__ == "__main__":

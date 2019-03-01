@@ -39,6 +39,7 @@ from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.systems.rendering import PoseBundle
 
+from underactuated.planar_multibody_visualizer import PlanarMultibodyVisualizer
 
 def RegisterVisualAndCollisionGeometry(
         mbp, body, pose, shape, name, color, friction):
@@ -78,7 +79,7 @@ def generate_example():
         wall_shape, "wall_px",
         np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
 
-    n_bodies = min(np.random.geometric(0.2), 20)
+    n_bodies = np.random.randint(1, 20) #min(np.random.geometric(0.2), 20)
     output_dict = {"n_objects": n_bodies}
 
     for k in range(n_bodies):
@@ -154,6 +155,10 @@ def generate_example():
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
 
+    plt.gca().clear()
+    visualizer = builder.AddSystem(PlanarMultibodyVisualizer(scene_graph, ylim=[-0.5, 1.0], ax=plt.gca()))
+    builder.Connect(scene_graph.get_pose_bundle_output_port(),
+                    visualizer.get_input_port(0))
     diagram = builder.Build()
 
     diagram_context = diagram.CreateDefaultContext()
@@ -199,7 +204,7 @@ def generate_example():
     simulator = Simulator(diagram, diagram_context)
     simulator.set_target_realtime_rate(1.0)
     simulator.set_publish_every_time_step(False)
-    simulator.StepTo(10.0)
+    simulator.StepTo(5.0)
 
     # Update poses in output dict
     qf = mbp.GetPositions(mbp_context).copy().tolist()
@@ -220,12 +225,14 @@ if __name__ == "__main__":
     # Somewhere in the n=1000 range, I hit a
     # "Unhandled exception: Too many open files" error somewhere
     # between Meshcat setup and the print "Solving" line.
-    for example_num in range(1000):
+    import matplotlib.pyplot as plt
+    plt.plot(10, 10)
+    for example_num in range(100):
         try:
             output_dict = generate_example()
-            with open("planar_bin_static_scenes_geometric.yaml", "a") as file:
+            with open("planar_bin_static_scenes.yaml", "a") as file:
                 yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                           output_dict},
+                          output_dict},
                           file)
         except Exception as e:
             print "Unhandled exception: ", e
