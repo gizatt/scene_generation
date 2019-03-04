@@ -6,8 +6,8 @@ except ImportError:
     print "WARNING: Defaulting to non-C [slow] YAML loader."
     from yaml import Loader
 
-f = open("planar_bin_static_scenes.yaml", "r")
-fo = open("planar_bin_static_scenes_new.yaml", "w")
+f = open("planar_bin_static_scenes_stacks.yaml", "r")
+fo = open("planar_bin_static_scenes_stacks_new.yaml", "w")
 
 raw_yaml_environments = yaml.load(f, Loader=Loader)
 print "Starting with ", len(raw_yaml_environments), " environments."

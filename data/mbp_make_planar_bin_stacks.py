@@ -79,10 +79,10 @@ def generate_example():
         wall_shape, "wall_px",
         np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
 
-    n_stacks = np.random.randint(1, 5)
-    n_bodies_per_stack = np.random.randint(2, 5, size=n_stacks)
+    n_stacks = max(min(np.random.geometric(0.5), 3), 1)
+    n_bodies_per_stack = np.array([max(min(np.random.geometric(0.3), 5), 2) for k in range(n_stacks)])
     n_bodies = np.sum(n_bodies_per_stack)
-    output_dict = {"n_objects": n_bodies}
+    output_dict = {"n_objects": int(n_bodies)}
 
     k = 0
     for stack_i in range(n_stacks):
@@ -156,7 +156,7 @@ def generate_example():
 
     visualizer = builder.AddSystem(MeshcatVisualizer(
         scene_graph,
-        zmq_url="tcp://127.0.0.1:6000"))
+        zmq_url="tcp://127.0.0.1:6001"))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
 
@@ -190,9 +190,11 @@ def generate_example():
 
     constraint = ik.AddMinimumDistanceConstraint(0.01)
     prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
-    for i in range(n_bodies):
-        prog.AddBoundingBoxConstraint(-1, 1, q_dec[i*3])
-        prog.AddBoundingBoxConstraint(0, 1, q_dec[i*3+1])
+    for obj_i in range(n_bodies):
+        body_x_index = mbp.GetJointByName("body_{}_x".format(obj_i)).position_start()
+        body_z_index = mbp.GetJointByName("body_{}_z".format(obj_i)).position_start()
+        prog.AddBoundingBoxConstraint(-1, 1, q_dec[body_x_index])
+        prog.AddBoundingBoxConstraint(0, 2, q_dec[body_z_index])
 
     mbp.SetPositions(mbp_context, q0)
 
@@ -234,14 +236,21 @@ if __name__ == "__main__":
     # Somewhere in the n=1000 range, I hit a
     # "Unhandled exception: Too many open files" error somewhere
     # between Meshcat setup and the print "Solving" line.
-    import matplotlib.pyplot as plt
-    plt.plot(10, 10)
+    #import matplotlib.pyplot as plt
+    #plt.plot(10, 10)
     for example_num in range(100):
-        try:
-            output_dict = generate_example()
+        #try:
+            env = generate_example()
+            # Check if it's reasonable
+            for k in range(env["n_objects"]):
+                obj_yaml = env["obj_%04d" % k]
+                # Check if x or z is outside of bounds
+                pose = np.array(obj_yaml["pose"])
+                if pose[0] > 2.0 or pose[0] < -2.0 or pose[1] > 2.0 or pose[1] < 0.0:
+                    raise ValueError("Skipping scene due to bad projection.")
             with open("planar_bin_static_scenes_stacks.yaml", "a") as file:
                 yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                          output_dict},
+                          env},
                           file)
-        except Exception as e:
-            print "Unhandled exception: ", e
+       # except Exception as e:
+       #     print "Unhandled exception: ", e
