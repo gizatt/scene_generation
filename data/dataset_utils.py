@@ -1,5 +1,6 @@
 from collections import namedtuple
 import os
+from copy import deepcopy
 # Pydrake must be imported before torch to avoid a weird segfault?
 import pydrake
 import torch
@@ -16,6 +17,8 @@ from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
+from pydrake.multibody.inverse_kinematics import InverseKinematics
+from pydrake.systems.analysis import Simulator
 from pydrake.geometry import (
     Box,
     HalfSpace,
@@ -47,6 +50,9 @@ class ScenesDataset(Dataset):
         self.yaml_environments, self.yaml_environments_names = zip(*[
             (raw_yaml_environments[k], k) for k in raw_yaml_environments.keys()
             ])
+
+    def get_environment_index_by_name(self, env_name):
+        return self.yaml_environments_names.index(env_name)
 
     def __len__(self):
         return len(self.yaml_environments)
@@ -109,7 +115,9 @@ class ScenesDatasetVectorized(Dataset):
         self.params_names_by_class = []
 
         for env_i, env in enumerate(self.yaml_environments):
-            self.keep_going[env_i, 0:env["n_objects"]] = 1
+            # Keep-going is shifted by one -- it's whether to add an
+            # object *after* the ith.
+            self.keep_going[env_i, 0:env["n_objects"]-1] = 1
             for k in range(env["n_objects"]):
                 obj_yaml = env["obj_%04d" % k]
                 # New object, initialize its generated params
@@ -161,26 +169,25 @@ class ScenesDatasetVectorized(Dataset):
             env = {}
             max_obj_i = -1
             for obj_i in range(self.max_num_objects):
-                if data.keep_going[env_i, obj_i] != 0:
-                    max_obj_i = obj_i
-                    class_i = data.classes[env_i, obj_i]
-                    params_for_this_class = len(
-                        self.params_names_by_class[class_i])
-                    params = data.params_by_class[class_i][env_i, obj_i, :]
-                    pose_split = params[:-params_for_this_class]
-                    params_split = params[-params_for_this_class:]
-                    # Decode those, splitting off the last params as
-                    # params, and the first few as poses.
-                    # TODO(gizatt) Maybe I should collapse pose into params
-                    # in my datasets too...
-                    obj_entry = {"class": self.class_id_to_name[class_i],
-                                 "color": [np.random.uniform(0.5, 0.8), 0., 1., 1.0],
-                                 "pose": pose_split.tolist(),
-                                 "params": params_split.tolist(),
-                                 "params_names": self.params_names_by_class[
-                                    class_i]}
-                    env["obj_%04d" % obj_i] = obj_entry
-                else:
+                max_obj_i = obj_i
+                class_i = data.classes[env_i, obj_i]
+                params_for_this_class = len(
+                    self.params_names_by_class[class_i])
+                params = data.params_by_class[class_i][env_i, obj_i, :]
+                pose_split = params[:-params_for_this_class]
+                params_split = params[-params_for_this_class:]
+                # Decode those, splitting off the last params as
+                # params, and the first few as poses.
+                # TODO(gizatt) Maybe I should collapse pose into params
+                # in my datasets too...
+                obj_entry = {"class": self.class_id_to_name[class_i],
+                             "color": [np.random.uniform(0.5, 0.8), 0., 1., 1.0],
+                             "pose": pose_split.tolist(),
+                             "params": params_split.tolist(),
+                             "params_names": self.params_names_by_class[
+                                class_i]}
+                env["obj_%04d" % obj_i] = obj_entry
+                if data.keep_going[env_i, obj_i] == 0:
                     break
             env["n_objects"] = max_obj_i + 1
             yaml_environments.append(env)
@@ -302,6 +309,7 @@ def BuildMbpAndSgFromYamlEnvironment(
         RegisterVisualAndCollisionGeometry(
             mbp, body, Isometry3(), body_shape, "body_{}".format(k),
             color, CoulombFriction(0.9, 0.8))
+    mbp.AddForceElement(UniformGravityFieldElement())
     mbp.Finalize()
 
     # TODO(gizatt) When default position setting for all relevant
@@ -325,12 +333,80 @@ def BuildMbpAndSgFromYamlEnvironment(
     return builder, mbp, scene_graph, q0
 
 
-def DrawYamlEnvironment(yaml_environment, base_environment_type):
+def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
+                                    make_nonpenetrating=True,
+                                    make_static=True):
+    builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
+        yaml_environment, base_environment_type)
+    diagram = builder.Build()
+
+    diagram_context = diagram.CreateDefaultContext()
+    mbp_context = diagram.GetMutableSubsystemContext(
+        mbp, diagram_context)
+    sg_context = diagram.GetMutableSubsystemContext(
+        scene_graph, diagram_context)
+
+    outputs = []
+    
+    if make_nonpenetrating:
+        ik = InverseKinematics(mbp, mbp_context)
+        q_dec = ik.q()
+        prog = ik.prog()
+
+        constraint = ik.AddMinimumDistanceConstraint(0.01)
+        prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
+        for i in range(yaml_environment["n_objects"]):
+            body_x_index = mbp.GetJointByName("body_{}_x".format(i)).position_start()
+            body_z_index = mbp.GetJointByName("body_{}_z".format(i)).position_start()
+            body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
+            prog.AddBoundingBoxConstraint(-0.9, 0.9, q_dec[body_x_index])
+            prog.AddBoundingBoxConstraint(0, 2, q_dec[body_z_index])
+
+        mbp.SetPositions(mbp_context, q0)
+
+        prog.SetInitialGuess(q_dec, q0)
+        print "Initial guess: ", q0
+        print prog.Solve()
+        print prog.GetSolverId().name()
+        qf = prog.GetSolution(q_dec)
+        print "Final after nlp: ", qf
+        
+        outputs.append(qf.copy().tolist())
+    else:
+        qf = q0
+       
+    if make_static:
+        mbp.SetPositions(mbp_context, qf)
+
+        simulator = Simulator(diagram, diagram_context)
+        simulator.set_target_realtime_rate(1.0)
+        simulator.set_publish_every_time_step(False)
+        simulator.StepTo(5.0)
+        qf = mbp.GetPositions(mbp_context).copy()
+        outputs.append(qf.copy().tolist())
+        
+    # Update poses in output dict
+    output_dicts = []
+    for output_qf in outputs:
+        output_dict = deepcopy(yaml_environment)
+        for k in range(yaml_environment["n_objects"]):
+            x_index = mbp.GetJointByName("body_{}_x".format(k)).position_start()
+            z_index = mbp.GetJointByName("body_{}_z".format(k)).position_start()
+            t_index = mbp.GetJointByName("body_{}_theta".format(k)).position_start()
+
+            pose = [output_qf[x_index], output_qf[z_index], output_qf[t_index]]
+            output_dict["obj_%04d" % k]["pose"] = pose
+        output_dicts.append(output_dict)
+    return output_dicts
+
+    
+def DrawYamlEnvironment(yaml_environment, base_environment_type,
+                        zmq_url="tcp://127.0.0.1:6000"):
     builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
         yaml_environment, base_environment_type)
     visualizer = builder.AddSystem(MeshcatVisualizer(
                 scene_graph,
-                zmq_url="tcp://127.0.0.1:6000",
+                zmq_url=zmq_url,
                 draw_period=0.0))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
