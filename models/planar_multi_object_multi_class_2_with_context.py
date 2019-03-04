@@ -34,7 +34,7 @@ import torch.distributions.constraints as constraints
 import scene_generation.data.dataset_utils as dataset_utils
 
 
-class MultiObjectMultiClassModel():
+class MultiObjectMultiClassModelWithContext():
     def __init__(self, dataset, max_num_objects=20):
         assert(isinstance(dataset, dataset_utils.ScenesDatasetVectorized))
         self.context_size = 10
@@ -43,25 +43,77 @@ class MultiObjectMultiClassModel():
         self.num_classes = dataset.get_num_classes()
         self.num_params_by_class = dataset.get_num_params_by_class()
 
-        # Class-specific encoders
+        # Class-specific encoders and generators
+        self.class_means_generators = []
+        self.class_vars_generators = []
         self.class_encoders = []
         for class_i in range(self.num_classes):
-            input_size = self.num_params_by_class[class_i]
-            output_size = self.context_size
-            H = 10
-            self.class_encoders.append(
+            # Generator
+            input_size = self.context_size
+            output_size = self.num_params_by_class[class_i]
+            generator_H = 50
+            self.class_means_generators.append(
                 torch.nn.Sequential(
-                    torch.nn.Linear(input_size, H),
+                    torch.nn.Linear(input_size, generator_H),
                     torch.nn.ReLU(),
-                    torch.nn.Linear(H, H),
+                    torch.nn.Linear(generator_H, generator_H),
                     torch.nn.ReLU(),
-                    torch.nn.Linear(H, output_size),
+                    torch.nn.Linear(generator_H, output_size),
                 )
             )
+            self.class_vars_generators.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(input_size, generator_H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(generator_H, generator_H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(generator_H, output_size),
+                    torch.nn.Softplus()
+                )
+            )
+            # Encoder
+            input_size = self.num_params_by_class[class_i]
+            output_size = self.context_size
+            encoder_H = 10
+            self.class_encoders.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(input_size, encoder_H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(encoder_H, encoder_H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(encoder_H, output_size),
+                )
+            )
+            
         self.context_updater = torch.nn.GRU(
             input_size=self.context_size,
             hidden_size=10)
-
+        
+        # Keep going predictor:
+        # regresses bernoulli keep_going weight
+        # from current context
+        keep_going_H = 10
+        self.keep_going_controller = torch.nn.Sequential(
+            torch.nn.Linear(self.context_size, keep_going_H),
+            torch.nn.ReLU(),
+            torch.nn.Linear(keep_going_H, keep_going_H),
+            torch.nn.ReLU(),
+            torch.nn.Linear(keep_going_H, 1),
+            torch.nn.Sigmoid()
+        )
+        # Class predictor:
+        # regresses categorical weights
+        # from current context
+        class_H = 10
+        self.class_controller = torch.nn.Sequential(
+            torch.nn.Linear(self.context_size, class_H),
+            torch.nn.ReLU(),
+            torch.nn.Linear(keep_going_H, class_H),
+            torch.nn.ReLU(),
+            torch.nn.Linear(keep_going_H, self.num_classes),
+            torch.nn.Softmax()
+        )
+        
     def _create_empty_context(self, minibatch_size):
         return torch.zeros(minibatch_size, self.context_size)
 
@@ -85,13 +137,17 @@ class MultiObjectMultiClassModel():
                            observed_keep_going):
         # This sampling strategy supports a geometric distribution
         # over # of objects.
-        keep_going_params = pyro.param(
-            "keep_going_weights", torch.ones(1)*0.5,
-            constraint=constraints.interval(0, 1))
+        #keep_going_params = pyro.param(
+        #    "keep_going_weights", torch.ones(1)*0.5,
+        #    constraint=constraints.interval(0, 1))
         #keep_going_params = pyro.param(
         #    "keep_going_weights".format(object_i),
         #    torch.ones(self.max_num_objects)*0.9,
         #    constraint=constraints.interval(0, 1))[object_i]
+        keep_going_params = self.keep_going_controller(context).view(minibatch_size)
+        #keep_going_params = pyro.param(
+        #    "keep_going_weights", torch.ones(1)*0.5,
+        #    constraint=constraints.interval(0, 1))
         return pyro.sample("keep_going_%d" % object_i,
                            dist.Bernoulli(keep_going_params),
                            obs=observed_keep_going) == 1.
@@ -105,10 +161,11 @@ class MultiObjectMultiClassModel():
         # to happen here. The actual thing "generated" would no
         # longer be clear, but that's irrelevant in the context
         # of training this thing, isn't it?
-        new_class_params = pyro.param(
-            "new_class_weights",
-            torch.ones(self.num_classes),
-            constraint=constraints.simplex)
+        #new_class_params = pyro.param(
+        #    "new_class_weights",
+        #    torch.ones(self.num_classes)/self.num_classes,
+        #    constraint=constraints.simplex)
+        new_class_params = self.class_controller(context)[0]
         return pyro.sample("new_class_%d" % object_i,
                            dist.Categorical(new_class_params),
                            obs=observed_new_class)
@@ -125,13 +182,8 @@ class MultiObjectMultiClassModel():
         sampled_params_components = []
         for class_i in range(self.num_classes):
             def sample_params():
-                params_means = pyro.param(
-                    "params_means_{}".format(class_i),
-                    torch.zeros(self.num_params_by_class[class_i]))
-                params_vars = pyro.param(
-                    "params_vars_{}".format(class_i),
-                    torch.ones(self.num_params_by_class[class_i]),
-                    constraint=constraints.positive)
+                params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+                params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
                 return pyro.sample(
                     "params_{}_{}".format(object_i, class_i),
                     dist.Normal(params_means, params_vars).to_event(1),
@@ -195,10 +247,16 @@ class MultiObjectMultiClassModel():
         return keep_going, new_class, sampled_params, encoded_params, context
 
     def model(self, data=None, subsample_size=None):
-        pyro.module("context_updater_module", self.context_updater)
+        pyro.module("context_updater_module", self.context_updater, update_module_params=True)
+        pyro.module("keep_going_controller_module", self.keep_going_controller, update_module_params=True)
+        pyro.module("class_controller_module", self.class_controller, update_module_params=True)
         for class_i in range(self.num_classes):
+            pyro.module("class_means_generator_module_{}".format(class_i),
+                        self.class_means_generators[class_i], update_module_params=True)
+            pyro.module("class_vars_generator_module_{}".format(class_i),
+                        self.class_vars_generators[class_i], update_module_params=True)
             pyro.module("class_encoder_module_{}".format(class_i),
-                        self.class_encoders[class_i])
+                        self.class_encoders[class_i], update_module_params=True)
         if data is None:
             data_batch_size = 1
         else:
