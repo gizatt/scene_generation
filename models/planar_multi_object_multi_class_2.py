@@ -214,6 +214,8 @@ class MultiObjectMultiClassModel():
             if data is not None:
                 data_sub = dataset_utils.SubsampleVectorizedEnvironments(
                     data, subsample_inds)
+            else:
+                data_sub = data
             minibatch_size = len(subsample_inds)
             context = self._create_empty_context(minibatch_size)
 
@@ -227,7 +229,7 @@ class MultiObjectMultiClassModel():
                 keep_going, new_class, sampled_params, encoded_params, context = \
                     poutine.mask(
                         lambda: self._sample_single_object(
-                            object_i, data, minibatch_size, context),
+                            object_i, data_sub, minibatch_size, context),
                         not_terminated)()
 
                 not_terminated = not_terminated * keep_going
@@ -248,6 +250,15 @@ class MultiObjectMultiClassModel():
         return (generated_data,
                 torch.stack(generated_encodings, -1),
                 torch.stack(generated_contexts, -1))
+
+    def guide(self, data=None, subsample_size=None):
+        if data is None:
+            data_batch_size = 1
+        else:
+            data_batch_size = data.batch_size
+            with pyro.plate('data', size=data_batch_size,
+                            subsample_size=subsample_size):
+                pass
 
 
 if __name__ == "__main__":
