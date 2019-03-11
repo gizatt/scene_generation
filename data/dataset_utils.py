@@ -42,14 +42,27 @@ from pydrake.multibody.plant import (
 class ScenesDataset(Dataset):
     ''' Each entry in the dataset is an environment dictionary entry
     from the scene yaml file without further processing. '''
-    def __init__(self, yaml_file):
-        with open(yaml_file, "r") as f:
-            raw_yaml_environments = yaml.load(f, Loader=Loader)
+    def __init__(self, file_or_folder):
+        if os.path.isdir(file_or_folder):
+            # Load all yaml files in folder.
+            candidate_files = [
+                os.path.join(file_or_folder, file)
+                for file in os.listdir(file_or_folder)
+                if os.path.splitext(file)[-1] == ".yaml"]
+        else:
+            candidate_files = [file_or_folder]
 
-        # Get them into a list format for more efficient extraction.
-        self.yaml_environments, self.yaml_environments_names = zip(*[
-            (raw_yaml_environments[k], k) for k in raw_yaml_environments.keys()
-            ])
+        self.yaml_environments = []
+        self.yaml_environments_names = []
+        for yaml_file in candidate_files:
+            with open(yaml_file, "r") as f:
+                raw_yaml_environments = yaml.load(f, Loader=Loader)
+            # Get them into a list format for more efficient extraction.
+            new_yaml_environments, new_yaml_environments_names = zip(*[
+                (raw_yaml_environments[k], k)
+                for k in raw_yaml_environments.keys()])
+            self.yaml_environments += new_yaml_environments
+            self.yaml_environments_names += new_yaml_environments_names
 
     def get_environment_index_by_name(self, env_name):
         return self.yaml_environments_names.index(env_name)
@@ -87,14 +100,10 @@ class ScenesDatasetVectorized(Dataset):
             classes not generated.
     '''
 
-    def __init__(self, yaml_file, max_num_objects=None):
-        with open(yaml_file, "r") as f:
-            raw_yaml_environments = yaml.load(f, Loader=Loader)
-
-        # Get them into a list format for more efficient extraction.
-        self.yaml_environments, self.yaml_environments_names = zip(*[
-            (raw_yaml_environments[k], k) for k in raw_yaml_environments.keys()
-            ])
+    def __init__(self, file_or_folder, max_num_objects=None):
+        temp_dataset = ScenesDataset(file_or_folder)
+        self.yaml_environments = temp_dataset.yaml_environments
+        self.yaml_environments_names = temp_dataset.yaml_environments_names
 
         self.class_name_to_id = {}
         self.class_id_to_name = []
