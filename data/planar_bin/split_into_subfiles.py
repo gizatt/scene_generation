@@ -8,7 +8,7 @@ except ImportError:
     print("WARNING: Defaulting to non-C [slow] YAML loader.")
     from yaml import Loader
 
-f_in_base = "planar_bin_static_scenes_geometric"
+f_in_base = "planar_bin_static_scenes_stacks_tall"
 train_fraction = 0.8
 max_environments_per_subfile = 100
 
