@@ -27,12 +27,12 @@ if __name__ == "__main__":
 
     scenes_dataset = dataset_utils.ScenesDatasetVectorized(args.data_path)
     # Load model
+    # Load in params *before* making model, so that the model modules
+    # update properly
+    pyro.get_param_store().load(args.param_path)
     model = MultiObjectMultiClassModelWithContext(scenes_dataset)
     # Call once to fill in param store
     model.model()
-    print pyro.get_param_store().get_all_param_names()
-    pyro.get_param_store().load(args.param_path)
-    print pyro.get_param_store().get_all_param_names()
 
     noalias_dumper = yaml.dumper.SafeDumper
     noalias_dumper.ignore_aliases = lambda self, data: True
