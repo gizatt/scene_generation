@@ -92,7 +92,7 @@ class GeneratorWorker(object):
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
 
-        n_bodies = min(np.random.geometric(0.2), 20)
+        n_bodies = min(np.random.geometric(0.1), 20)
         output_dict = {"n_objects": n_bodies}
 
         for k in range(n_bodies):
@@ -232,14 +232,29 @@ if __name__ == "__main__":
     p = Pool(20)
     m = Manager()
     output_queue = m.Queue()
-    n_examples = 50
+    n_examples = 500
     result = p.map_async(GeneratorWorker(output_queue=output_queue),
                          range(n_examples))
 
     print result
     while not result.ready():
-        if not output_queue.empty():
-            print("Next output: ", output_queue.get(timeout=0))
+        try:
+            if not output_queue.empty():
+                env = output_queue.get(timeout=0)
+
+                # Check if it's reasonable
+                for k in range(env["n_objects"]):
+                    obj_yaml = env["obj_%04d" % k]
+                    # Check if x or z is outside of bounds
+                    pose = np.array(obj_yaml["pose"])
+                    if pose[0] > 2.0 or pose[0] < -2.0 or pose[1] > 1.0 or pose[1] < 0.0:
+                        raise ValueError("Skipping scene due to bad projection.")
+                with open("planar_bin_static_scenes_geometric.yaml", "a") as file:
+                    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+                              env},
+                              file)
+        except Exception as e:
+            print "Unhandled exception while saving data: ", e
 
     end_time = time.time()
     elapsed = end_time - start_time
