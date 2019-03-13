@@ -145,7 +145,7 @@ class GeneratorWorker(object):
             else:
                 length = np.random.uniform(0.1, 0.3)
                 height = np.random.uniform(0.1, 0.3)
-                body_shape = Box(length, 0.25, height)
+                body_shape = Box(length, height, 0.25)
                 color = np.array([0.5, 0.25, np.random.uniform(0.5, 0.8), 1.0])
                 output_dict["obj_%04d" % k] = {
                     "class": "2d_box",
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     p = Pool(20)
     m = Manager()
     output_queue = m.Queue()
-    n_examples = 500
+    n_examples = 2000
     result = p.map_async(GeneratorWorker(output_queue=output_queue),
                          range(n_examples))
 

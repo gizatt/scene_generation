@@ -227,10 +227,10 @@ def BuildMbpAndSgFromYamlEnvironment(
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep))
+    world_body = mbp.world_body()
 
     if base_environment_type == "planar_bin":
         # Add ground
-        world_body = mbp.world_body()
         ground_shape = Box(2., 2., 1.)
         wall_shape = Box(0.1, 2., 1.1)
         ground_body = mbp.AddRigidBody("ground", SpatialInertia(
@@ -255,6 +255,8 @@ def BuildMbpAndSgFromYamlEnvironment(
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         mbp.AddForceElement(UniformGravityFieldElement())
+    elif base_environment_type == "planar_tabletop":
+        world_body = mbp.world_body()
     else:
         raise ValueError("Unknown base environment type.")
 
@@ -282,11 +284,17 @@ def BuildMbpAndSgFromYamlEnvironment(
                 damping=0.)
             mbp.AddJoint(body_joint_x)
 
+            if base_environment_type == "planar_bin":
+                z_axis = [0, 0, 1]
+                theta_axis = [0, 1, 0]
+            else:
+                z_axis = [0, 1, 0]
+                theta_axis = [0, 0, 1]
             body_joint_z = PrismaticJoint(
                 name="body_{}_z".format(k),
                 frame_on_parent=body_pre_z.body_frame(),
                 frame_on_child=body_pre_theta.body_frame(),
-                axis=[0, 0, 1],
+                axis=z_axis,
                 damping=0.)
             mbp.AddJoint(body_joint_z)
 
@@ -294,7 +302,7 @@ def BuildMbpAndSgFromYamlEnvironment(
                 name="body_{}_theta".format(k),
                 frame_on_parent=body_pre_theta.body_frame(),
                 frame_on_child=body.body_frame(),
-                axis=[0, 1, 0],
+                axis=theta_axis,
                 damping=0.)
             mbp.AddJoint(body_joint_theta)
 
@@ -304,7 +312,10 @@ def BuildMbpAndSgFromYamlEnvironment(
             elif obj_yaml["class"] == "2d_box":
                 height = obj_yaml["params"][0]
                 length = obj_yaml["params"][1]
-                body_shape = Box(length, 0.25, height)
+                if base_environment_type == "planar_bin":
+                    body_shape = Box(length, 0.25, height)
+                else:
+                    body_shape = Box(length, height, 0.25)
             else:
                 raise NotImplementedError(
                     "Can't handle planar object of type %s yet." %
@@ -442,8 +453,20 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
 
     from underactuated.planar_multibody_visualizer import (
         PlanarMultibodyVisualizer)
+
+    if base_environment_type == "planar_bin":
+        Tview = np.array([[1., 0., 0., 0.],
+                          [0., 0., 1., 0.],
+                          [0., 0., 0., 1.]])
+    elif base_environment_type == "planar_tabletop":
+        Tview = np.array([[1., 0., 0., 0.],
+                          [0., 1., 0., 0.],
+                          [0., 0., 0., 1.]])
+    else:
+        raise NotImplementedError()
+
     visualizer = builder.AddSystem(
-        PlanarMultibodyVisualizer(scene_graph, **kwargs))
+        PlanarMultibodyVisualizer(scene_graph, Tview=Tview, **kwargs))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
     diagram = builder.Build()

@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset_path",
-                        help="Planar bin dataset to visualize.")
+                        help="Dataset to visualize.")
     parser.add_argument("-i", "--index",
                         type=int,
                         default=-1,
@@ -21,6 +21,10 @@ if __name__ == "__main__":
                         type=str,
                         default="",
                         help="Entry to draw, or -1 for random.")
+    parser.add_argument("-t", "--type",
+                        type=str,
+                        default="planar_bin",
+                        help="Class of environments.")
     args = parser.parse_args()
 
     data_file = args.dataset_path
@@ -31,18 +35,18 @@ if __name__ == "__main__":
         while (1):
             dataset_utils.DrawYamlEnvironmentPlanar(
                 dataset[np.random.randint(0, len(dataset))],
-                "planar_bin", ax=plt.gca())
+                args.type, ax=plt.gca())
             plt.pause(1.0)
             plt.gca().clear()
     elif args.index >= 0:
         dataset_utils.DrawYamlEnvironmentPlanar(
-            dataset[args.index], "planar_bin", ax=plt.gca())
+            dataset[args.index], args.type, ax=plt.gca())
         print dataset[args.index]
         plt.show()
     else:
         print dataset.get_environment_index_by_name(args.name)
         dataset_utils.DrawYamlEnvironmentPlanar(
             dataset[dataset.get_environment_index_by_name(args.name)],
-            "planar_bin", ax=plt.gca())
+            args.type, ax=plt.gca())
         print dataset[args.index]
         plt.show()
