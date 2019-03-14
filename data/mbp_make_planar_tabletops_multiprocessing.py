@@ -199,7 +199,7 @@ if __name__ == "__main__":
     p = Pool(20)
     m = Manager()
     output_queue = m.Queue()
-    n_examples = 100
+    n_examples = 2000
     result = p.map_async(GeneratorWorker(output_queue=output_queue),
                          range(n_examples))
 
