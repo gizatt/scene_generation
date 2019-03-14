@@ -68,7 +68,9 @@ class GeneratorWorker(object):
             builder, MultibodyPlant(time_step=0.01))
         world_body = mbp.world_body()
 
-        n_bodies = min(np.random.geometric(0.1), 20)
+        n_lines = np.random.randint(1, 4)
+        n_bodies_per_line = np.random.randint(1, 8, size=n_lines)
+        n_bodies = int(np.sum(n_bodies_per_line))
         output_dict = {"n_objects": n_bodies}
 
         for k in range(n_bodies):
@@ -147,13 +149,28 @@ class GeneratorWorker(object):
 
         q0 = mbp.GetPositions(mbp_context).copy()
 
-        for i in range(n_bodies):
-            body_x_index = mbp.GetJointByName("body_{}_x".format(i)).position_start()
-            q0[body_x_index] = np.random.randn()*0.1
-            body_z_index = mbp.GetJointByName("body_{}_z".format(i)).position_start()
-            q0[body_z_index] = np.random.randn()*0.1
-            body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
-            q0[body_theta_index] = np.random.uniform(0, 2*np.pi)
+        k = 0
+        line_start = np.random.randn(2)*0.25
+        line_dir = np.random.uniform(-1, 1, size=2)
+        line_dir /= np.linalg.norm(line_dir)
+        if line_dir.dot(line_start) > 0:
+            line_dir *= -1.0
+        row_dir = np.array([line_dir[1], -line_dir[0]])
+
+        line_spacing = np.random.uniform(0.1, 0.2)
+        row_spacing = np.random.uniform(0.2, 0.4)
+
+        print("Line dir: ", line_dir, " and row dir: ", row_dir, " and start loc: ", line_start)
+        for line_i in range(n_lines):
+            for line_body_i in range(n_bodies_per_line[line_i]):
+                pos = line_start + line_dir*line_body_i*line_spacing + row_dir*line_i*row_spacing
+                body_x_index = mbp.GetJointByName("body_{}_x".format(k)).position_start()
+                q0[body_x_index] = pos[0]
+                body_z_index = mbp.GetJointByName("body_{}_z".format(k)).position_start()
+                q0[body_z_index] = pos[1]
+                body_theta_index = mbp.GetJointByName("body_{}_theta".format(k)).position_start()
+                q0[body_theta_index] = np.random.uniform(0, 2*np.pi)
+                k += 1
 
         ik = InverseKinematics(mbp, mbp_context)
         q_dec = ik.q()
@@ -198,17 +215,16 @@ if __name__ == "__main__":
 
     p = Pool(20)
     m = Manager()
-    output_queue = m.Queue()
     n_examples = 2000
+    output_queue = m.Queue()
     result = p.map_async(GeneratorWorker(output_queue=output_queue),
                          range(n_examples))
-
     while not result.ready():
         try:
             if not output_queue.empty():
                 env = output_queue.get(timeout=0)
 
-                with open("planar_tabletop_unstructured_scenes.yaml", "a") as file:
+                with open("planar_tabletop_lines_scenes.yaml", "a") as file:
                     yaml.dump({"env_%d" % int(round(time.time() * 1000)):
                               env},
                               file)

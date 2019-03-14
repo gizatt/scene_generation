@@ -24,7 +24,8 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--type",
                         type=str,
                         default="planar_bin",
-                        help="Class of environments.")
+                        help="Class of environments, "
+                             "[planar_tabletop, planar_bin]")
     args = parser.parse_args()
 
     data_file = args.dataset_path
