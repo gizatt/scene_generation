@@ -367,7 +367,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         scene_graph, diagram_context)
 
     outputs = []
-    
+
     if make_nonpenetrating:
         ik = InverseKinematics(mbp, mbp_context)
         q_dec = ik.q()
@@ -375,13 +375,16 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
 
         constraint = ik.AddMinimumDistanceConstraint(0.01)
         prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
-        for i in range(yaml_environment["n_objects"]):
-            body_x_index = mbp.GetJointByName("body_{}_x".format(i)).position_start()
-            body_z_index = mbp.GetJointByName("body_{}_z".format(i)).position_start()
-            body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
-            prog.AddBoundingBoxConstraint(-0.9, 0.9, q_dec[body_x_index])
-            prog.AddBoundingBoxConstraint(0, 2, q_dec[body_z_index])
 
+        if base_environment_type in ["planar_tabletop", "planar_bin"]:
+            for i in range(yaml_environment["n_objects"]):
+                body_x_index = mbp.GetJointByName("body_{}_x".format(i)).position_start()
+                body_z_index = mbp.GetJointByName("body_{}_z".format(i)).position_start()
+                body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
+                prog.AddBoundingBoxConstraint(-0.9, 0.9, q_dec[body_x_index])
+                prog.AddBoundingBoxConstraint(0, 2, q_dec[body_z_index])
+        else:
+            raise NotImplementedError()
         mbp.SetPositions(mbp_context, q0)
 
         prog.SetInitialGuess(q_dec, q0)
@@ -390,11 +393,11 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         print prog.GetSolverId().name()
         qf = prog.GetSolution(q_dec)
         print "Final after nlp: ", qf
-        
+
         outputs.append(qf.copy().tolist())
     else:
         qf = q0
-       
+
     if make_static:
         mbp.SetPositions(mbp_context, qf)
 
@@ -404,22 +407,30 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         simulator.StepTo(5.0)
         qf = mbp.GetPositions(mbp_context).copy()
         outputs.append(qf.copy().tolist())
-        
+
     # Update poses in output dict
     output_dicts = []
     for output_qf in outputs:
         output_dict = deepcopy(yaml_environment)
-        for k in range(yaml_environment["n_objects"]):
-            x_index = mbp.GetJointByName("body_{}_x".format(k)).position_start()
-            z_index = mbp.GetJointByName("body_{}_z".format(k)).position_start()
-            t_index = mbp.GetJointByName("body_{}_theta".format(k)).position_start()
+        if base_environment_type in ["planar_tabletop", "planar_bin"]:
+            for k in range(yaml_environment["n_objects"]):
+                x_index = mbp.GetJointByName(
+                    "body_{}_x".format(k)).position_start()
+                z_index = mbp.GetJointByName(
+                    "body_{}_z".format(k)).position_start()
+                t_index = mbp.GetJointByName(
+                    "body_{}_theta".format(k)).position_start()
 
-            pose = [output_qf[x_index], output_qf[z_index], output_qf[t_index]]
-            output_dict["obj_%04d" % k]["pose"] = pose
+                pose = [output_qf[x_index],
+                        output_qf[z_index],
+                        output_qf[t_index]]
+                output_dict["obj_%04d" % k]["pose"] = pose
+        else:
+            raise NotImplementedError()
         output_dicts.append(output_dict)
     return output_dicts
 
-    
+
 def DrawYamlEnvironment(yaml_environment, base_environment_type,
                         zmq_url="tcp://127.0.0.1:6000"):
     builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
@@ -433,6 +444,7 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type,
     diagram = builder.Build()
 
     diagram_context = diagram.CreateDefaultContext()
+
     mbp_context = diagram.GetMutableSubsystemContext(
         mbp, diagram_context)
 
