@@ -37,6 +37,7 @@ import scene_generation.data.dataset_utils as dataset_utils
 class MultiObjectMultiClassModel():
     def __init__(self, dataset, max_num_objects=20):
         assert(isinstance(dataset, dataset_utils.ScenesDatasetVectorized))
+        assert(dataset.get_max_num_objects() == max_num_objects)
         self.context_size = 10
         self.class_general_encoded_size = 10
         self.max_num_objects = max_num_objects
