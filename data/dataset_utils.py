@@ -369,7 +369,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
     outputs = []
 
     if make_nonpenetrating:
-        ik = InverseKinematics(mbp, mbp_context)
+        ik = InverseKinematics(mbp)
         q_dec = ik.q()
         prog = ik.prog()
 
