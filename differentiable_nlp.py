@@ -10,16 +10,34 @@ import random
 import sys
 import time
 
+import pydrake
+from pydrake.autodiffutils import AutoDiffXd
+from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
+from pydrake.forwarddiff import gradient, jacobian
+from pydrake.geometry import (
+    Box,
+    Sphere
+)
+from pydrake.multibody.inverse_kinematics import InverseKinematics
+from pydrake.multibody.plant import (
+    AddMultibodyPlantSceneGraph,
+    CoulombFriction,
+    MultibodyPlant
+)
+from pydrake.multibody.tree import (
+    PrismaticJoint,
+    SpatialInertia,
+    UniformGravityFieldElement,
+    UnitInertia
+)
+from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
+from pydrake.systems.framework import DiagramBuilder
+
 import torch
 from torch.autograd.function import once_differentiable
 
 import pyro
 import pyro.distributions as dist
-
-from pydrake.autodiffutils import AutoDiffXd
-from pydrake.forwarddiff import gradient, jacobian
-from pydrake.multibody.inverse_kinematics import InverseKinematics
-from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
 
 
 def SetArguments(f, **kwargs):
@@ -43,7 +61,7 @@ ProjectMBPToFeasibilityOutput = namedtuple(
     ['qf', 'success', 'dqf_dq0', 'constraint_violation_directions'])
 
 
-def ProjectMBPToFeasibility(q0, mbp, constraint_adders=[],
+def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
                             compute_gradients_at_solution=False,
                             verbose=False):
     '''
@@ -66,7 +84,9 @@ def ProjectMBPToFeasibility(q0, mbp, constraint_adders=[],
                 span the infeasible cone from the solution point.
     '''
     nq = q0.shape[0]
+    print("MBP in final: ", mbp)
     ik = InverseKinematics(mbp)
+    print("setup done")
     q_dec = ik.q()
     prog = ik.prog()
 
@@ -277,5 +297,56 @@ def testGetValAndJacobianOfAutodiffarray():
           GetValAndJacobianOfAutodiffArray(y_ad))
 
 
+def setupMBPForProjection():
+    builder = DiagramBuilder()
+    mbp, _ = AddMultibodyPlantSceneGraph(
+        builder, MultibodyPlant(time_step=0.01))
+
+    world_body = mbp.world_body()
+    ground_shape = Box(10., 10., 10.)
+    ground_body = mbp.AddRigidBody("ground", SpatialInertia(
+        mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
+        G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
+    mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
+                   Isometry3(rotation=np.eye(3), translation=[0, 0, -5]))
+    mbp.RegisterVisualGeometry(
+        ground_body, Isometry3(), ground_shape, "ground_vis",
+        np.array([0.5, 0.5, 0.5, 1.]))
+    mbp.RegisterCollisionGeometry(
+        ground_body, Isometry3(), ground_shape, "ground_col",
+        CoulombFriction(0.9, 0.8))
+
+    n_bodies = 2
+    for k in range(n_bodies):
+        body = mbp.AddRigidBody("body_{}".format(k), SpatialInertia(
+            mass=1.0, p_PScm_E=np.array([0., 0., 0.]),
+            G_SP_E=UnitInertia(0.1, 0.1, 0.1)))
+
+        body_box = Box(1.0, 1.0, 1.0)
+        mbp.RegisterVisualGeometry(
+            body, Isometry3(), body_box, "body_{}_vis".format(k),
+            np.array([1., 0.5, 0., 1.]))
+        mbp.RegisterCollisionGeometry(
+            body, Isometry3(), body_box, "body_{}_box".format(k),
+            CoulombFriction(0.9, 0.8))
+
+    mbp.AddForceElement(UniformGravityFieldElement())
+    mbp.Finalize()
+
+    diagram = builder.Build()
+    diagram_context = diagram.CreateDefaultContext()
+    mbp_context = diagram.GetMutableSubsystemContext(
+        mbp, diagram_context)
+    q0 = mbp.GetPositions(mbp_context).copy()
+
+    return q0, mbp, mbp_context
+
+
+def testProjection(q0, mbp, mbp_context):
+    ProjectMBPToFeasibility(q0, mbp, mbp_context, verbose=True)
+
+
 if __name__ == "__main__":
-    testGetValAndJacobianOfAutodiffarray()
+    # testGetValAndJacobianOfAutodiffarray()
+    q0, mbp, mbp_context = setupMBPForProjection()
+    testProjection(q0, mbp, mbp_context)
