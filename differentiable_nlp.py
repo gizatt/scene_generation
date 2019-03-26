@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+from collections import namedtuple
 import functools
 import os
 import math
@@ -15,6 +16,7 @@ from torch.autograd.function import once_differentiable
 import pyro
 import pyro.distributions as dist
 
+from pydrake.autodiffutils import AutoDiffXd
 from pydrake.forwarddiff import gradient, jacobian
 from pydrake.multibody.inverse_kinematics import InverseKinematics
 from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
@@ -29,14 +31,14 @@ def AddMinimumDistanceConstraint(ik, minimum_distance=0.01):
 
 
 def GetValAndJacobianOfAutodiffArray(autodiff_ndarray):
-    val = np.array([v.value() for v in val_autodiff]).reshape(
-        val_autodiff.shape)
-    grad = np.stack([v.derivatives() for v in val_autodiff]).reshape(
-        val_autodiff.shape + [-1])
+    val = np.array([v.value() for v in autodiff_ndarray]).reshape(
+        autodiff_ndarray.shape)
+    grad = np.stack([v.derivatives() for v in autodiff_ndarray]).reshape(
+        autodiff_ndarray.shape + (-1,))
     return val, grad
 
 
-class ProjectMBPToFeasibilityOutput = namedtuple(
+ProjectMBPToFeasibilityOutput = namedtuple(
     'ProjectMBPToFeasibilityOutput',
     ['qf', 'success', 'dqf_dq0', 'constraint_violation_directions'])
 
@@ -244,3 +246,36 @@ class ProjectToFeasibilityTorch(torch.autograd.Function):
                 grad_out -= grad_projection*viol_dirs_t[:, k].view(-1, 1)
         return (grad_out, None, None)
         '''
+
+
+def testGetValAndJacobianOfAutodiffarray():
+    # Test GetValAndJacobianOfAutodiffArray
+    def get_y(x):
+        return 2*x
+    # Manually
+    x = np.array([1., 2., 3.])
+    y = get_y(x)
+    dy_dx = jacobian(get_y, x)
+
+    print("Non-AD:")
+    print("x: ", x)
+    print("y: ", y)
+    print("dy_dx: ", dy_dx)
+
+    # With Autodiff
+    x_ad = np.empty(x.shape, dtype=np.object)
+    for i in range(x_ad.size):
+        der = np.zeros(x_ad.size)
+        der[i] = 1.
+        x_ad.flat[i] = AutoDiffXd(x.flat[i], der)
+    y_ad = get_y(x_ad)
+
+    print("AD:")
+    print("x: ", x_ad)
+    print("y_ad: ", y_ad)
+    print("GetValAndJacobianOfAutodiffArray: ",
+          GetValAndJacobianOfAutodiffArray(y_ad))
+
+
+if __name__ == "__main__":
+    testGetValAndJacobianOfAutodiffarray()
