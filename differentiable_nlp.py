@@ -85,7 +85,7 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     '''
     nq = q0.shape[0]
     print("MBP in final: ", mbp)
-    ik = InverseKinematics(mbp)
+    ik = InverseKinematics(mbp, mbp_context)
     print("setup done")
     q_dec = ik.q()
     prog = ik.prog()
@@ -103,12 +103,12 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     # get things to converge.
     prog.SetInitialGuess(q_dec, q0)
 
-    if verbose:
+    if verbose >= 1:
         print("Initial guess: ", q0)
     result = Solve(prog)
     qf = result.GetSolution(q_dec)
 
-    if verbose:
+    if verbose >= 1:
         print("Used solver: ", result.get_solver_id().name())
         print("Success? ", result.is_success())
         print("qf: ", qf)
@@ -127,19 +127,20 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
             der = np.zeros(nq)
             if i in q_dec_indices:
                 der[q_dec_indices[i]] = 1
-            all_decision_vars_autodiff.flat[i] = AutoDiffXd(x.flat[i], der)
+            all_decision_vars_autodiff.flat[i] = AutoDiffXd(
+                all_decision_vars.flat[i], der)
 
         constraints = prog.GetAllConstraints()
         total_constraint_gradient = np.zeros(nq)
         for constraint_i, constraint in enumerate(constraints):
             val_autodiff = prog.EvalBinding(
-                constraint, all_decision_vars_autodif)
+                constraint, all_decision_vars_autodiff)
             # Add only for violations / near-boundaries.
             # TODO(gizatt) verify behavior for equality constraints.
             val_full, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
             val = val_full[q_dec_indices]
             jac = jac_full[q_dec_indices, :]
-            if verbose:
+            if verbose >= 2:
                 print("Constraint %d:", constraint_i)
                 print("Val ad: ", val_autodiff)
                 print("Val full: ", val_full)
@@ -343,7 +344,18 @@ def setupMBPForProjection():
 
 
 def testProjection(q0, mbp, mbp_context):
-    ProjectMBPToFeasibility(q0, mbp, mbp_context, verbose=True)
+    print("\n**** NO CONSTRAINTS *****")
+    ProjectMBPToFeasibility(
+        q0, mbp, mbp_context,
+        compute_gradients_at_solution=True,
+        verbose=2)
+
+    print("\n**** +MIN DISTANCE CONSTRAINT *****")
+    ProjectMBPToFeasibility(
+        q0, mbp, mbp_context,
+        [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01)],
+        compute_gradients_at_solution=True,
+        verbose=2)
 
 
 if __name__ == "__main__":
