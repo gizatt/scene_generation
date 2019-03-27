@@ -25,6 +25,7 @@ from pydrake.multibody.plant import (
     MultibodyPlant
 )
 from pydrake.multibody.tree import (
+    JointIndex,
     PrismaticJoint,
     SpatialInertia,
     UniformGravityFieldElement,
@@ -48,6 +49,30 @@ def AddMinimumDistanceConstraint(ik, minimum_distance=0.01):
     ik.AddMinimumDistanceConstraint(minimum_distance)
 
 
+def AddMBPQuaternionConstraints(ik, mbp):
+    # TODO(gizatt) This is a hack, as I can't figure out a way
+    # to actually ask which bodies are floating bases.
+    # Need resolution of Drake issue #10736.
+    # Right now, I assume *all* bodies are floating bases
+    # in this function.
+    q_dec = ik.q()
+    prog = ik.prog()
+
+    def squaredNorm(x):
+        return x[0] ** 2 + x[1] ** 2 + x[2] ** 2 + x[3] ** 2
+    for k in range(mbp.num_bodies() - 2):  # Ignore world body + ground body.
+        # Quaternion norm
+        prog.AddConstraint(
+            squaredNorm(q_dec[(k*7):(k*7+4)]) == 1.)
+        # Trivial quaternion bounds
+        prog.AddBoundingBoxConstraint(
+            -np.ones(4), np.ones(4), q_dec[(k*7):(k*7+4)])
+        # Conservative bounds on on XYZ
+        prog.AddBoundingBoxConstraint(
+            np.array([-10., -10., -10.]), np.array([10., 10., 10.]),
+            q_dec[(k*7+4):(k*7+7)])
+
+
 def GetValAndJacobianOfAutodiffArray(autodiff_ndarray):
     val = np.array([v.value() for v in autodiff_ndarray]).reshape(
         autodiff_ndarray.shape)
@@ -59,6 +84,54 @@ def GetValAndJacobianOfAutodiffArray(autodiff_ndarray):
 ProjectMBPToFeasibilityOutput = namedtuple(
     'ProjectMBPToFeasibilityOutput',
     ['qf', 'success', 'dqf_dq0', 'constraint_violation_directions'])
+
+
+def EvaluateTotalConstraintGradient(
+        prog, x, q_dec_indices=None, verbose=None):
+    ''' Given a MathematicalProgram prog and the values of all decision
+        variables, evaluates the gradient of all of the program's
+        active constraints at that point.
+        Can take gradient with respect to a subset of the variables
+        optionally if their indices are supplied. '''
+    if q_dec_indices is None:
+        q_dec_indices = range(x.size)
+
+    # Initialize Autodiff version of the decision vars.
+    nq = len(q_dec_indices)
+    x_autodiff = np.empty(x.shape, dtype=np.object)
+    for i in range(x.size):
+        der = np.zeros(nq)
+        if i in q_dec_indices:
+            der[q_dec_indices[i]] = 1
+        x_autodiff.flat[i] = AutoDiffXd(
+            x.flat[i], der)
+
+    constraints = prog.GetAllConstraints()
+    total_constraint_gradient = np.zeros(nq)
+    for constraint_i, constraint in enumerate(constraints):
+        val_autodiff = prog.EvalBinding(
+            constraint, x_autodiff)
+        # Add only for violations / near-boundaries.
+        # TODO(gizatt) verify behavior for equality constraints.
+        val_full, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
+        val = val_full
+        jac = jac_full[:, q_dec_indices]
+        if verbose >= 2:
+            print("Constraint #", constraint_i)
+            #print("Val ad: ", val_autodiff)
+            #print("Val full: ", val_full)
+            print("Val: %s (range [%s, %s])" % (
+                val, constraint.evaluator().lower_bound(),
+                constraint.evaluator().upper_bound()))
+            #print("Jac full: ", jac_full)
+            print("Jac: ", jac)
+
+        total_constraint_gradient -= (
+            val < constraint.evaluator().lower_bound()).dot(jac)
+        total_constraint_gradient += (
+            val > constraint.evaluator().upper_bound()).dot(jac)
+
+    return total_constraint_gradient
 
 
 def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
@@ -89,7 +162,6 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     print("setup done")
     q_dec = ik.q()
     prog = ik.prog()
-
     # It's always a projection, so we always have this
     # Euclidean norm error between the optimized q and
     # q0.
@@ -102,6 +174,9 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     # this initial seed by a random amount to try to
     # get things to converge.
     prog.SetInitialGuess(q_dec, q0)
+
+    tgc_0 = EvaluateTotalConstraintGradient(prog, q0, verbose=verbose)
+    print("Initial constraint gradient: ", tgc_0)
 
     if verbose >= 1:
         print("Initial guess: ", q0)
@@ -117,41 +192,14 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     # We want dqf_dq0. But q0 may only be a subset of the
     # decision variables.
     if compute_gradients_at_solution:
-        all_decision_vars = result.GetSolution()
 
-        # Initialize Autodiff version of the decision vars.
-        all_decision_vars_autodiff = np.empty(all_decision_vars.shape,
-                                              dtype=np.object)
-        q_dec_indices = prog.FindDecisionVariableIndices(q_dec)
-        for i in range(all_decision_vars.size):
-            der = np.zeros(nq)
-            if i in q_dec_indices:
-                der[q_dec_indices[i]] = 1
-            all_decision_vars_autodiff.flat[i] = AutoDiffXd(
-                all_decision_vars.flat[i], der)
+        total_constraint_gradient = EvaluateTotalConstraintGradient(
+            prog, result.GetSolution(),
+            prog.FindDecisionVariableIndices(q_dec),
+            verbose=verbose)
 
-        constraints = prog.GetAllConstraints()
-        total_constraint_gradient = np.zeros(nq)
-        for constraint_i, constraint in enumerate(constraints):
-            val_autodiff = prog.EvalBinding(
-                constraint, all_decision_vars_autodiff)
-            # Add only for violations / near-boundaries.
-            # TODO(gizatt) verify behavior for equality constraints.
-            val_full, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
-            val = val_full[q_dec_indices]
-            jac = jac_full[q_dec_indices, :]
-            if verbose >= 2:
-                print("Constraint %d:", constraint_i)
-                print("Val ad: ", val_autodiff)
-                print("Val full: ", val_full)
-                print("Val: ", val)
-                print("Jac full: ", jac_full)
-                print("Jac: ", jac)
-            total_constraint_gradient -= (
-                val <= constraint.evaluator().lower_bound() + 1E-6).dot(jac)
-            total_constraint_gradient += (
-                val >= constraint.evaluator().upper_bound() - 1E-6).dot(jac)
-
+        if verbose >= 2:
+            print("Total constraint grad: ", total_constraint_gradient)
         constraint_violation_directions = []
         return ProjectMBPToFeasibilityOutput(
             qf=qf.copy(), success=result.is_success(),
@@ -350,10 +398,18 @@ def testProjection(q0, mbp, mbp_context):
         compute_gradients_at_solution=True,
         verbose=2)
 
+    print("\n**** +QUATERNION CONSTRAINT *****")
+    ProjectMBPToFeasibility(
+        q0, mbp, mbp_context,
+        [SetArguments(AddMBPQuaternionConstraints, mbp=mbp)],
+        compute_gradients_at_solution=True,
+        verbose=2)
+
     print("\n**** +MIN DISTANCE CONSTRAINT *****")
     ProjectMBPToFeasibility(
         q0, mbp, mbp_context,
-        [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01)],
+        [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01),
+         SetArguments(AddMBPQuaternionConstraints, mbp=mbp)],
         compute_gradients_at_solution=True,
         verbose=2)
 
