@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 from collections import namedtuple
 import os
 from copy import deepcopy
@@ -17,6 +19,7 @@ from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
+from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
 from pydrake.multibody.inverse_kinematics import InverseKinematics
 from pydrake.systems.analysis import Simulator
 from pydrake.geometry import (
@@ -37,6 +40,8 @@ from pydrake.multibody.plant import (
     CoulombFriction,
     MultibodyPlant
 )
+
+import scene_generation.differentiable_nlp as diff_nlp
 
 
 class ScenesDataset(Dataset):
@@ -369,7 +374,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
     outputs = []
 
     if make_nonpenetrating:
-        ik = InverseKinematics(mbp)
+        ik = InverseKinematics(mbp, mbp_context)
         q_dec = ik.q()
         prog = ik.prog()
 
@@ -388,11 +393,12 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         mbp.SetPositions(mbp_context, q0)
 
         prog.SetInitialGuess(q_dec, q0)
-        print "Initial guess: ", q0
-        print prog.Solve()
-        print prog.GetSolverId().name()
-        qf = prog.GetSolution(q_dec)
-        print "Final after nlp: ", qf
+        print("Initial guess: ", q0)
+        result = Solve(prog)
+        qf = result.GetSolution(q_dec)
+        print("Used solver: ", result.get_solver_id().name())
+        print("Success? ", result.is_success())
+        print("qf: ", qf)
 
         outputs.append(qf.copy().tolist())
     else:
@@ -495,12 +501,12 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
 
 if __name__ == "__main__":
     dataset = ScenesDataset("planar_bin/planar_bin_static_scenes.yaml")
-    print dataset[10]
-    print BuildMbpAndSgFromYamlEnvironment(dataset[10], "planar_bin")
+    print(dataset[10])
+    print(BuildMbpAndSgFromYamlEnvironment(dataset[10], "planar_bin"))
 
     dataset_vectorized = ScenesDatasetVectorized(
         "planar_bin/planar_bin_static_scenes.yaml")
-    print len(dataset_vectorized), dataset_vectorized[10]
-    print dataset_vectorized.get_full_dataset()
+    print(len(dataset_vectorized), dataset_vectorized[10])
+    print(dataset_vectorized.get_full_dataset())
 
     print("Done")
