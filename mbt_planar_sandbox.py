@@ -110,11 +110,11 @@ if __name__ == "__main__":
     prog = ik.prog()
 
     def squaredNorm(x):
-        return np.array([x[0] ** 2 + x[1] ** 2 + x[2] ** 2 + x[3] ** 2])
+        return x[0] ** 2 + x[1] ** 2 + x[2] ** 2 + x[3] ** 2
     for k in range(n_bodies):
         # Quaternion norm
         prog.AddConstraint(
-            squaredNorm, [1], [1], q_dec[(k*7):(k*7+4)])
+            squaredNorm(q_dec[(k*7):(k*7+4)]) == 1.)
         # Trivial quaternion bounds
         prog.AddBoundingBoxConstraint(
             -np.ones(4), np.ones(4), q_dec[(k*7):(k*7+4)])
@@ -154,15 +154,15 @@ if __name__ == "__main__":
         draw_at_config(q_now)
     q0_proj = q_now
 #
-    #prog.SetInitialGuess(q_dec, q0)
-    #print("Solving")
-    #print "Initial guess: ", q0
-    ##print IpoptSolver().Solve(prog)
+    prog.SetInitialGuess(q_dec, q0)
+    print("Solving")
+    print "Initial guess: ", q0
+    #print IpoptSolver().Solve(prog)
+    print prog.Solve()
     #print prog.Solve()
-    ##print prog.Solve()
-    #print prog.GetSolverId().name()
-    #q0_proj = prog.GetSolution(q_dec)
-    #print "Final: ", q0_proj
+    print prog.GetSolverId().name()
+    q0_proj = prog.GetSolution(q_dec)
+    print "Final: ", q0_proj
 #
     mbp.SetPositions(mbp_context, q0_proj)
     #print mbp.GetPositions(mbp_context)

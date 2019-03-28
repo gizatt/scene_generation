@@ -81,18 +81,58 @@ def GetValAndJacobianOfAutodiffArray(autodiff_ndarray):
     return val, grad
 
 
+def nullspace(A, atol=1e-13, rtol=0):
+    """Compute an approximate basis for the nullspace of A.
+
+    The algorithm used by this function is based on the singular value
+    decomposition of `A`.
+
+    Parameters
+    ----------
+    A : ndarray
+        A should be at most 2-D.  A 1-D array with length k will be treated
+        as a 2-D with shape (1, k)
+    atol : float
+        The absolute tolerance for a zero singular value.  Singular values
+        smaller than `atol` are considered to be zero.
+    rtol : float
+        The relative tolerance.  Singular values less than rtol*smax are
+        considered to be zero, where smax is the largest singular value.
+
+    If both `atol` and `rtol` are positive, the combined tolerance is the
+    maximum of the two; that is::
+        tol = max(atol, rtol * smax)
+    Singular values smaller than `tol` are considered to be zero.
+
+    Return value
+    ------------
+    ns : ndarray
+        If `A` is an array with shape (m, k), then `ns` will be an array
+        with shape (k, n), where n is the estimated dimension of the
+        nullspace of `A`.  The columns of `ns` are a basis for the
+        nullspace; each element in numpy.dot(A, ns) will be approximately
+        zero.
+    """
+    A = np.atleast_2d(A)
+    u, s, vh = np.linalg.svd(A)
+    tol = max(atol, rtol * s[0])
+    nnz = (s >= tol).sum()
+    ns = vh[nnz:].conj().T
+    return ns
+
+
 ProjectMBPToFeasibilityOutput = namedtuple(
     'ProjectMBPToFeasibilityOutput',
     ['qf', 'success', 'dqf_dq0', 'constraint_violation_directions'])
 
 
-def EvaluateTotalConstraintGradient(
+def EvaluateProjectionDerivativeInfo(
         prog, x, q_dec_indices=None, verbose=None):
     ''' Given a MathematicalProgram prog and the values of all decision
-        variables, evaluates the gradient of all of the program's
-        active constraints at that point.
-        Can take gradient with respect to a subset of the variables
-        optionally if their indices are supplied. '''
+        variables, returns a list of vectors (in decision variable space)
+        that positively span the infeasible region. Can optionally only
+        consider movement of the decision variables if their indices are
+        supplied. '''
     if q_dec_indices is None:
         q_dec_indices = range(x.size)
 
@@ -108,30 +148,32 @@ def EvaluateTotalConstraintGradient(
 
     constraints = prog.GetAllConstraints()
     total_constraint_gradient = np.zeros(nq)
+    constraint_violation_directions = []
     for constraint_i, constraint in enumerate(constraints):
         val_autodiff = prog.EvalBinding(
             constraint, x_autodiff)
         # Add only for violations / near-boundaries.
         # TODO(gizatt) verify behavior for equality constraints.
-        val_full, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
-        val = val_full
+        val, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
         jac = jac_full[:, q_dec_indices]
+
         if verbose >= 2:
             print("Constraint #", constraint_i)
-            #print("Val ad: ", val_autodiff)
-            #print("Val full: ", val_full)
             print("Val: %s (range [%s, %s])" % (
                 val, constraint.evaluator().lower_bound(),
                 constraint.evaluator().upper_bound()))
-            #print("Jac full: ", jac_full)
             print("Jac: ", jac)
 
-        total_constraint_gradient -= (
-            val < constraint.evaluator().lower_bound()).dot(jac)
-        total_constraint_gradient += (
-            val > constraint.evaluator().upper_bound()).dot(jac)
+        lb = constraint.evaluator().lower_bound()
+        ub = constraint.evaluator().upper_bound()
+        for k in range(jac.shape[0]):
+            # Be liberal about not stepping into constraints
+            if val[k] < (lb[k] + 1E-6):
+                constraint_violation_directions.append(-jac[k, :])
+            if val[k] > (ub[k] - 1E-6):
+                constraint_violation_directions.append(jac[k, :])
 
-    return total_constraint_gradient
+    return np.stack(constraint_violation_directions)
 
 
 def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
@@ -175,9 +217,6 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     # get things to converge.
     prog.SetInitialGuess(q_dec, q0)
 
-    tgc_0 = EvaluateTotalConstraintGradient(prog, q0, verbose=verbose)
-    print("Initial constraint gradient: ", tgc_0)
-
     if verbose >= 1:
         print("Initial guess: ", q0)
     result = Solve(prog)
@@ -188,22 +227,28 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
         print("Success? ", result.is_success())
         print("qf: ", qf)
 
-    # Trickiness to untangle here:
-    # We want dqf_dq0. But q0 may only be a subset of the
-    # decision variables.
     if compute_gradients_at_solution:
-
-        total_constraint_gradient = EvaluateTotalConstraintGradient(
+        constraint_violation_directions = EvaluateProjectionDerivativeInfo(
             prog, result.GetSolution(),
             prog.FindDecisionVariableIndices(q_dec),
             verbose=verbose)
 
+        if constraint_violation_directions.shape[0] > 0:
+            ns = nullspace(constraint_violation_directions)
+            print("Nullspace: ", ns)
+            dqf_dq0 = np.eye(nq)  # Unconstrained version of dqf_dq0
+            dqf_dq0 = np.dot(np.dot(dqf_dq0, ns), ns.T)  # Projection step
+        else:
+            # No null space so movements
+            dqf_dq0 = np.eye(nq)
+
         if verbose >= 2:
-            print("Total constraint grad: ", total_constraint_gradient)
-        constraint_violation_directions = []
+            print("Constraint viol dirs: ", constraint_violation_directions)
+            print("dqf_dq0: ", dqf_dq0)
+
         return ProjectMBPToFeasibilityOutput(
             qf=qf.copy(), success=result.is_success(),
-            dqf_dq0=total_constraint_gradient,
+            dqf_dq0=dqf_dq0,
             constraint_violation_directions=constraint_violation_directions)
     else:
         return ProjectMBPToFeasibilityOutput(
