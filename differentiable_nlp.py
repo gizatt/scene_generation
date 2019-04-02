@@ -157,7 +157,7 @@ def EvaluateProjectionDerivativeInfo(
         val, jac_full = GetValAndJacobianOfAutodiffArray(val_autodiff)
         jac = jac_full[:, q_dec_indices]
 
-        if verbose >= 2:
+        if verbose >= 3:
             print("Constraint #", constraint_i)
             print("Val: %s (range [%s, %s])" % (
                 val, constraint.evaluator().lower_bound(),
@@ -173,12 +173,15 @@ def EvaluateProjectionDerivativeInfo(
             if val[k] > (ub[k] - 1E-6):
                 constraint_violation_directions.append(jac[k, :])
 
-    return np.stack(constraint_violation_directions)
+    if len(constraint_violation_directions) == 0:
+        return np.empty((0, nq))
+    else:
+        return np.stack(constraint_violation_directions)
 
 
 def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
                             compute_gradients_at_solution=False,
-                            verbose=False):
+                            verbose=1):
     '''
         Inputs:
             - q0: Initial guess configuration for the projection.
@@ -187,7 +190,12 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
                    constraints to work.
             - constraint_adders: A list of functions f(ik) that mutate
                    a passed IK program to add additional constraints.
-            - compute_grads and verbose flags
+            - compute_grads and verbose flags:
+                verbose = 0 or False: No printing.
+                verbose = 1: Warn on failed projection only.
+                verbose = 2: Print initial + resulting positions and
+                             solver info.
+                verbose = 3: The above + also dqf_dq0 and constraint viol dirs.
 
         Outputs: a namedtuple with fields:
             - "qf": same size as q0, np array
@@ -199,9 +207,7 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
                 span the infeasible cone from the solution point.
     '''
     nq = q0.shape[0]
-    print("MBP in final: ", mbp)
     ik = InverseKinematics(mbp, mbp_context)
-    print("setup done")
     q_dec = ik.q()
     prog = ik.prog()
     # It's always a projection, so we always have this
@@ -217,12 +223,12 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
     # get things to converge.
     prog.SetInitialGuess(q_dec, q0)
 
-    if verbose >= 1:
+    if verbose >= 2:
         print("Initial guess: ", q0)
     result = Solve(prog)
     qf = result.GetSolution(q_dec)
 
-    if verbose >= 1:
+    if verbose >= 2 or (verbose >= 1 and not result.is_success()):
         print("Used solver: ", result.get_solver_id().name())
         print("Success? ", result.is_success())
         print("qf: ", qf)
@@ -235,14 +241,13 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
 
         if constraint_violation_directions.shape[0] > 0:
             ns = nullspace(constraint_violation_directions)
-            print("Nullspace: ", ns)
             dqf_dq0 = np.eye(nq)  # Unconstrained version of dqf_dq0
             dqf_dq0 = np.dot(np.dot(dqf_dq0, ns), ns.T)  # Projection step
         else:
             # No null space so movements
             dqf_dq0 = np.eye(nq)
 
-        if verbose >= 2:
+        if verbose >= 3:
             print("Constraint viol dirs: ", constraint_violation_directions)
             print("dqf_dq0: ", dqf_dq0)
 
@@ -254,6 +259,11 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
         return ProjectMBPToFeasibilityOutput(
             qf=qf.copy(), success=result.is_success(),
             dqf_dq0=None, constraint_violation_directions=None)
+
+
+def buildRegularizedGradient(dqf_dq0, viol_dirs, gamma):
+    return (torch.eye(dqf_dq0.shape[0], dtype=dqf_dq0.dtype)*gamma
+            + (1. - gamma)*dqf_dq0)
 
 
 class PassthroughWithGradient(torch.autograd.Function):
@@ -297,16 +307,26 @@ class ProjectToFeasibilityTorch(torch.autograd.Function):
         mbp: A Drake MultiBodyPlant for which q0 is a valid configuration,
             which will be used to build an IK / nonlinear program to
             do the projection.
+        mbp_context: MBP context from a diagram containing the MBP (and a SG
+            if you want collision checking to work).
         gamma: A regularization, multiplied by identity and added to the
             gradient. TODO(gizatt) Justification or better handling.
+        verbose: Passed through to ProjectMBPToFeasibility.
     '''
     @staticmethod
-    def forward(ctx, q0, mbp, gamma=0.01):
-        # q0 being a tensor, rbt and constraints being inputs
-        # to projectToFeasibilityWithIK
-        qf, info, dqf_dq0, viol_dirs = projectToFeasibilityWithIK(
-            rbt, q0.cpu().detach().numpy().copy(), ik_constraints)
-        qf = qf.reshape(-1, 1)
+    def forward(ctx, q0, mbp, mbp_context, constraint_adders=[],
+                gamma=0.01, verbose=1):
+        output = ProjectMBPToFeasibility(
+            q0.cpu().detach().numpy().copy(), mbp, mbp_context,
+            constraint_adders, compute_gradients_at_solution=True,
+            verbose=verbose)
+
+        if not output.success and verbose > 0:
+            print("Warning: projection didn't not succeed.")
+
+        qf = output.qf.reshape(q0.shape)
+        dqf_dq0 = output.dqf_dq0
+        viol_dirs = output.constraint_violation_directions
 
         ctx.save_for_backward(
             torch.tensor(qf, dtype=q0.dtype),
@@ -335,8 +355,8 @@ class ProjectToFeasibilityTorch(torch.autograd.Function):
             dqf_dq0, viol_dirs, gamma)
         return (torch.mm(
                     regularized_dqf_dq0,
-                    grad.view(-1, 1)),
-                None, None, None)
+                    grad.view(-1, 1)).view(qf.shape),
+                None, None, None, None, None)
 
         '''
         This is dumb, wasn't a good idea.
@@ -358,7 +378,7 @@ class ProjectToFeasibilityTorch(torch.autograd.Function):
             grad_projection = torch.dot(viol_dirs_t[:, k].flatten(), grad_out.flatten())
             if grad_projection > 0:
                 grad_out -= grad_projection*viol_dirs_t[:, k].view(-1, 1)
-        return (grad_out, None, None)
+        return (grad_out, None, None, None, None, None)
         '''
 
 
@@ -441,14 +461,14 @@ def testProjection(q0, mbp, mbp_context):
     ProjectMBPToFeasibility(
         q0, mbp, mbp_context,
         compute_gradients_at_solution=True,
-        verbose=2)
+        verbose=3)
 
     print("\n**** +QUATERNION CONSTRAINT *****")
     ProjectMBPToFeasibility(
         q0, mbp, mbp_context,
         [SetArguments(AddMBPQuaternionConstraints, mbp=mbp)],
         compute_gradients_at_solution=True,
-        verbose=2)
+        verbose=3)
 
     print("\n**** +MIN DISTANCE CONSTRAINT *****")
     ProjectMBPToFeasibility(
@@ -456,10 +476,41 @@ def testProjection(q0, mbp, mbp_context):
         [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01),
          SetArguments(AddMBPQuaternionConstraints, mbp=mbp)],
         compute_gradients_at_solution=True,
-        verbose=2)
+        verbose=3)
+
+
+def testProjectionTorch(q0, mbp, mbp_context):
+    print("\n**** NO CONSTRAINTS *****")
+    q0_tensor = torch.tensor(q0, requires_grad=True)
+    qf_tensor = ProjectToFeasibilityTorch.apply(
+        q0_tensor, mbp, mbp_context, [], 2)
+    print("qf_tensor: ", qf_tensor)
+    loss = qf_tensor.sum()
+    loss.backward()
+    print("q0_tensor backward: ", q0_tensor.grad)
+
+    print("\n**** +QUATERNION CONSTRAINT *****")
+    qf_tensor = ProjectToFeasibilityTorch.apply(
+        q0_tensor, mbp, mbp_context,
+        [SetArguments(AddMBPQuaternionConstraints, mbp=mbp)], 2)
+    print("qf_tensor: ", qf_tensor)
+    loss = qf_tensor.sum()
+    loss.backward()
+    print("q0_tensor backward: ", q0_tensor.grad)
+
+    print("\n**** +MIN DISTANCE CONSTRAINT *****")
+    qf_tensor = ProjectToFeasibilityTorch.apply(
+        q0_tensor, mbp, mbp_context,
+        [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01),
+         SetArguments(AddMBPQuaternionConstraints, mbp=mbp)], 2)
+    print("qf_tensor: ", qf_tensor)
+    loss = qf_tensor.sum()
+    loss.backward()
+    print("q0_tensor backward: ", q0_tensor.grad)
 
 
 if __name__ == "__main__":
     # testGetValAndJacobianOfAutodiffarray()
     q0, mbp, mbp_context = setupMBPForProjection()
-    testProjection(q0, mbp, mbp_context)
+    # testProjection(q0, mbp, mbp_context)
+    testProjectionTorch(q0, mbp, mbp_context)
