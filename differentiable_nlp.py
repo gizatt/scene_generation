@@ -299,7 +299,7 @@ class PassthroughWithGradient(torch.autograd.Function):
                           torch.unsqueeze(grad, -1)).squeeze(), None)
 
 
-class ProjectToFeasibilityTorch(torch.autograd.Function):
+class ProjectMBPToFeasibilityTorch(torch.autograd.Function):
     '''
     Inputs:
         q0:  Initial configuration of the robot that we want to project,
@@ -482,7 +482,7 @@ def testProjection(q0, mbp, mbp_context):
 def testProjectionTorch(q0, mbp, mbp_context):
     print("\n**** NO CONSTRAINTS *****")
     q0_tensor = torch.tensor(q0, requires_grad=True)
-    qf_tensor = ProjectToFeasibilityTorch.apply(
+    qf_tensor = ProjectMBPToFeasibilityTorch.apply(
         q0_tensor, mbp, mbp_context, [], 2)
     print("qf_tensor: ", qf_tensor)
     loss = qf_tensor.sum()
@@ -490,7 +490,7 @@ def testProjectionTorch(q0, mbp, mbp_context):
     print("q0_tensor backward: ", q0_tensor.grad)
 
     print("\n**** +QUATERNION CONSTRAINT *****")
-    qf_tensor = ProjectToFeasibilityTorch.apply(
+    qf_tensor = ProjectMBPToFeasibilityTorch.apply(
         q0_tensor, mbp, mbp_context,
         [SetArguments(AddMBPQuaternionConstraints, mbp=mbp)], 2)
     print("qf_tensor: ", qf_tensor)
@@ -499,7 +499,7 @@ def testProjectionTorch(q0, mbp, mbp_context):
     print("q0_tensor backward: ", q0_tensor.grad)
 
     print("\n**** +MIN DISTANCE CONSTRAINT *****")
-    qf_tensor = ProjectToFeasibilityTorch.apply(
+    qf_tensor = ProjectMBPToFeasibilityTorch.apply(
         q0_tensor, mbp, mbp_context,
         [SetArguments(AddMinimumDistanceConstraint, minimum_distance=0.01),
          SetArguments(AddMBPQuaternionConstraints, mbp=mbp)], 2)
