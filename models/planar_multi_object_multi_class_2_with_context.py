@@ -79,12 +79,10 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
             # doesn't matter, as evaluated probabilities will be masked out.
             new_params = pre_projection_params[k, :].clone()
             new_params_derivs = torch.eye(event_shape[0], dtype=dtype)
-            print("Class: %d, obj: %d, batch_iter: %d" % (class_i, object_i, k))
             if class_i == new_class[k] and (
                     object_i == 0 or
                     np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
                 env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
-                print("Projecting env: ", env)
                 builder, mbp, scene_graph, q0 = dataset_utils.BuildMbpAndSgFromYamlEnvironment(
                     env, base_environment_type)
                 diagram = builder.Build()
@@ -92,10 +90,6 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
                 diagram_context = diagram.CreateDefaultContext()
                 mbp_context = diagram.GetMutableSubsystemContext(
                     mbp, diagram_context)
-
-                print("BEFORE PROJ: ")
-                dataset_utils.DrawYamlEnvironment(env, "planar_bin")
-                time.sleep(2.0)
 
                 # Pre-compute the "active" decision variable indices
                 if base_environment_type in ["planar_bin", "planar_tabletop"]:
@@ -119,13 +113,7 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
                     q0, mbp, mbp_context,
                     [diff_nlp.SetArguments(diff_nlp.AddMinimumDistanceConstraint, minimum_distance=0.01),
                      diff_nlp.SetArguments(diff_nlp.AddJointPositionBounds, q_min=q_min, q_max=q_max)],
-                    compute_gradients_at_solution=True, verbose=2)
-
-
-                print("AFTER PROJ: ")
-                env["obj_%04d" % object_i]["pose"] = results.qf[inds]
-                dataset_utils.DrawYamlEnvironment(env, "planar_bin")
-                time.sleep(2.0)
+                    compute_gradients_at_solution=True, verbose=0)
 
                 new_params[:len(inds)] = torch.tensor(results.qf[inds])
                 for i, ind in enumerate(inds):
@@ -137,7 +125,6 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
         all_params_tensor = torch.stack(all_params)
         all_params_derivatives_tensor = torch.stack(all_params_derivatives)
 
-        print(all_params_tensor, all_params_derivatives_tensor)
         self._rsample = diff_nlp.PassthroughWithGradient.apply(
             pre_projection_params, all_params_tensor,
             all_params_derivatives_tensor)
@@ -263,6 +250,29 @@ class MultiObjectMultiClassModelWithContext():
             torch.nn.Softmax()
         )
 
+        # Param inversion for guide:
+        # Predicts pre-projection params from post-projection params.
+        # TODO(gizatt) This shouldn't be necessary... and this task
+        # is impossible, it's non-invertible.
+        if self.use_projection:
+            self.class_guides = []
+            for class_i in range(self.num_classes):
+                # Generator
+                input_size = self.num_params_by_class[class_i]
+                output_size = self.num_params_by_class[class_i]
+                H = 50
+                self.class_guides.append(
+                    torch.nn.Sequential(
+                        torch.nn.Linear(input_size, H),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(H, H),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(H, H),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(H, output_size),
+                    )
+                )
+
     def _create_empty_context(self, minibatch_size):
         return torch.zeros(minibatch_size, self.context_size)
 
@@ -337,7 +347,7 @@ class MultiObjectMultiClassModelWithContext():
 
                     pre_projection_params = pyro.sample(
                         "pre_projection_params_{}_{}".format(object_i, class_i),
-                        dist.Normal(params_means, params_vars).to_event(1))
+                        dist.Normal(params_means, params_vars + 1E-6).to_event(1))
 
                     projection_dist = ProjectToFeasibilityDist(
                         pre_projection_params, class_i,
@@ -352,7 +362,7 @@ class MultiObjectMultiClassModelWithContext():
                     params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
                     return pyro.sample(
                         "params_{}_{}".format(object_i, class_i),
-                        dist.Normal(params_means, params_vars).to_event(1),
+                        dist.Normal(params_means, params_vars + 1E-6).to_event(1),
                         obs=observed_params[class_i])
 
             # Sample everything in batch -- meaning we'll sample
@@ -439,6 +449,8 @@ class MultiObjectMultiClassModelWithContext():
         with pyro.plate('data', size=data_batch_size) as subsample_inds:
             if data is not None:
                 data_sub = data.subsample(subsample_inds)
+            else:
+                data_sub = None
             minibatch_size = len(subsample_inds)
             context = self._create_empty_context(minibatch_size)
 
@@ -458,7 +470,7 @@ class MultiObjectMultiClassModelWithContext():
                 keep_going, new_class, sampled_params, encoded_params, context = \
                     poutine.mask(
                         lambda: self._sample_single_object(
-                            object_i, data, minibatch_size,
+                            object_i, data_sub, minibatch_size,
                             context, generated_data),
                         not_terminated)()
 
@@ -482,6 +494,40 @@ class MultiObjectMultiClassModelWithContext():
         return (generated_data,
                 torch.stack(generated_encodings, -1),
                 torch.stack(generated_contexts, -1))
+
+    def guide(self, data, subsample_size=None):
+        if not data:
+            raise InvalidArgumentError("Guide must be handed data.")
+        data_batch_size = data.batch_size
+        if subsample_size:
+            minibatch_size = subsample_size
+        else:
+            minibatch_size = data_batch_size
+        if self.use_projection:
+            AMORTIZED = True
+            if AMORTIZED:
+                for class_i in range(self.num_classes):
+                    pyro.module("class_guide_module_{}".format(class_i),
+                                self.class_guides[class_i], update_module_params=True)
+
+            with pyro.plate('data', size=data_batch_size, subsample_size=subsample_size) as subsample_inds:
+                data_sub = data.subsample(subsample_inds)
+                for object_i in range(self.max_num_objects):
+                    for class_i in range(self.num_classes):
+                        if AMORTIZED:
+                            estimate = self.class_guides[class_i](data_sub.params_by_class[class_i][:, object_i, :])
+                            pyro.sample(
+                                "pre_projection_params_{}_{}".format(object_i, class_i),
+                                dist.Delta(estimate).to_event(1))
+
+                        else:
+                            estimate = pyro.param("delta_pre_projection_params_{}_{}".format(object_i, class_i),
+                                                  torch.randn(data_batch_size, self.num_params_by_class[class_i]),
+                                                  event_dim=1)
+                            pyro.sample(
+                                "pre_projection_params_{}_{}".format(object_i, class_i),
+                                dist.Delta(estimate).to_event(1))
+
 
 
 if __name__ == "__main__":
@@ -509,8 +555,6 @@ if __name__ == "__main__":
     dataset_utils.DrawYamlEnvironment(scene_yaml[0], "planar_bin")
     end = time.time()
     print "Time to generate and draw one scene: %fs" % (end - start)
-
-    sys.exit(0)
 
     start = time.time()
     pyro.clear_param_store()
