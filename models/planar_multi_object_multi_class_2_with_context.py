@@ -5,12 +5,17 @@ import io
 import matplotlib
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+import multiprocessing
+try:  # Python 2
+    import Queue as queue
+except ImportError:  # Python 3
+    import queue
 # Must be before torch.
 import pydrake
 import numpy as np
-import scipy as sp
-import scipy.stats
+import sys
 import time
+import traceback
 
 from tensorboardX import SummaryWriter
 
@@ -36,13 +41,100 @@ import scene_generation.data.dataset_utils as dataset_utils
 import scene_generation.differentiable_nlp as diff_nlp
 
 
+class ProjectionWorker(object):
+    """Multiprocess worker."""
+
+    def __init__(self, input_queue, output_queue,
+                 termination_event, error_queue=None,
+                 no_constraints=False):
+        self.input_queue = input_queue
+        self.output_queue = output_queue
+        self.termination_event = termination_event
+        self.error_queue = error_queue
+        self.no_constraints = no_constraints
+
+    def _do_projection_inner_work(
+            self, env, object_i, base_environment_type, new_params):
+        builder, mbp, scene_graph, q0 = dataset_utils.BuildMbpAndSgFromYamlEnvironment(
+            env, base_environment_type)
+        diagram = builder.Build()
+
+        diagram_context = diagram.CreateDefaultContext()
+        mbp_context = diagram.GetMutableSubsystemContext(
+            mbp, diagram_context)
+
+        # Pre-compute the "active" decision variable indices
+        if base_environment_type in ["planar_bin", "planar_tabletop"]:
+            x_index = mbp.GetJointByName(
+                "body_{}_x".format(object_i)).position_start()
+            z_index = mbp.GetJointByName(
+                "body_{}_z".format(object_i)).position_start()
+            t_index = mbp.GetJointByName(
+                "body_{}_theta".format(object_i)).position_start()
+            inds = [x_index, z_index, t_index]
+        else:
+            raise NotImplementedError("Unsupported base environment type.")
+
+        # Do projection
+        q_min = q0.copy()
+        q_max = q0.copy()
+        q_min[inds] = -np.infty
+        q_max[inds] = np.infty
+
+        if self.no_constraints:
+            constraints = [
+                diff_nlp.SetArguments(diff_nlp.AddJointPositionBounds, q_min=q_min, q_max=q_max)
+            ]
+        else:
+            constraints = [
+                diff_nlp.SetArguments(diff_nlp.AddMinimumDistanceConstraint, minimum_distance=0.01),
+                diff_nlp.SetArguments(diff_nlp.AddJointPositionBounds, q_min=q_min, q_max=q_max)
+            ]
+        results = diff_nlp.ProjectMBPToFeasibility(
+            q0, mbp, mbp_context, constraints,
+            compute_gradients_at_solution=True, verbose=0)
+
+        new_params[:len(inds)] = results.qf[inds]
+        new_params_derivs = np.eye(len(new_params))
+        for i, ind in enumerate(inds):
+            new_params_derivs[i, :len(inds)] = results.dqf_dq0[ind, inds]
+        return new_params, new_params_derivs
+
+    def __call__(self, worker_index):
+        while ((not self.input_queue.empty()) or
+               (not self.termination_event.is_set())):
+            try:
+                new_data = None
+                try:
+                    new_data = self.input_queue.get(False)
+                except queue.Empty:
+                    pass
+
+                if new_data is None:
+                    time.sleep(0)
+                    continue
+
+                k, env, object_i, base_environment_type, new_params = new_data
+                new_params, new_params_derivs = self._do_projection_inner_work(
+                    env, object_i, base_environment_type, new_params)
+                self.output_queue.put((k, new_params, new_params_derivs))
+
+            except Exception as e:
+                if self.error_queue:
+                    self.error_queue.put((worker_index, e))
+                else:
+                    print("Unhandled exception in ProjectionWorker #%d" % worker_index)
+                    traceback.print_exc()
+
+
 class ProjectToFeasibilityDist(dist.TorchDistribution):
     has_rsample = True
     arg_constraints = {"pre_projection_params": torch.distributions.constraints.real}
 
     def __init__(self, pre_projection_params, class_i,
                  object_i, context, new_class, generated_data,
-                 base_environment_type):
+                 base_environment_type, no_constraints=False,
+                 worker_pool=None):
         batch_shape = pre_projection_params.shape[:-1]
         event_shape = pre_projection_params.shape[-1:]
         dtype = pre_projection_params.dtype
@@ -69,58 +161,63 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
             [tentative_generated_data.params_by_class[class_i],
              pre_projection_params.detach().numpy().reshape(batch_shape[0], 1, -1)], axis=1)
 
-        all_params = []
-        all_params_derivatives = []
-        for k in range(batch_shape[0]):
-            # Short circuit if class_i and new_class don't match,
-            # or if keep_going has previously been zero.
-            # This will likely happen in batching quite frequently,
-            # and saves lots of unnecessary projections. What is produced
-            # doesn't matter, as evaluated probabilities will be masked out.
-            new_params = pre_projection_params[k, :].clone()
-            new_params_derivs = torch.eye(event_shape[0], dtype=dtype)
-            if class_i == new_class[k] and (
-                    object_i == 0 or
-                    np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
-                env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
-                builder, mbp, scene_graph, q0 = dataset_utils.BuildMbpAndSgFromYamlEnvironment(
-                    env, base_environment_type)
-                diagram = builder.Build()
+        all_params = [None] * batch_shape[0]
+        all_params_derivatives = [None] * batch_shape[0]
 
-                diagram_context = diagram.CreateDefaultContext()
-                mbp_context = diagram.GetMutableSubsystemContext(
-                    mbp, diagram_context)
+        if worker_pool:
+            worker_manager = multiprocessing.Manager()
+            input_queue = worker_manager.Queue()
+            output_queue = worker_manager.Queue()
+            termination_event = worker_manager.Event()
+            result = worker_pool.map_async(
+                ProjectionWorker(input_queue=input_queue,
+                                 output_queue=output_queue,
+                                 termination_event=termination_event,
+                                 no_constraints=no_constraints),
+                range(min(worker_pool._processes, batch_shape[0])))
+            for k in range(batch_shape[0]):
+                # Short circuit if class_i and new_class don't match,
+                # or if keep_going has previously been zero.
+                # This will likely happen in batching quite frequently,
+                # and saves lots of unnecessary projections. What is produced
+                # doesn't matter, as evaluated probabilities will be masked out.
+                new_params = pre_projection_params[k, :].clone()
+                if class_i == new_class[k] and (
+                        object_i == 0 or
+                        np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
+                    env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
+                    input_queue.put((k, env, object_i, base_environment_type, new_params.detach().numpy()))
 
-                # Pre-compute the "active" decision variable indices
-                if base_environment_type in ["planar_bin", "planar_tabletop"]:
-                    x_index = mbp.GetJointByName(
-                        "body_{}_x".format(object_i)).position_start()
-                    z_index = mbp.GetJointByName(
-                        "body_{}_z".format(object_i)).position_start()
-                    t_index = mbp.GetJointByName(
-                        "body_{}_theta".format(object_i)).position_start()
-                    inds = [x_index, z_index, t_index]
                 else:
-                    raise NotImplementedError("Unsupported base environment type.")
+                    all_params[k] = new_params
+                    all_params_derivatives[k] = torch.eye(event_shape[0], dtype=dtype)
 
-                # Do projection
-                q_min = q0.copy()
-                q_max = q0.copy()
-                q_min[inds] = -np.infty
-                q_max[inds] = np.infty
+            termination_event.set()
+            while (True):
+                if result.ready() and output_queue.empty():
+                    break
+                if not output_queue.empty():
+                    index, new_params, new_params_derivatives = output_queue.get(
+                        timeout=0)
+                    all_params[index] = torch.tensor(new_params, dtype=dtype)
+                    all_params_derivatives[index] = torch.tensor(new_params_derivatives, dtype=dtype)
+                time.sleep(0)
 
-                results = diff_nlp.ProjectMBPToFeasibility(
-                    q0, mbp, mbp_context,
-                    [diff_nlp.SetArguments(diff_nlp.AddMinimumDistanceConstraint, minimum_distance=0.01),
-                     diff_nlp.SetArguments(diff_nlp.AddJointPositionBounds, q_min=q_min, q_max=q_max)],
-                    compute_gradients_at_solution=True, verbose=0)
-
-                new_params[:len(inds)] = torch.tensor(results.qf[inds])
-                for i, ind in enumerate(inds):
-                    new_params_derivs[i, :len(inds)] = torch.tensor(results.dqf_dq0[ind, inds])
-
-            all_params.append(new_params)
-            all_params_derivatives.append(new_params_derivs)
+        else:
+            dummy_worker = ProjectionWorker(None, None, None, no_constraints=no_constraints)
+            for k in range(batch_shape[0]):
+                new_params = pre_projection_params[k, :].clone()
+                if class_i == new_class[k] and (
+                        object_i == 0 or
+                        np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
+                    env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
+                    new_params, new_params_derivs = dummy_worker._do_projection_inner_work(
+                         env, object_i, base_environment_type, new_params.detach().numpy())
+                    all_params[k] = torch.tensor(new_params, dtype=dtype)
+                    all_params_derivatives[k] = torch.tensor(new_params_derivs, dtype=dtype)
+                else:
+                    all_params[k] = new_params
+                    all_params_derivatives[k] = torch.eye(event_shape[0], dtype=dtype)
 
         all_params_tensor = torch.stack(all_params)
         all_params_derivatives_tensor = torch.stack(all_params_derivatives)
@@ -168,7 +265,7 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
 
 
 class MultiObjectMultiClassModelWithContext():
-    def __init__(self, dataset, use_projection=False):
+    def __init__(self, dataset, use_projection=False, n_processes=20):
         assert(isinstance(dataset, dataset_utils.ScenesDatasetVectorized))
         self.use_projection = use_projection
         self.dataset = dataset
@@ -178,6 +275,8 @@ class MultiObjectMultiClassModelWithContext():
         self.max_num_objects = dataset.get_max_num_objects()
         self.num_classes = dataset.get_num_classes()
         self.num_params_by_class = dataset.get_num_params_by_class()
+
+        self.worker_pool = multiprocessing.Pool(processes=n_processes)
 
         # Class-specific encoders and generators
         self.class_means_generators = []
@@ -254,24 +353,23 @@ class MultiObjectMultiClassModelWithContext():
         # Predicts pre-projection params from post-projection params.
         # TODO(gizatt) This shouldn't be necessary... and this task
         # is impossible, it's non-invertible.
-        if self.use_projection:
-            self.class_guides = []
-            for class_i in range(self.num_classes):
-                # Generator
-                input_size = self.num_params_by_class[class_i]
-                output_size = self.num_params_by_class[class_i]
-                H = 50
-                self.class_guides.append(
-                    torch.nn.Sequential(
-                        torch.nn.Linear(input_size, H),
-                        torch.nn.ReLU(),
-                        torch.nn.Linear(H, H),
-                        torch.nn.ReLU(),
-                        torch.nn.Linear(H, H),
-                        torch.nn.ReLU(),
-                        torch.nn.Linear(H, output_size),
-                    )
+        self.class_guides = []
+        for class_i in range(self.num_classes):
+            # Generator
+            input_size = self.num_params_by_class[class_i]
+            output_size = self.num_params_by_class[class_i]
+            H = 50
+            self.class_guides.append(
+                torch.nn.Sequential(
+                    torch.nn.Linear(input_size, H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(H, H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(H, H),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(H, output_size),
                 )
+            )
 
     def _create_empty_context(self, minibatch_size):
         return torch.zeros(minibatch_size, self.context_size)
@@ -342,6 +440,11 @@ class MultiObjectMultiClassModelWithContext():
         for class_i in range(self.num_classes):
             if self.use_projection:
                 def sample_params():
+                    # TODO(gizatt) Change this to a flow conditional
+                    # on the context. This isn't terribly expressive
+                    # right now due to being a mean/var output --
+                    # while technically conditional on context, most
+                    # contexts imply multimodal outputs anyway.
                     params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
                     params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
 
@@ -352,12 +455,19 @@ class MultiObjectMultiClassModelWithContext():
                     projection_dist = ProjectToFeasibilityDist(
                         pre_projection_params, class_i,
                         object_i, context, new_class, generated_data,
-                        self.base_environment_type)
+                        self.base_environment_type,
+                        no_constraints=False,
+                        worker_pool=self.worker_pool)
 
                     return pyro.sample("params_{}_{}".format(object_i, class_i),
                                        projection_dist, obs=observed_params[class_i])
             else:
                 def sample_params():
+                    # TODO(gizatt) Change this to a flow conditional
+                    # on the context. This isn't terribly expressive
+                    # right now due to being a mean/var output --
+                    # while technically conditional on context, most
+                    # contexts imply multimodal outputs anyway.
                     params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
                     params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
                     return pyro.sample(
@@ -504,6 +614,7 @@ class MultiObjectMultiClassModelWithContext():
         else:
             minibatch_size = data_batch_size
         if self.use_projection:
+            # NOTE: Can't use AMORTIZED = False on test data.
             AMORTIZED = True
             if AMORTIZED:
                 for class_i in range(self.num_classes):
@@ -527,7 +638,6 @@ class MultiObjectMultiClassModelWithContext():
                             pyro.sample(
                                 "pre_projection_params_{}_{}".format(object_i, class_i),
                                 dist.Delta(estimate).to_event(1))
-
 
 
 if __name__ == "__main__":
