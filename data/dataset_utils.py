@@ -79,18 +79,26 @@ class ScenesDataset(Dataset):
         return self.yaml_environments[idx]
 
 
-VectorizedEnvironments = namedtuple(
-    "VectorizedEnvironments",
-    ["batch_size", "keep_going", "classes", "params_by_class"],
-    verbose=False)
+class VectorizedEnvironments:
+    def __init__(self, batch_size, keep_going, classes,
+                 params_by_class, dataset=None):
+        self.batch_size = batch_size
+        self.keep_going = keep_going
+        self.classes = classes
+        self.params_by_class = params_by_class
+        self.dataset = dataset
 
+    def convert_to_yaml(self):
+        assert(self.dataset)
+        return self.dataset.convert_vectorized_environment_to_yaml(self)
 
-def SubsampleVectorizedEnvironments(data, subsample_inds):
-    return VectorizedEnvironments(
-        batch_size=len(subsample_inds),
-        keep_going=data.keep_going[subsample_inds, ...],
-        classes=data.classes[subsample_inds, ...],
-        params_by_class=[p[subsample_inds, ...] for p in data.params_by_class])
+    def subsample(self, subsample_inds):
+        return VectorizedEnvironments(
+            batch_size=len(subsample_inds),
+            keep_going=self.keep_going[subsample_inds, ...],
+            classes=self.classes[subsample_inds, ...],
+            params_by_class=[p[subsample_inds, ...] for p in self.params_by_class],
+            dataset=self.dataset)
 
 
 class ScenesDatasetVectorized(Dataset):
@@ -105,10 +113,11 @@ class ScenesDatasetVectorized(Dataset):
             classes not generated.
     '''
 
-    def __init__(self, file_or_folder, max_num_objects=None):
+    def __init__(self, file_or_folder, base_environment_type, max_num_objects=None):
         temp_dataset = ScenesDataset(file_or_folder)
         self.yaml_environments = temp_dataset.yaml_environments
         self.yaml_environments_names = temp_dataset.yaml_environments_names
+        self.base_environment_type = base_environment_type
 
         self.class_name_to_id = {}
         self.class_id_to_name = []
@@ -169,7 +178,19 @@ class ScenesDatasetVectorized(Dataset):
             batch_size=self.n_envs,
             keep_going=self.keep_going,
             classes=self.classes,
-            params_by_class=self.params_by_class)
+            params_by_class=self.params_by_class,
+            dataset=self)
+
+    def get_subsample_dataset(self, subsample_inds):
+        return VectorizedEnvironments(
+            batch_size=len(subsample_inds),
+            keep_going=self.keep_going[subsample_inds, :],
+            classes=self.classes[subsample_inds, :],
+            params_by_class=[p[subsample_inds, :] for p in self.params_by_class],
+            dataset=self)
+
+    def get_class_id_from_name(self, name):
+        return self.class_name_to_id[name]
 
     def get_class_name_from_id(self, i):
         if i == -1:
@@ -259,7 +280,7 @@ def BuildMbpAndSgFromYamlEnvironment(
             Isometry3(rotation=np.eye(3), translation=[1, 0, 0]),
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
-        mbp.AddForceElement(UniformGravityFieldElement())
+        mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
     elif base_environment_type == "planar_tabletop":
         world_body = mbp.world_body()
     else:
@@ -312,11 +333,11 @@ def BuildMbpAndSgFromYamlEnvironment(
             mbp.AddJoint(body_joint_theta)
 
             if obj_yaml["class"] == "2d_sphere":
-                radius = obj_yaml["params"][0]
+                radius = max(obj_yaml["params"][0], 0.01)
                 body_shape = Sphere(radius)
             elif obj_yaml["class"] == "2d_box":
-                height = obj_yaml["params"][0]
-                length = obj_yaml["params"][1]
+                height = max(obj_yaml["params"][0], 0.01)
+                length = max(obj_yaml["params"][1], 0.01)
                 if base_environment_type == "planar_bin":
                     body_shape = Box(length, 0.25, height)
                 else:
@@ -334,7 +355,6 @@ def BuildMbpAndSgFromYamlEnvironment(
         RegisterVisualAndCollisionGeometry(
             mbp, body, Isometry3(), body_shape, "body_{}".format(k),
             color, CoulombFriction(0.9, 0.8))
-    mbp.AddForceElement(UniformGravityFieldElement())
     mbp.Finalize()
 
     # TODO(gizatt) When default position setting for all relevant

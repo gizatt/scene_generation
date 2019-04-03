@@ -187,12 +187,12 @@ class MultiObjectMultiClassModel():
             context, new_class, sampled_params)
         context = self._update_context(
             encoded_params, context)
-        
+
         # Keep going, after this?
         observed_keep_going = self._extract_keep_going(data, object_i)
         keep_going = self._sample_keep_going(
             object_i, batch_size, context, observed_keep_going)
-        
+
         return keep_going, new_class, sampled_params, encoded_params, context
 
     def model(self, data=None, subsample_size=None):
@@ -213,8 +213,7 @@ class MultiObjectMultiClassModel():
 
         with pyro.plate('data', size=data_batch_size) as subsample_inds:
             if data is not None:
-                data_sub = dataset_utils.SubsampleVectorizedEnvironments(
-                    data, subsample_inds)
+                data_sub = data.subsample(subsample_inds)
             else:
                 data_sub = data
             minibatch_size = len(subsample_inds)
@@ -298,8 +297,7 @@ if __name__ == "__main__":
     start = time.time()
     pyro.clear_param_store()
     trace = poutine.trace(model.model).get_trace(
-        dataset_utils.SubsampleVectorizedEnvironments(
-            data, [0, 1, 2]))
+        data.subsample([0, 1, 2]))
     trace.compute_log_prob()
     end = time.time()
     print "Time to run and do log probs with 3 datapoints: %fs" % (end - start)
