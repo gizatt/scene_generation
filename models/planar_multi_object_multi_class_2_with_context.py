@@ -182,9 +182,9 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
                 # and saves lots of unnecessary projections. What is produced
                 # doesn't matter, as evaluated probabilities will be masked out.
                 new_params = pre_projection_params[k, :].clone()
-                if class_i == new_class[k] and (
+                if (not no_constraints and class_i == new_class[k] and (
                         object_i == 0 or
-                        np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
+                        np.all(generated_data.keep_going[k, :].detach().numpy() != 0.))):
                     env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
                     input_queue.put((k, env, object_i, base_environment_type, new_params.detach().numpy()))
 
@@ -207,9 +207,10 @@ class ProjectToFeasibilityDist(dist.TorchDistribution):
             dummy_worker = ProjectionWorker(None, None, None, no_constraints=no_constraints)
             for k in range(batch_shape[0]):
                 new_params = pre_projection_params[k, :].clone()
-                if class_i == new_class[k] and (
-                        object_i == 0 or
-                        np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
+                if (not no_constraints and
+                        class_i == new_class[k] and
+                        (object_i == 0 or
+                         np.all(generated_data.keep_going[k, :].detach().numpy() != 0.))):
                     env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
                     new_params, new_params_derivs = dummy_worker._do_projection_inner_work(
                          env, object_i, base_environment_type, new_params.detach().numpy())
@@ -456,7 +457,7 @@ class MultiObjectMultiClassModelWithContext():
                         pre_projection_params, class_i,
                         object_i, context, new_class, generated_data,
                         self.base_environment_type,
-                        no_constraints=False,
+                        no_constraints=True,
                         worker_pool=self.worker_pool)
 
                     return pyro.sample("params_{}_{}".format(object_i, class_i),
@@ -546,7 +547,7 @@ class MultiObjectMultiClassModelWithContext():
             pyro.module("class_encoder_module_{}".format(class_i),
                         self.class_encoders[class_i], update_module_params=True)
         if data is None:
-            data_batch_size = 1
+            data_batch_size = 50
         else:
             data_batch_size = data.batch_size
 
