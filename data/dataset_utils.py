@@ -141,7 +141,7 @@ class ScenesDatasetVectorized(Dataset):
             # Keep-going is shifted by one -- it's whether to add an
             # object *after* the ith.
             self.keep_going[env_i, 0:env["n_objects"]-1] = 1
-            for k in range(env["n_objects"]):
+            for k in range(min(env["n_objects"], self.max_num_objects)):
                 obj_yaml = env["obj_%04d" % k]
                 # New object, initialize its generated params
                 pose = obj_yaml["pose"]
