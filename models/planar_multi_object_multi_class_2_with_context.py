@@ -1,4 +1,5 @@
 from collections import namedtuple
+from copy import deepcopy
 import datetime
 import io
 import matplotlib
@@ -32,14 +33,162 @@ import torch
 import torch.distributions.constraints as constraints
 
 import scene_generation.data.dataset_utils as dataset_utils
+import scene_generation.differentiable_nlp as diff_nlp
+
+
+class ProjectToFeasibilityDist(dist.TorchDistribution):
+    has_rsample = True
+    arg_constraints = {"pre_projection_params": torch.distributions.constraints.real}
+
+    def __init__(self, pre_projection_params, class_i,
+                 object_i, context, new_class, generated_data,
+                 base_environment_type):
+        batch_shape = pre_projection_params.shape[:-1]
+        event_shape = pre_projection_params.shape[-1:]
+        dtype = pre_projection_params.dtype
+        variance = torch.tensor(0.05, dtype=dtype)
+        # TODO(gizatt) Handle when len(batch_shape) > 1?
+        if len(batch_shape) > 1:
+            raise NotImplementedError("Don't know how to handle"
+                                      "multidimensional batch.")
+
+        ones = np.ones([batch_shape[0], 1])
+
+        tentative_generated_data = dataset_utils.VectorizedEnvironments(
+            batch_size=generated_data.batch_size,
+            keep_going=np.hstack([generated_data.keep_going.detach().numpy(), ones*0]),
+            classes=np.hstack([generated_data.classes.detach().numpy(), ones*class_i]).astype(np.int),
+            params_by_class=[p.detach().numpy() for p in generated_data.params_by_class],
+            dataset=generated_data.dataset)
+        # Cram the generated parameters onto the appropriate params_by_class
+        # element. Don't bother updating the other class params, as they won't
+        # be read.
+        # params_by_class[class_i].shape() =
+        #   [minibatch_size, #_object_so_far, #_params_for_this_class]
+        tentative_generated_data.params_by_class[class_i] = np.concatenate(
+            [tentative_generated_data.params_by_class[class_i],
+             pre_projection_params.detach().numpy().reshape(batch_shape[0], 1, -1)], axis=1)
+
+        all_params = []
+        all_params_derivatives = []
+        for k in range(batch_shape[0]):
+            # Short circuit if class_i and new_class don't match,
+            # or if keep_going has previously been zero.
+            # This will likely happen in batching quite frequently,
+            # and saves lots of unnecessary projections. What is produced
+            # doesn't matter, as evaluated probabilities will be masked out.
+            new_params = pre_projection_params[k, :].clone()
+            new_params_derivs = torch.eye(event_shape[0], dtype=dtype)
+            print("Class: %d, obj: %d, batch_iter: %d" % (class_i, object_i, k))
+            if class_i == new_class[k] and (
+                    object_i == 0 or
+                    np.all(generated_data.keep_going[k, :].detach().numpy() != 0.)):
+                env = tentative_generated_data.subsample([k]).convert_to_yaml()[0]
+                print("Projecting env: ", env)
+                builder, mbp, scene_graph, q0 = dataset_utils.BuildMbpAndSgFromYamlEnvironment(
+                    env, base_environment_type)
+                diagram = builder.Build()
+
+                diagram_context = diagram.CreateDefaultContext()
+                mbp_context = diagram.GetMutableSubsystemContext(
+                    mbp, diagram_context)
+
+                print("BEFORE PROJ: ")
+                dataset_utils.DrawYamlEnvironment(env, "planar_bin")
+                time.sleep(2.0)
+
+                # Pre-compute the "active" decision variable indices
+                if base_environment_type in ["planar_bin", "planar_tabletop"]:
+                    x_index = mbp.GetJointByName(
+                        "body_{}_x".format(object_i)).position_start()
+                    z_index = mbp.GetJointByName(
+                        "body_{}_z".format(object_i)).position_start()
+                    t_index = mbp.GetJointByName(
+                        "body_{}_theta".format(object_i)).position_start()
+                    inds = [x_index, z_index, t_index]
+                else:
+                    raise NotImplementedError("Unsupported base environment type.")
+
+                # Do projection
+                q_min = q0.copy()
+                q_max = q0.copy()
+                q_min[inds] = -np.infty
+                q_max[inds] = np.infty
+
+                results = diff_nlp.ProjectMBPToFeasibility(
+                    q0, mbp, mbp_context,
+                    [diff_nlp.SetArguments(diff_nlp.AddMinimumDistanceConstraint, minimum_distance=0.01),
+                     diff_nlp.SetArguments(diff_nlp.AddJointPositionBounds, q_min=q_min, q_max=q_max)],
+                    compute_gradients_at_solution=True, verbose=2)
+
+
+                print("AFTER PROJ: ")
+                env["obj_%04d" % object_i]["pose"] = results.qf[inds]
+                dataset_utils.DrawYamlEnvironment(env, "planar_bin")
+                time.sleep(2.0)
+
+                new_params[:len(inds)] = torch.tensor(results.qf[inds])
+                for i, ind in enumerate(inds):
+                    new_params_derivs[i, :len(inds)] = torch.tensor(results.dqf_dq0[ind, inds])
+
+            all_params.append(new_params)
+            all_params_derivatives.append(new_params_derivs)
+
+        all_params_tensor = torch.stack(all_params)
+        all_params_derivatives_tensor = torch.stack(all_params_derivatives)
+
+        print(all_params_tensor, all_params_derivatives_tensor)
+        self._rsample = diff_nlp.PassthroughWithGradient.apply(
+            pre_projection_params, all_params_tensor,
+            all_params_derivatives_tensor)
+        self._distrib = dist.Normal(
+            self._rsample,
+            variance.expand(event_shape)).to_event(1)
+
+        super(ProjectToFeasibilityDist, self).__init__(
+            batch_shape, event_shape, validate_args=False)
+
+    def expand(self, batch_shape, _instance=None):
+        new = self._get_checked_instance(
+            ProjectToFeasibilityDist, _instance)
+        batch_shape = torch.Size(batch_shape)
+        new._rsample = self._rsample.expand(batch_shape + self.event_shape)
+        new._distrib = self._distrib.expand(batch_shape)
+        super(ProjectToFeasibilityDist, new).__init__(
+            batch_shape, self.event_shape, validate_args=False)
+        return new
+
+    @torch.distributions.constraints.dependent_property
+    def support(self):
+        return torch.distributions.constraints.real
+
+    def log_prob(self, value):
+        assert value.shape[-1] == self.event_shape[0]
+        if value.dim() > 1:
+            assert value.shape[0] == self.batch_shape[0]
+
+        # Difference of each new value from the projected point
+        diff_values = value - self._rsample
+        # Project that into the infeasible cone -- we're moving out
+        # towards local infeasible space if any of these inner products
+        # is positive.
+        # I'll use a "large" threshold of violation for now...
+        # TODO(gizatt) What's a good val for eps?
+        return self._distrib.log_prob(value)
+
+    def rsample(self, sample_shape=torch.Size()):
+        return self._rsample.expand(sample_shape + self.batch_shape + self.event_shape)
 
 
 class MultiObjectMultiClassModelWithContext():
-    def __init__(self, dataset, max_num_objects=20):
+    def __init__(self, dataset, use_projection=False):
         assert(isinstance(dataset, dataset_utils.ScenesDatasetVectorized))
-        self.context_size = 100
-        self.class_general_encoded_size = 100
-        self.max_num_objects = max_num_objects
+        self.use_projection = use_projection
+        self.dataset = dataset
+        self.base_environment_type = dataset.base_environment_type
+        self.context_size = 20
+        self.class_general_encoded_size = 20
+        self.max_num_objects = dataset.get_max_num_objects()
         self.num_classes = dataset.get_num_classes()
         self.num_params_by_class = dataset.get_num_params_by_class()
 
@@ -51,7 +200,7 @@ class MultiObjectMultiClassModelWithContext():
             # Generator
             input_size = self.context_size
             output_size = self.num_params_by_class[class_i]
-            generator_H = 100
+            generator_H = 20
             self.class_means_generators.append(
                 torch.nn.Sequential(
                     torch.nn.Linear(input_size, generator_H),
@@ -74,7 +223,7 @@ class MultiObjectMultiClassModelWithContext():
             # Encoder
             input_size = self.num_params_by_class[class_i]
             output_size = self.context_size
-            encoder_H = 100
+            encoder_H = 20
             self.class_encoders.append(
                 torch.nn.Sequential(
                     torch.nn.Linear(input_size, encoder_H),
@@ -84,15 +233,15 @@ class MultiObjectMultiClassModelWithContext():
                     torch.nn.Linear(encoder_H, output_size),
                 )
             )
-            
+
         self.context_updater = torch.nn.GRU(
             input_size=self.context_size,
-            hidden_size=100)
-        
+            hidden_size=20)
+
         # Keep going predictor:
         # regresses bernoulli keep_going weight
         # from current context
-        keep_going_H = 100
+        keep_going_H = 20
         self.keep_going_controller = torch.nn.Sequential(
             torch.nn.Linear(self.context_size, keep_going_H),
             torch.nn.ReLU(),
@@ -104,7 +253,7 @@ class MultiObjectMultiClassModelWithContext():
         # Class predictor:
         # regresses categorical weights
         # from current context
-        class_H = 100
+        class_H = 20
         self.class_controller = torch.nn.Sequential(
             torch.nn.Linear(self.context_size, class_H),
             torch.nn.ReLU(),
@@ -113,7 +262,7 @@ class MultiObjectMultiClassModelWithContext():
             torch.nn.Linear(keep_going_H, self.num_classes),
             torch.nn.Softmax()
         )
-        
+
     def _create_empty_context(self, minibatch_size):
         return torch.zeros(minibatch_size, self.context_size)
 
@@ -172,7 +321,7 @@ class MultiObjectMultiClassModelWithContext():
 
     def _sample_class_specific_generators(
             self, object_i, minibatch_size, context, new_class,
-            observed_params):
+            observed_params, generated_data):
         # To operate in batch, this needs to sample from every
         # class-specific generator, but mask off the ones that weren't
         # actually selected.
@@ -181,13 +330,30 @@ class MultiObjectMultiClassModelWithContext():
 
         sampled_params_components = []
         for class_i in range(self.num_classes):
-            def sample_params():
-                params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
-                params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
-                return pyro.sample(
-                    "params_{}_{}".format(object_i, class_i),
-                    dist.Normal(params_means, params_vars).to_event(1),
-                    obs=observed_params[class_i])
+            if self.use_projection:
+                def sample_params():
+                    params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+                    params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+
+                    pre_projection_params = pyro.sample(
+                        "pre_projection_params_{}_{}".format(object_i, class_i),
+                        dist.Normal(params_means, params_vars).to_event(1))
+
+                    projection_dist = ProjectToFeasibilityDist(
+                        pre_projection_params, class_i,
+                        object_i, context, new_class, generated_data,
+                        self.base_environment_type)
+
+                    return pyro.sample("params_{}_{}".format(object_i, class_i),
+                                       projection_dist, obs=observed_params[class_i])
+            else:
+                def sample_params():
+                    params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+                    params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+                    return pyro.sample(
+                        "params_{}_{}".format(object_i, class_i),
+                        dist.Normal(params_means, params_vars).to_event(1),
+                        obs=observed_params[class_i])
 
             # Sample everything in batch -- meaning we'll sample
             # every class even though we know what class we wanted to sample.
@@ -221,7 +387,8 @@ class MultiObjectMultiClassModelWithContext():
             encoded_params.view(1, -1, self.class_general_encoded_size),
             context.view(1, -1, self.context_size))[-1]
 
-    def _sample_single_object(self, object_i, data, batch_size, context):
+    def _sample_single_object(self, object_i, data, batch_size,
+                              context, generated_data):
         # Sample the new object type
         observed_new_class = self._extract_new_class(data, object_i)
         new_class = self._sample_new_class(
@@ -231,19 +398,20 @@ class MultiObjectMultiClassModelWithContext():
         observed_params = self._extract_params(
             data, object_i)
         sampled_params = self._sample_class_specific_generators(
-            object_i, batch_size, context, new_class, observed_params)
+            object_i, batch_size, context, new_class,
+            observed_params, generated_data)
         # Update the context by encoding the new params
         # into a fixed-size vector through a class-specific encoder.
         encoded_params = self._apply_class_specific_encoders(
             context, new_class, sampled_params)
         context = self._update_context(
             encoded_params, context)
-        
+
         # Keep going, after this?
         observed_keep_going = self._extract_keep_going(data, object_i)
         keep_going = self._sample_keep_going(
             object_i, batch_size, context, observed_keep_going)
-        
+
         return keep_going, new_class, sampled_params, encoded_params, context
 
     def model(self, data=None, subsample_size=None):
@@ -270,8 +438,7 @@ class MultiObjectMultiClassModelWithContext():
 
         with pyro.plate('data', size=data_batch_size) as subsample_inds:
             if data is not None:
-                data_sub = dataset_utils.SubsampleVectorizedEnvironments(
-                    data, subsample_inds)
+                data_sub = data.subsample(subsample_inds)
             minibatch_size = len(subsample_inds)
             context = self._create_empty_context(minibatch_size)
 
@@ -280,12 +447,19 @@ class MultiObjectMultiClassModelWithContext():
             # generation steps and mask if we're on a stop
             # where the generator said to stop.
             not_terminated = torch.ones(minibatch_size) == 1.
+            generated_data = dataset_utils.VectorizedEnvironments(
+                batch_size=minibatch_size,
+                keep_going=torch.empty(minibatch_size, 0),
+                classes=torch.empty(minibatch_size, 0),
+                params_by_class=[torch.empty(minibatch_size, 0, p) for p in self.num_params_by_class],
+                dataset=self.dataset)
             for object_i in range(self.max_num_objects):
                 # Do a generation step
                 keep_going, new_class, sampled_params, encoded_params, context = \
                     poutine.mask(
                         lambda: self._sample_single_object(
-                            object_i, data, minibatch_size, context),
+                            object_i, data, minibatch_size,
+                            context, generated_data),
                         not_terminated)()
 
                 not_terminated = not_terminated * keep_going
@@ -296,13 +470,15 @@ class MultiObjectMultiClassModelWithContext():
                 generated_encodings.append(encoded_params)
                 generated_contexts.append(context)
 
-        # Reassemble the output VectorizedEnvironments
-        generated_data = dataset_utils.VectorizedEnvironments(
-            batch_size=minibatch_size,
-            keep_going=torch.stack(generated_keep_going, -1),
-            classes=torch.stack(generated_classes, -1),
-            params_by_class=[
-                torch.stack(p, -2) for p in generated_params_by_class])
+                # Reassemble the output VectorizedEnvironments
+                generated_data = dataset_utils.VectorizedEnvironments(
+                    batch_size=minibatch_size,
+                    keep_going=torch.stack(generated_keep_going, -1),
+                    classes=torch.stack(generated_classes, -1),
+                    params_by_class=[
+                        torch.stack(p, -2) for p in generated_params_by_class],
+                    dataset=self.dataset)
+
         return (generated_data,
                 torch.stack(generated_encodings, -1),
                 torch.stack(generated_contexts, -1))
@@ -312,10 +488,11 @@ if __name__ == "__main__":
     pyro.enable_validation(True)
 
     file = "../data/planar_bin/planar_bin_static_scenes.yaml"
-    scenes_dataset = dataset_utils.ScenesDatasetVectorized(file)
+    scenes_dataset = dataset_utils.ScenesDatasetVectorized(
+        file, base_environment_type="planar_bin")
     data = scenes_dataset.get_full_dataset()
 
-    model = MultiObjectMultiClassModel(scenes_dataset)
+    model = MultiObjectMultiClassModelWithContext(scenes_dataset, use_projection=True)
 
     log_dir = "runs/pmomc2/" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
@@ -333,6 +510,8 @@ if __name__ == "__main__":
     end = time.time()
     print "Time to generate and draw one scene: %fs" % (end - start)
 
+    sys.exit(0)
+
     start = time.time()
     pyro.clear_param_store()
     trace = poutine.trace(model.model).get_trace()
@@ -344,8 +523,7 @@ if __name__ == "__main__":
     start = time.time()
     pyro.clear_param_store()
     trace = poutine.trace(model.model).get_trace(
-        dataset_utils.SubsampleVectorizedEnvironments(
-            data, [0, 1, 2]))
+        data.subsample([0, 1, 2]))
     trace.compute_log_prob()
     end = time.time()
     print "Time to run and do log probs with 3 datapoints: %fs" % (end - start)
@@ -354,11 +532,11 @@ if __name__ == "__main__":
 
     start = time.time()
     pyro.clear_param_store()
-    trace = poutine.trace(model.model).get_trace(data)
+    trace = poutine.trace(model.model).get_trace(data.subsample(range(100)))
     trace.compute_log_prob()
     end = time.time()
     print "Time to run and do log probs with %d datapoints: %fs" % (
-        data.batch_size, end - start)
+        100, end - start)
 
     #pyro.clear_param_store()
     #trace = poutine.trace(model.generation_guide).get_trace(data, subsample_size=5)
