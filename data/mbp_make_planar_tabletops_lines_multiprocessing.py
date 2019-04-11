@@ -68,8 +68,8 @@ class GeneratorWorker(object):
             builder, MultibodyPlant(time_step=0.01))
         world_body = mbp.world_body()
 
-        n_lines = np.random.randint(1, 4)
-        n_bodies_per_line = np.random.randint(1, 8, size=n_lines)
+        n_lines = np.random.randint(1, 1+1)  # Always one line
+        n_bodies_per_line = np.random.randint(1, 5+1, size=n_lines)  # 1 - 5 objects
         n_bodies = int(np.sum(n_bodies_per_line))
         output_dict = {"n_objects": n_bodies}
 
