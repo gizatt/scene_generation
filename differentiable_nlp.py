@@ -45,6 +45,12 @@ def SetArguments(f, **kwargs):
     return functools.partial(f, **kwargs)
 
 
+def AddJointPositionBounds(ik, q_min, q_max):
+    q_dec = ik.q()
+    prog = ik.prog()
+    prog.AddBoundingBoxConstraint(q_min, q_max, q_dec)
+
+
 def AddMinimumDistanceConstraint(ik, minimum_distance=0.01):
     ik.AddMinimumDistanceConstraint(minimum_distance)
 
