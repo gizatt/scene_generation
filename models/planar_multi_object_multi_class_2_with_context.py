@@ -34,6 +34,7 @@ from pyro.contrib.autoguide import (
     AutoDelta, AutoDiagonalNormal,
     AutoMultivariateNormal, AutoGuideList
 )
+from pyro.nn import AutoRegressiveNN
 import torch
 import torch.distributions.constraints as constraints
 
@@ -280,33 +281,29 @@ class MultiObjectMultiClassModelWithContext():
         self.worker_pool = multiprocessing.Pool(processes=n_processes)
 
         # Class-specific encoders and generators
-        self.class_means_generators = []
-        self.class_vars_generators = []
+        self.class_flows = []
+        self.class_tf_dists = []
         self.class_encoders = []
         for class_i in range(self.num_classes):
             # Generator
             input_size = self.context_size
             output_size = self.num_params_by_class[class_i]
-            generator_H = 20
-            self.class_means_generators.append(
-                torch.nn.Sequential(
-                    torch.nn.Linear(input_size, generator_H),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(generator_H, generator_H),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(generator_H, output_size),
-                )
-            )
-            self.class_vars_generators.append(
-                torch.nn.Sequential(
-                    torch.nn.Linear(input_size, generator_H),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(generator_H, generator_H),
-                    torch.nn.ReLU(),
-                    torch.nn.Linear(generator_H, output_size),
-                    torch.nn.Softplus()
-                )
-            )
+            flow_H = [50, 50]
+            flow_layers = 5
+
+            base_dist = dist.Normal(torch.zeros(output_size),
+                                    torch.ones(output_size)).to_event(1)
+            flows = []
+            for flow_i in range(flow_layers):
+                flows.append(
+                    dist.MaskedAutoregressiveFlow(
+                        AutoRegressiveNN(output_size,
+                                         flow_H,
+                                         observed_dim=input_size)))
+            tf_dist = dist.TransformedDistribution(base_dist, flows)
+            self.class_flows.append(flows)
+            self.class_tf_dists.append(tf_dist)
+
             # Encoder
             input_size = self.num_params_by_class[class_i]
             output_size = self.context_size
@@ -328,7 +325,7 @@ class MultiObjectMultiClassModelWithContext():
         # Keep going predictor:
         # regresses bernoulli keep_going weight
         # from current context
-        keep_going_H = 20
+        keep_going_H = 10
         self.keep_going_controller = torch.nn.Sequential(
             torch.nn.Linear(self.context_size, keep_going_H),
             torch.nn.ReLU(),
@@ -340,7 +337,7 @@ class MultiObjectMultiClassModelWithContext():
         # Class predictor:
         # regresses categorical weights
         # from current context
-        class_H = 20
+        class_H = 10
         self.class_controller = torch.nn.Sequential(
             torch.nn.Linear(self.context_size, class_H),
             torch.nn.ReLU(),
@@ -441,17 +438,12 @@ class MultiObjectMultiClassModelWithContext():
         for class_i in range(self.num_classes):
             if self.use_projection:
                 def sample_params():
-                    # TODO(gizatt) Change this to a flow conditional
-                    # on the context. This isn't terribly expressive
-                    # right now due to being a mean/var output --
-                    # while technically conditional on context, most
-                    # contexts imply multimodal outputs anyway.
-                    params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
-                    params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
-
+                    for flow in self.class_flows[class_i]:
+                        flow.set_z(context)
+                    tf_dist = self.class_tf_dists[class_i]
                     pre_projection_params = pyro.sample(
                         "pre_projection_params_{}_{}".format(object_i, class_i),
-                        dist.Normal(params_means, params_vars + 1E-6).to_event(1))
+                        tf_dist, obs=observed_params[class_i])
 
                     projection_dist = ProjectToFeasibilityDist(
                         pre_projection_params, class_i,
@@ -469,12 +461,12 @@ class MultiObjectMultiClassModelWithContext():
                     # right now due to being a mean/var output --
                     # while technically conditional on context, most
                     # contexts imply multimodal outputs anyway.
-                    params_means = self.class_means_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
-                    params_vars = self.class_vars_generators[class_i](context).view(minibatch_size, self.num_params_by_class[class_i])
+                    for flow in self.class_flows[class_i]:
+                        flow.set_z(context)
+                    tf_dist = self.class_tf_dists[class_i]
                     return pyro.sample(
                         "params_{}_{}".format(object_i, class_i),
-                        dist.Normal(params_means, params_vars + 1E-6).to_event(1),
-                        obs=observed_params[class_i])
+                        tf_dist, obs=observed_params[class_i])
 
             # Sample everything in batch -- meaning we'll sample
             # every class even though we know what class we wanted to sample.
@@ -506,7 +498,7 @@ class MultiObjectMultiClassModelWithContext():
     def _update_context(self, encoded_params, context):
         return self.context_updater(
             encoded_params.view(1, -1, self.class_general_encoded_size),
-            context.view(1, -1, self.context_size))[-1]
+            context.view(1, -1, self.context_size))[-1].view(-1, self.context_size)
 
     def _sample_single_object(self, object_i, data, batch_size,
                               context, generated_data):
@@ -535,17 +527,21 @@ class MultiObjectMultiClassModelWithContext():
 
         return keep_going, new_class, sampled_params, encoded_params, context
 
-    def model(self, data=None, subsample_size=None):
+    def declare_all_modules(self):
         pyro.module("context_updater_module", self.context_updater, update_module_params=True)
         pyro.module("keep_going_controller_module", self.keep_going_controller, update_module_params=True)
         pyro.module("class_controller_module", self.class_controller, update_module_params=True)
         for class_i in range(self.num_classes):
-            pyro.module("class_means_generator_module_{}".format(class_i),
-                        self.class_means_generators[class_i], update_module_params=True)
-            pyro.module("class_vars_generator_module_{}".format(class_i),
-                        self.class_vars_generators[class_i], update_module_params=True)
+            for flow_i, flow in enumerate(self.class_flows[class_i]):
+                pyro.module("class_{}_flow_{}".format(class_i, flow_i), flow, update_module_params=True)
             pyro.module("class_encoder_module_{}".format(class_i),
                         self.class_encoders[class_i], update_module_params=True)
+            if self.use_projection:
+                pyro.module("class_guide_module_{}".format(class_i),
+                            self.class_guides[class_i], update_module_params=True)
+
+    def model(self, data=None, subsample_size=None):
+        self.declare_all_modules()
         if data is None:
             data_batch_size = 50
         else:
@@ -607,6 +603,8 @@ class MultiObjectMultiClassModelWithContext():
                 torch.stack(generated_contexts, -1))
 
     def guide(self, data, subsample_size=None):
+        self.declare_all_modules()
+
         if not data:
             raise InvalidArgumentError("Guide must be handed data.")
         data_batch_size = data.batch_size
@@ -614,15 +612,11 @@ class MultiObjectMultiClassModelWithContext():
             minibatch_size = subsample_size
         else:
             minibatch_size = data_batch_size
-        if self.use_projection:
-            # NOTE: Can't use AMORTIZED = False on test data.
-            AMORTIZED = True
-            if AMORTIZED:
-                for class_i in range(self.num_classes):
-                    pyro.module("class_guide_module_{}".format(class_i),
-                                self.class_guides[class_i], update_module_params=True)
 
-            with pyro.plate('data', size=data_batch_size, subsample_size=subsample_size) as subsample_inds:
+        with pyro.plate('data', size=data_batch_size, subsample_size=subsample_size) as subsample_inds:
+            if self.use_projection:
+                # NOTE: Can't use AMORTIZED = False on test data.
+                AMORTIZED = True
                 data_sub = data.subsample(subsample_inds)
                 for object_i in range(self.max_num_objects):
                     for class_i in range(self.num_classes):
