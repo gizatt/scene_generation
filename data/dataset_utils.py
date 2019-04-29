@@ -15,7 +15,8 @@ try:
 except ImportError:
     from yaml import Loader
 
-from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
+from pydrake.common.eigen_geometry import Quaternion, AngleAxis
+from pydrake.math import RigidTransform
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
@@ -263,21 +264,21 @@ def BuildMbpAndSgFromYamlEnvironment(
             mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
             G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
         mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
-                       Isometry3())
+                       RigidTransform())
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            Isometry3(rotation=np.eye(3), translation=[0, 0, -0.5]),
+            RigidTransform(R=np.eye(3), p=[0, 0, -0.5]),
             ground_shape, "ground", np.array([0.5, 0.5, 0.5, 1.]),
             CoulombFriction(0.9, 0.8))
         # Short table walls
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            Isometry3(rotation=np.eye(3), translation=[-1, 0, 0]),
+            RigidTransform(R=np.eye(3), p=[-1, 0, 0]),
             wall_shape, "wall_nx",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            Isometry3(rotation=np.eye(3), translation=[1, 0, 0]),
+            RigidTransform(R=np.eye(3), p=[1, 0, 0]),
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
@@ -292,7 +293,7 @@ def BuildMbpAndSgFromYamlEnvironment(
         # Planar joints
         if len(obj_yaml["pose"]) == 3:
             no_mass_no_inertia = SpatialInertia(
-                mass=1.0, p_PScm_E=np.array([0., 0., 0.]),
+                mass=0.0, p_PScm_E=np.array([0., 0., 0.]),
                 G_SP_E=UnitInertia(0., 0., 0.))
             body_pre_z = mbp.AddRigidBody("body_{}_pre_z".format(k),
                                           no_mass_no_inertia)
@@ -353,28 +354,21 @@ def BuildMbpAndSgFromYamlEnvironment(
         if "color" in obj_yaml.keys():
             color = obj_yaml["color"]
         RegisterVisualAndCollisionGeometry(
-            mbp, body, Isometry3(), body_shape, "body_{}".format(k),
+            mbp, body, RigidTransform(), body_shape, "body_{}".format(k),
             color, CoulombFriction(0.9, 0.8))
+
     mbp.Finalize()
 
-    # TODO(gizatt) When default position setting for all relevant
-    # joint types is done, replace this mess.
-    q0 = np.zeros(mbp.num_positions())
+    # TODO(gizatt) Eventually, we'll be able to do this default
+    # setup stuff before Finalize()... yuck...
     for k in range(yaml_environment["n_objects"]):
         obj_yaml = yaml_environment["obj_%04d" % k]
         if len(obj_yaml["pose"]) == 3:
-            x_index = mbp.GetJointByName(
-                "body_{}_x".format(k)).position_start()
-            z_index = mbp.GetJointByName(
-                "body_{}_z".format(k)).position_start()
-            t_index = mbp.GetJointByName(
-                "body_{}_theta".format(k)).position_start()
-            q0[x_index] = obj_yaml["pose"][0]
-            q0[z_index] = obj_yaml["pose"][1]
-            q0[t_index] = obj_yaml["pose"][2]
-        else:
-            raise NotImplementedError(
-                "Haven't done position setting for 6DOF floating bases yet.")
+            mbp.GetMutableJointByName("body_{}_theta".format(k)).set_default_angle(obj_yaml["pose"][2])
+            mbp.GetMutableJointByName("body_{}_x".format(k)).set_default_translation(obj_yaml["pose"][0])
+            mbp.GetMutableJointByName("body_{}_z".format(k)).set_default_translation(obj_yaml["pose"][1])
+    q0 = mbp.GetPositions(mbp.CreateDefaultContext())
+
     return builder, mbp, scene_graph, q0
 
 
