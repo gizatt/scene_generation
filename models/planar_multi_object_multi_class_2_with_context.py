@@ -284,6 +284,8 @@ class MultiObjectMultiClassModelWithContext():
         self.class_flows = []
         self.class_tf_dists = []
         self.class_encoders = []
+        # Must seed RNG carefully during creation of AutoRegNNs.
+        torch.manual_seed(42)
         for class_i in range(self.num_classes):
             # Generator
             input_size = self.context_size
@@ -318,6 +320,7 @@ class MultiObjectMultiClassModelWithContext():
                 )
             )
 
+        torch.manual_seed(time.time()*1000)
         self.context_updater = torch.nn.GRU(
             input_size=self.context_size,
             hidden_size=20)
@@ -442,25 +445,22 @@ class MultiObjectMultiClassModelWithContext():
                         flow.set_z(context)
                     tf_dist = self.class_tf_dists[class_i]
                     pre_projection_params = pyro.sample(
-                        "pre_projection_params_{}_{}".format(object_i, class_i),
-                        tf_dist, obs=observed_params[class_i])
+                        "pre_projection_params_{}_{}".format(
+                            object_i, class_i), tf_dist)
 
                     projection_dist = ProjectToFeasibilityDist(
                         pre_projection_params, class_i,
                         object_i, context, new_class, generated_data,
                         self.base_environment_type,
-                        no_constraints=True,
+                        no_constraints=False,
                         worker_pool=self.worker_pool)
 
-                    return pyro.sample("params_{}_{}".format(object_i, class_i),
-                                       projection_dist, obs=observed_params[class_i])
+                    return pyro.sample("params_{}_{}".format(object_i,
+                                                             class_i),
+                                       projection_dist,
+                                       obs=observed_params[class_i])
             else:
                 def sample_params():
-                    # TODO(gizatt) Change this to a flow conditional
-                    # on the context. This isn't terribly expressive
-                    # right now due to being a mean/var output --
-                    # while technically conditional on context, most
-                    # contexts imply multimodal outputs anyway.
                     for flow in self.class_flows[class_i]:
                         flow.set_z(context)
                     tf_dist = self.class_tf_dists[class_i]
@@ -614,7 +614,7 @@ class MultiObjectMultiClassModelWithContext():
             minibatch_size = data_batch_size
 
         with pyro.plate('data', size=data_batch_size, subsample_size=subsample_size) as subsample_inds:
-            if self.use_projection:
+            if self.use_projection is True:
                 # NOTE: Can't use AMORTIZED = False on test data.
                 AMORTIZED = True
                 data_sub = data.subsample(subsample_inds)
