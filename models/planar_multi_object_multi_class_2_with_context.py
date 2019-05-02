@@ -272,8 +272,8 @@ class MultiObjectMultiClassModelWithContext():
         self.use_projection = use_projection
         self.dataset = dataset
         self.base_environment_type = dataset.base_environment_type
-        self.context_size = 20
-        self.class_general_encoded_size = 20
+        self.context_size = 100
+        self.class_general_encoded_size = 100
         self.max_num_objects = dataset.get_max_num_objects()
         self.num_classes = dataset.get_num_classes()
         self.num_params_by_class = dataset.get_num_params_by_class()
@@ -290,8 +290,8 @@ class MultiObjectMultiClassModelWithContext():
             # Generator
             input_size = self.context_size
             output_size = self.num_params_by_class[class_i]
-            flow_H = [50, 50]
-            flow_layers = 5
+            flow_H = [100, 100]
+            flow_layers = 16
 
             base_dist = dist.Normal(torch.zeros(output_size),
                                     torch.ones(output_size)).to_event(1)
@@ -308,7 +308,7 @@ class MultiObjectMultiClassModelWithContext():
 
             # Encoder
             input_size = self.num_params_by_class[class_i]
-            output_size = self.context_size
+            output_size = self.class_general_encoded_size
             encoder_H = 20
             self.class_encoders.append(
                 torch.nn.Sequential(
@@ -322,8 +322,8 @@ class MultiObjectMultiClassModelWithContext():
 
         torch.manual_seed(time.time()*1000)
         self.context_updater = torch.nn.GRU(
-            input_size=self.context_size,
-            hidden_size=20)
+            input_size=self.class_general_encoded_size,
+            hidden_size=self.context_size)
 
         # Keep going predictor:
         # regresses bernoulli keep_going weight
@@ -359,7 +359,7 @@ class MultiObjectMultiClassModelWithContext():
             # Generator
             input_size = self.num_params_by_class[class_i]
             output_size = self.num_params_by_class[class_i]
-            H = 50
+            H = 200
             self.class_guides.append(
                 torch.nn.Sequential(
                     torch.nn.Linear(input_size, H),
