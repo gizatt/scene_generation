@@ -12,9 +12,11 @@ import os
 import random
 import time
 import sys
+import yaml
 
 import matplotlib
 matplotlib.use("Qt5agg") # or "Qt5agg" depending on you version of Qt
+import matplotlib.animation as animation
 import numpy as np
 
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
@@ -285,208 +287,274 @@ if __name__ == "__main__":
     parser.add_argument("--planar_viz",
                         action='store_true',
                         help="Show planar viz?")
+    parser.add_argument("--planar_record",
+                        action='store_true',
+                        help="Record with planar viz?")
     parser.add_argument("--teleop",
                         action='store_true',
                         help="Control with mouse keyboard mode?")
+    parser.add_argument("--do_param_sweep",
+                        action='store_true',
+                        help="Run a full parameter sweep of simulations.")
+    parser.add_argument("--realtime_rate",
+                        type=float,
+                        default=np.inf)
     MeshcatVisualizer.add_argparse_argument(parser)
     args = parser.parse_args()
+    assert(not (args.teleop and args.do_param_sweep))
     if args.teleop:
         args.duration = 100000.0
+
     int_seed = int(args.seed*1000. % 2**32)
     random.seed(int_seed)
     np.random.seed(int_seed)
 
-    builder = DiagramBuilder()
-    
-    station = builder.AddSystem(ManipulationStation(time_step=0.001))
-
-    # Initializes the chosen station type.
-    station.SetupDefaultStation()
-
-    # Add random carrot.
-    height = np.random.random() * 0.05 + 0.05
-    radius = np.random.random() * 0.02 + 0.02
-    cut_dirs = [np.array([1., 0., 0.])]
-    cut_points = [np.array([0.0, 0, 0])]
-    cutting_planes = zip(cut_points, cut_dirs)
-    # Create a mesh programmatically for that cylinder
-    cyl = create_cut_cylinder(
-        radius, height, cutting_planes, sections=20)
-    cyl.density = 1000.  # Same as water
-    export_sdf(cyl, "carrot", "/home/gizatt/drake/build/install/share/drake/manipulation/models/", color=[0.75, 0.2, 0.2, 1.])
-
-    #carrot_pose = RigidTransform(RollPitchYaw([0., 0., 0.]), [0.6, 0., 0.1])
-    #station.AddManipulandFromFile("drake/manipulation/models/carrot.sdf", carrot_pose);
-
-    mbp = station.get_mutable_multibody_plant()
-
-    mbp_parser = Parser(mbp)
-    model_instance = mbp_parser.AddModelFromFile("/home/gizatt/drake/build/install/share/drake/manipulation/models/carrot.sdf", "carrot");
-    body = mbp.GetBodyByName("carrot")
-
-    no_mass_no_inertia = SpatialInertia(
-        mass=0.0, p_PScm_E=np.array([0., 0., 0.]),
-        G_SP_E=UnitInertia(0., 0., 0.))
-    body_pre_z = mbp.AddRigidBody("carrot_pre_z", model_instance,
-                                  no_mass_no_inertia)
-    body_pre_theta = mbp.AddRigidBody("carrot_pre_theta", model_instance,
-                                      no_mass_no_inertia)
-
-    world_carrot_origin = mbp.AddFrame(frame=FixedOffsetFrame(
-            name="world_carrot_origin", P=mbp.world_frame(),
-            X_PF=RigidTransform(
-                RollPitchYaw([0., 0., 0.]),
-                [0.5, 0., 0.0])))
-    carrot_rotated_origin = mbp.AddFrame(frame=FixedOffsetFrame(
-            name="carrot_rotated_origin", P=body.body_frame(),
-            X_PF=RigidTransform(
-                RollPitchYaw([np.pi/2., 0., 0.]),
-                [0.0, 0., 0.0])))
-    body_joint_x = PrismaticJoint(
-        name="carrot_x",
-        frame_on_parent=world_carrot_origin,
-        frame_on_child=body_pre_z.body_frame(),
-        axis=[1, 0, 0],
-        damping=0.)
-    mbp.AddJoint(body_joint_x)
-
-    body_joint_z = PrismaticJoint(
-        name="carrot_z",
-        frame_on_parent=body_pre_z.body_frame(),
-        frame_on_child=body_pre_theta.body_frame(),
-        axis=[0, 0, 1],
-        damping=0.)
-    mbp.AddJoint(body_joint_z)
-
-    body_joint_theta = RevoluteJoint(
-        name="carrot_theta",
-        frame_on_parent=body_pre_theta.body_frame(),
-        frame_on_child=carrot_rotated_origin,
-        axis=[0, 1, 0],
-        damping=0.)
-    mbp.AddJoint(body_joint_theta)
-
-    print("here")
-    station.Finalize()
-    
-    body_joint_x.set_default_translation(0.0)
-    body_joint_z.set_default_translation(0.05)
-    body_joint_theta.set_default_angle(np.pi/2.)
-    
-    if args.meshcat:
-        meshcat = builder.AddSystem(MeshcatVisualizer(
-            station.get_scene_graph(), zmq_url=args.meshcat))
-        builder.Connect(station.GetOutputPort("pose_bundle"),
-                        meshcat.get_input_port(0))
-
-    if args.planar_viz:
-        viz = builder.AddSystem(PlanarSceneGraphVisualizer(
-            station.get_scene_graph(),
-            xlim=[0.25, 0.8], ylim=[-0.1, 0.5],
-            ax=plt.gca()))
-        builder.Connect(station.GetOutputPort("pose_bundle"),
-                        viz.get_input_port(0))
-
-    robot = station.get_controller_plant()
-    params = DifferentialInverseKinematicsParameters(robot.num_positions(),
-                                                     robot.num_velocities())
-
-    time_step = 0.005
-    params.set_timestep(time_step)
-    # True velocity limits for the IIWA14 (in rad, rounded down to the first
-    # decimal)
-    iiwa14_velocity_limits = np.array([1.4, 1.4, 1.7, 1.3, 2.2, 2.3, 2.3])
-    # Stay within a small fraction of those limits for this teleop demo.
-    factor = 1.0
-    params.set_joint_velocity_limits((-factor*iiwa14_velocity_limits,
-                                      factor*iiwa14_velocity_limits))
-
-    differential_ik = builder.AddSystem(DifferentialIK(
-        robot, robot.GetFrameByName("iiwa_link_7"), params, time_step))
-
-    builder.Connect(differential_ik.GetOutputPort("joint_position_desired"),
-                    station.GetInputPort("iiwa_position"))
-
-    if (args.teleop):
-        teleop = builder.AddSystem(MouseKeyboardTeleop(grab_focus=True))
-        filter_ = builder.AddSystem(
-            FirstOrderLowPassFilter(time_constant=0.005, size=6))
-
-        builder.Connect(teleop.get_output_port(0), filter_.get_input_port(0))
-        builder.Connect(filter_.get_output_port(0),
-                        differential_ik.GetInputPort("rpy_xyz_desired"))
-
-        builder.Connect(teleop.GetOutputPort("position"), station.GetInputPort(
-            "wsg_position"))
-        builder.Connect(teleop.GetOutputPort("force_limit"),
-                        station.GetInputPort("wsg_force_limit"))
+    # Pick the paramemeters for the rollouts.
+    # Parameters and bounds:
+    #   Carrot radius: [0.01, 0.05]
+    #   X init: -0.05, 0.05
+    # NOT VARYING: Density, Initial roll angle, or any physics params.
+    params_to_test = []
+    if args.do_param_sweep:
+        for radius in np.linspace(0.01, 0.05, 20):
+            for x_init in np.linspace(-0.05, 0.05, 20):
+                params_to_test.append(
+                    {"radius": radius,
+                     "x_init": x_init})
     else:
-        # Playback open-loop trajectory
-        knots = np.array([
-            [-3.32249, -0.05747,  4.70519,  0.59113, -0.     ,  0.2915 ],
-            [-3.46739, -0.05747,  4.70519,  0.59763, -0.     ,  0.272  ],
-            [-3.46739, -0.05747,  4.70519,  0.58493, -0.     ,  0.2403 ],
-            [-3.46739, -0.05747,  4.70519,  0.57473, -0.     ,  0.2226 ],
-            [-3.46739, -0.05747,  4.70519,  0.55583, -0.     ,  0.2256 ],
-            [-3.46739, -0.05747,  4.70519,  0.54173, -0.     ,  0.229  ],
-            [-3.46739, -0.05747,  4.70519,  0.52563, -0.     ,  0.2351 ],
-            [-3.46739, -0.05747,  4.70519,  0.51193, -0.     ,  0.2448 ],
-            [-3.46739, -0.05747,  4.70519,  0.48803, -0.     ,  0.2522 ],
-            [-3.46739, -0.05747,  4.70519,  0.46983, -0.     ,  0.2587 ],
-            [-3.46739, -0.05747,  4.70519,  0.45433, -0.     ,  0.273  ],
-            [-3.46739, -0.05747,  4.70519,  0.42623, -0.     ,  0.2933 ],
-            [-3.46739, -0.05747,  4.70519,  0.40653, -0.     ,  0.3128 ],
-        ]).T
-        ts = np.linspace(0., args.duration, knots.shape[1])
-        print(ts.shape)
-        print(knots.shape)
+        params_to_test.append(
+            {"radius": np.random.uniform(0.01, 0.05),
+             "x_init": np.random.uniform(-0.05, 0.05)})
 
-        ee_traj = PiecewisePolynomial.Pchip(
-            ts, knots, True)
-        setpoints = builder.AddSystem(TrajectorySource(ee_traj))
-        builder.Connect(setpoints.get_output_port(0),
-                        differential_ik.GetInputPort("rpy_xyz_desired"))
+    for param_set in params_to_test:
+        builder = DiagramBuilder()
+        
+        station = builder.AddSystem(ManipulationStation(time_step=0.002))
 
-        wsg_force_limit_source = builder.AddSystem(
-            ConstantVectorSource(np.array([40])))
-        wsg_position_source = builder.AddSystem(
-            ConstantVectorSource(np.array([0.107])))
-        builder.Connect(wsg_position_source.get_output_port(0),
-                        station.GetInputPort("wsg_position"))
-        builder.Connect(wsg_force_limit_source.get_output_port(0),
-                        station.GetInputPort("wsg_force_limit"))
+        # Initializes the chosen station type.
+        station.SetupDefaultStation()
 
 
+        radius = param_set["radius"]
+        x_init = param_set["x_init"]
+
+        # Add random carrot.
+        height = 0.05
+        cut_dirs = [np.array([1., 0., 0.])]
+        cut_points = [np.array([0.0, 0, 0])]
+        cutting_planes = zip(cut_points, cut_dirs)
+        # Create a mesh programmatically for that cylinder
+        cyl = create_cut_cylinder(
+            radius, height, cutting_planes, sections=15)
+        cyl.density = 1000.  # Same as water
+        export_sdf(cyl, "carrot", "/home/gizatt/drake/build/install/share/drake/manipulation/models/", color=[0.75, 0.2, 0.2, 1.])
+
+        #carrot_pose = RigidTransform(RollPitchYaw([0., 0., 0.]), [0.6, 0., 0.1])
+        #station.AddManipulandFromFile("drake/manipulation/models/carrot.sdf", carrot_pose);
+
+        mbp = station.get_mutable_multibody_plant()
+
+        mbp_parser = Parser(mbp)
+        model_instance = mbp_parser.AddModelFromFile("/home/gizatt/drake/build/install/share/drake/manipulation/models/carrot.sdf", "carrot");
+        body = mbp.GetBodyByName("carrot")
+
+        no_mass_no_inertia = SpatialInertia(
+            mass=0.0, p_PScm_E=np.array([0., 0., 0.]),
+            G_SP_E=UnitInertia(0., 0., 0.))
+        body_pre_z = mbp.AddRigidBody("carrot_pre_z", model_instance,
+                                      no_mass_no_inertia)
+        body_pre_theta = mbp.AddRigidBody("carrot_pre_theta", model_instance,
+                                          no_mass_no_inertia)
+
+        world_carrot_origin = mbp.AddFrame(frame=FixedOffsetFrame(
+                name="world_carrot_origin", P=mbp.world_frame(),
+                X_PF=RigidTransform(
+                    RollPitchYaw([0., 0., 0.]),
+                    [0.5, 0., 0.0])))
+        carrot_rotated_origin = mbp.AddFrame(frame=FixedOffsetFrame(
+                name="carrot_rotated_origin", P=body.body_frame(),
+                X_PF=RigidTransform(
+                    RollPitchYaw([np.pi/2., 0., 0.]),
+                    [0.0, 0., 0.0])))
+        body_joint_x = PrismaticJoint(
+            name="carrot_x",
+            frame_on_parent=world_carrot_origin,
+            frame_on_child=body_pre_z.body_frame(),
+            axis=[1, 0, 0],
+            damping=0.)
+        mbp.AddJoint(body_joint_x)
+
+        body_joint_z = PrismaticJoint(
+            name="carrot_z",
+            frame_on_parent=body_pre_z.body_frame(),
+            frame_on_child=body_pre_theta.body_frame(),
+            axis=[0, 0, 1],
+            damping=0.)
+        mbp.AddJoint(body_joint_z)
+
+        body_joint_theta = RevoluteJoint(
+            name="carrot_theta",
+            frame_on_parent=body_pre_theta.body_frame(),
+            frame_on_child=carrot_rotated_origin,
+            axis=[0, 1, 0],
+            damping=0.)
+        mbp.AddJoint(body_joint_theta)
+
+        station.Finalize()
+        
+        body_joint_x.set_default_translation(x_init)
+        body_joint_z.set_default_translation(0.05)
+        body_joint_theta.set_default_angle(np.pi/2.)
+        
+        if args.meshcat:
+            meshcat = builder.AddSystem(MeshcatVisualizer(
+                station.get_scene_graph(), zmq_url=args.meshcat))
+            builder.Connect(station.GetOutputPort("pose_bundle"),
+                            meshcat.get_input_port(0))
+
+        if args.planar_viz or args.planar_record:
+            plt.gca().clear()
+            viz = builder.AddSystem(PlanarSceneGraphVisualizer(
+                station.get_scene_graph(),
+                xlim=[0.25, 0.8], ylim=[-0.1, 0.5],
+                ax=plt.gca()))
+            builder.Connect(station.GetOutputPort("pose_bundle"),
+                            viz.get_input_port(0))
+            if args.planar_record:
+                viz.start_recording(show=args.planar_viz)
+
+        robot = station.get_controller_plant()
+        params = DifferentialInverseKinematicsParameters(robot.num_positions(),
+                                                         robot.num_velocities())
+
+        time_step = 0.005
+        params.set_timestep(time_step)
+        # True velocity limits for the IIWA14 (in rad, rounded down to the first
+        # decimal)
+        iiwa14_velocity_limits = np.array([1.4, 1.4, 1.7, 1.3, 2.2, 2.3, 2.3])
+        # Stay within a small fraction of those limits for this teleop demo.
+        factor = 1.0
+        params.set_joint_velocity_limits((-factor*iiwa14_velocity_limits,
+                                          factor*iiwa14_velocity_limits))
+
+        differential_ik = builder.AddSystem(DifferentialIK(
+            robot, robot.GetFrameByName("iiwa_link_7"), params, time_step))
+
+        builder.Connect(differential_ik.GetOutputPort("joint_position_desired"),
+                        station.GetInputPort("iiwa_position"))
+
+        if (args.teleop):
+            print_instructions()
+            teleop = builder.AddSystem(MouseKeyboardTeleop(grab_focus=True))
+            filter_ = builder.AddSystem(
+                FirstOrderLowPassFilter(time_constant=0.005, size=6))
+
+            builder.Connect(teleop.get_output_port(0), filter_.get_input_port(0))
+            builder.Connect(filter_.get_output_port(0),
+                            differential_ik.GetInputPort("rpy_xyz_desired"))
+
+            builder.Connect(teleop.GetOutputPort("position"), station.GetInputPort(
+                "wsg_position"))
+            builder.Connect(teleop.GetOutputPort("force_limit"),
+                            station.GetInputPort("wsg_force_limit"))
+        else:
+            # Playback open-loop trajectory
+            knots = np.array([
+                [-3.32249, -0.05747,  4.70519,  0.59113, -0.     ,  0.2915 ],
+                [-3.46739, -0.05747,  4.70519,  0.59763, -0.     ,  0.272  ],
+                [-3.46739, -0.05747,  4.70519,  0.58493, -0.     ,  0.2403 ],
+                [-3.46739, -0.05747,  4.70519,  0.57473, -0.     ,  0.2226 ],
+                [-3.46739, -0.05747,  4.70519,  0.55583, -0.     ,  0.2256 ],
+                [-3.46739, -0.05747,  4.70519,  0.54173, -0.     ,  0.229  ],
+                [-3.46739, -0.05747,  4.70519,  0.52563, -0.     ,  0.2351 ],
+                [-3.46739, -0.05747,  4.70519,  0.51193, -0.     ,  0.2448 ],
+                [-3.46739, -0.05747,  4.70519,  0.48803, -0.     ,  0.2522 ],
+                [-3.46739, -0.05747,  4.70519,  0.46983, -0.     ,  0.2587 ],
+                [-3.46739, -0.05747,  4.70519,  0.45433, -0.     ,  0.273  ],
+                [-3.46739, -0.05747,  4.70519,  0.42623, -0.     ,  0.2933 ],
+                [-3.46739, -0.05747,  4.70519,  0.40653, -0.     ,  0.3128 ],
+            ]).T
+            ts = np.linspace(0., args.duration, knots.shape[1])
+
+            ee_traj = PiecewisePolynomial.Pchip(
+                ts, knots, True)
+            setpoints = builder.AddSystem(TrajectorySource(ee_traj))
+            builder.Connect(setpoints.get_output_port(0),
+                            differential_ik.GetInputPort("rpy_xyz_desired"))
+
+            wsg_force_limit_source = builder.AddSystem(
+                ConstantVectorSource(np.array([40])))
+            wsg_position_source = builder.AddSystem(
+                ConstantVectorSource(np.array([0.107])))
+            builder.Connect(wsg_position_source.get_output_port(0),
+                            station.GetInputPort("wsg_position"))
+            builder.Connect(wsg_force_limit_source.get_output_port(0),
+                            station.GetInputPort("wsg_force_limit"))
 
 
-    diagram = builder.Build()
-    simulator = Simulator(diagram)
 
-    # This is important to avoid duplicate publishes to the hardware interface:
-    simulator.set_publish_every_time_step(False)
 
-    station_context = diagram.GetMutableSubsystemContext(
-        station, simulator.get_mutable_context())
+        diagram = builder.Build()
+        simulator = Simulator(diagram)
 
-    station.GetInputPort("iiwa_feedforward_torque").FixValue(
-        station_context, np.zeros(7))
+        # This is important to avoid duplicate publishes to the hardware interface:
+        simulator.set_publish_every_time_step(False)
 
-    simulator.AdvanceTo(1e-6)
-    q0 = station.GetOutputPort("iiwa_position_measured").Eval(station_context)
-    differential_ik.parameters.set_nominal_joint_position(q0)
+        station_context = diagram.GetMutableSubsystemContext(
+            station, simulator.get_mutable_context())
 
-    if (args.teleop):
-        teleop.SetPose(differential_ik.ForwardKinematics(q0))
-        filter_.set_initial_output_value(
-            diagram.GetMutableSubsystemContext(
-                filter_, simulator.get_mutable_context()),
-            teleop.get_output_port(0).Eval(diagram.GetMutableSubsystemContext(
-                teleop, simulator.get_mutable_context())))
+        station.GetInputPort("iiwa_feedforward_torque").FixValue(
+            station_context, np.zeros(7))
 
-    differential_ik.SetPositions(diagram.GetMutableSubsystemContext(
-        differential_ik, simulator.get_mutable_context()), q0)
+        simulator.AdvanceTo(1e-6)
+        q0 = station.GetOutputPort("iiwa_position_measured").Eval(station_context)
+        differential_ik.parameters.set_nominal_joint_position(q0)
 
-    simulator.set_target_realtime_rate(1.0)
+        if (args.teleop):
+            teleop.SetPose(differential_ik.ForwardKinematics(q0))
+            filter_.set_initial_output_value(
+                diagram.GetMutableSubsystemContext(
+                    filter_, simulator.get_mutable_context()),
+                teleop.get_output_port(0).Eval(diagram.GetMutableSubsystemContext(
+                    teleop, simulator.get_mutable_context())))
 
-    print_instructions()
-    simulator.AdvanceTo(args.duration)
+        differential_ik.SetPositions(diagram.GetMutableSubsystemContext(
+            differential_ik, simulator.get_mutable_context()), q0)
+
+        simulator.set_target_realtime_rate(args.realtime_rate)
+
+        simulator.AdvanceTo(args.duration + 1.)
+
+        # Calculate score + success
+        final_mbp_context = diagram.GetMutableSubsystemContext(mbp, simulator.get_mutable_context())
+        final_carrot_tf = mbp.CalcRelativeTransform(
+            final_mbp_context, mbp.world_frame(), body.body_frame())
+        print("Final carrot tf: ", final_carrot_tf.matrix())
+        
+        # How much does Carrot +x face in +z?
+        # > 0 means it flipped.
+        if final_carrot_tf.matrix()[2, 0] > 0:
+            print("Carrot was flipped.")
+            score = 1.
+        else:
+            score = 0.
+            print("Carrot was not flipped.")
+
+
+        if args.do_param_sweep:
+            os.system("mkdir -p results")
+            with open("results/results.yaml", "a") as file:
+                env = {"radius": float(radius),
+                       "x_init": float(x_init),
+                       "score": float(score)}
+                yaml.dump(
+                    {"env_%d" % int(round(time.time() * 1000)): env},
+                     file)
+
+        if args.planar_record:
+            os.system("mkdir -p results/videos/")
+            Writer = animation.writers['ffmpeg']
+            writer = Writer(fps=1./viz.timestep, metadata=dict(artist='Me'), bitrate=1800)
+            viz.get_recording().save(
+                "results/videos/" + 'radius_%2.2f_xinit_%2.2f.mp4' % (radius, x_init),
+                writer=writer)
