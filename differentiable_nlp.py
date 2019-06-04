@@ -187,7 +187,7 @@ def EvaluateProjectionDerivativeInfo(
 
 def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
                             compute_gradients_at_solution=False,
-                            verbose=1):
+                            verbose=1, gamma=0.25):
     '''
         Inputs:
             - q0: Initial guess configuration for the projection.
@@ -249,6 +249,7 @@ def ProjectMBPToFeasibility(q0, mbp, mbp_context, constraint_adders=[],
             ns = nullspace(constraint_violation_directions)
             dqf_dq0 = np.eye(nq)  # Unconstrained version of dqf_dq0
             dqf_dq0 = np.dot(np.dot(dqf_dq0, ns), ns.T)  # Projection step
+            dqf_dq0 = dqf_dq0 * (1. - gamma) + np.eye(dqf_dq0.shape[0]) * gamma
         else:
             # No null space so movements
             dqf_dq0 = np.eye(nq)
@@ -328,7 +329,7 @@ class ProjectMBPToFeasibilityTorch(torch.autograd.Function):
             verbose=verbose)
 
         if not output.success and verbose > 0:
-            print("Warning: projection didn't not succeed.")
+            print("Warning: projection did not succeed.")
 
         qf = output.qf.reshape(q0.shape)
         dqf_dq0 = output.dqf_dq0
