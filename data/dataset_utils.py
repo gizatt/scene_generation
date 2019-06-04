@@ -334,11 +334,11 @@ def BuildMbpAndSgFromYamlEnvironment(
             mbp.AddJoint(body_joint_theta)
 
             if obj_yaml["class"] == "2d_sphere":
-                radius = max(obj_yaml["params"][0], 0.01)
+                radius = max(obj_yaml["params"][0], 0.02)
                 body_shape = Sphere(radius)
             elif obj_yaml["class"] == "2d_box":
-                height = max(obj_yaml["params"][0], 0.01)
-                length = max(obj_yaml["params"][1], 0.01)
+                height = max(obj_yaml["params"][0], 0.02)
+                length = max(obj_yaml["params"][1], 0.02)
                 if base_environment_type == "planar_bin":
                     body_shape = Box(length, 0.25, height)
                 else:
@@ -483,8 +483,8 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
     builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
         yaml_environment, base_environment_type)
 
-    from underactuated.planar_multibody_visualizer import (
-        PlanarMultibodyVisualizer)
+    from underactuated.planar_scenegraph_visualizer import (
+        PlanarSceneGraphVisualizer)
 
     if base_environment_type == "planar_bin":
         Tview = np.array([[1., 0., 0., 0.],
@@ -498,7 +498,7 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
         raise NotImplementedError()
 
     visualizer = builder.AddSystem(
-        PlanarMultibodyVisualizer(scene_graph, Tview=Tview, **kwargs))
+        PlanarSceneGraphVisualizer(scene_graph, Tview=Tview, **kwargs))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
     diagram = builder.Build()
