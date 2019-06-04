@@ -2,7 +2,7 @@ import lxml.etree as et
 import numpy as np
 import trimesh
 from trimesh.constants import log
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 from shapely.ops import triangulate
 
 import os
@@ -108,14 +108,19 @@ def export_urdf(mesh,
         material = et.SubElement(visual, 'material', name='')
         if color == "random":
             this_color = trimesh.visual.random_color()
+            piece.visual.face_colors[:] = this_color
         else:
             this_color = color
-        piece.visual.face_colors[:] = this_color
+            if len(this_color) == 3:
+                this_color.append(1.)
+            piece.visual.face_colors[:] = np.array(this_color)*255
         et.SubElement(material,
                       'color',
-                      rgba="{:.2E} {:.2E} {:.2E} 1".format(this_color[0],
-                                                           this_color[1],
-                                                           this_color[2]))
+                      rgba="{:.2E} {:.2E} {:.2E} {:.2E}".format(
+                        this_color[0],
+                        this_color[1],
+                        this_color[2],
+                        this_color[3]))
 
         # Collision Information
         collision = et.SubElement(link, 'collision')
@@ -155,11 +160,7 @@ def export_urdf(mesh,
     return convex_pieces
 
 
-if __name__ == "__main__":
-
-    # attach to logger so trimesh messages will be printed to console
-    trimesh.util.attach_to_log()
-
+def do_generate_mug():
     # Mug base is a cylinder
     root_radius = 0.12
     root_thickness = 0.01
@@ -217,3 +218,11 @@ if __name__ == "__main__":
     for part in mesh_decomp:
         scene.add_geometry(part)
     scene.show()
+
+
+if __name__ == "__main__":
+
+    # attach to logger so trimesh messages will be printed to console
+    trimesh.util.attach_to_log()
+
+    do_generate_mug()
