@@ -50,9 +50,6 @@ class PygameShape(object):
         desired_rect.center = apply_homogenous_tf(self.view_matrix, self.pose[:2])
         screen.blit(rotated_surf, desired_rect)
 
-    def draw_selection_axes(self, screen):
-        assert(self.selectable)
-
     def get_center(self):
         return apply_homogenous_tf(self.view_matrix, self.pose[:2])
 
@@ -155,11 +152,14 @@ def main():
     ]
 
     # Interface state:
+
     object_being_dragged = None
     drag_start_pos = None
     drag_start_offset = None
-    object_selected = None
-
+    
+    object_being_rotated = None
+    rotate_start_offset = None
+    rotate_start_angle = None
 
     clock = pygame.time.Clock()
     running = True
@@ -170,30 +170,51 @@ def main():
                 running = False
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                # Pick up objects. Objects are prioritized
-                # in the reverse order they appear in the all_objects list
-                # (i.e. in their z-order).
-                if event.button == 1:
+                # event.button 1: Left
+                # event.button 3: Right
+                if (not object_being_dragged) and (not object_being_rotated):
+                    # See if we clicked an object. Objects are prioritized
+                    # in the reverse order they appear in the all_objects list
+                    # (i.e. in their z-order).
+                    selected_object = None
                     for pygame_shape in reversed(all_objects):
-                        grab = pygame_shape.query_click(event.pos)
-                        if (grab):
-                            object_being_dragged = pygame_shape
+                            grab = pygame_shape.query_click(event.pos)
+                            if (grab):
+                                selected_object = pygame_shape
+                                break
+                    if selected_object is not None:
+                        if event.button == 1:            
+                            # Pick up objects.
+                            object_being_dragged = selected_object
                             drag_start_pos = np.array(event.pos)
-                            drag_start_offset = (object_being_dragged.get_center() - np.array(event.pos))
-                            break
+                            drag_start_offset = (selected_object.get_center() - np.array(event.pos))
+                        elif event.button == 3:
+                            # Rotate object.
+                            object_being_rotated = selected_object
+                            rotate_start_angle = selected_object.pose[2]
+                            offset = selected_object.get_center() - np.array(event.pos)
+                            rotate_start_offset = np.arctan2(offset[1], offset[0])
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 # Stop whatever dragging is happening.
-                if event.button == 1:            
+                if event.button == 1:
                     object_being_dragged = None
                     drag_start_pos = None
                     drag_start_offset = None
+                if event.button == 3:
+                    object_being_rotated = None
+                    rotate_start_offset = None
+                    rotate_start_angle = None
 
             elif event.type == pygame.MOUSEMOTION:
                 # Process dragging motion.
                 if object_being_dragged is not None:
                     object_being_dragged.set_center(
                         np.array(event.pos) + drag_start_offset)
+                elif object_being_rotated is not None:
+                    offset = selected_object.get_center() - np.array(event.pos)
+                    rotate_current_offset = np.arctan2(offset[1], offset[0])
+                    object_being_rotated.pose[2] = rotate_start_angle - (rotate_current_offset - rotate_start_offset)
 
         screen.fill(WHITE)
         for pygame_shape in all_objects:
