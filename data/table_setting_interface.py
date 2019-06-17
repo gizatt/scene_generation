@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pygame
+import pygame.freetype
 
 import pydrake
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
@@ -13,7 +14,7 @@ from pydrake.math import RigidTransform
 
 # Maps XY -> pixel coordinates
 
-SCREEN_WIDTH = 1000
+SCREEN_WIDTH = 720
 SCREEN_HEIGHT = 1000
 
 scaling = min(SCREEN_WIDTH, SCREEN_HEIGHT)
@@ -64,7 +65,7 @@ class PygameShape(object):
         # Transform mouse_xy backwards through rotation
         curr_center = apply_homogenous_tf(self.view_matrix, self.pose[:2])
         mouse_xy_local = mouse_xy - curr_center
-        mouse_xy_local = rotmat(self.pose[2]).T.dot(mouse_xy_local) + self.surface.get_rect().center
+        mouse_xy_local = rotmat(self.pose[2]).dot(mouse_xy_local) + self.surface.get_rect().center
         mouse_xy_local = mouse_xy_local.astype(np.int)
         if (mouse_xy_local[0] >= 0 and mouse_xy_local[1] >= 0 and 
             mouse_xy_local[0] < self.surface.get_width() and 
@@ -76,20 +77,23 @@ class PygameShape(object):
 
 
 class FixedTable(PygameShape):
-    def __init__(self, pose, size, color, view_matrix=default_view_matrix):
+    def __init__(self, pose, radius, color=None, img_path=None, view_matrix=default_view_matrix):
         PygameShape.__init__(self, selectable=False, view_matrix=view_matrix)
-        assert(len(size) == 2)
         assert(len(pose) == 3)
-        assert(len(color) == 3 or len(color) == 4)
-        self.size = np.array(size)
+        assert(color is None or (len(color) == 3 or len(color) == 4))
+        assert(color is not None or img_path is not None)
+        self.radius = radius
         self.pose = np.array(pose).copy()
-        self.pixel_extent = np.array(self.view_matrix[:2, :2].dot(self.size)).astype(int)
+        self.pixel_extent = (np.diag(self.view_matrix[:2, :2])*radius).astype(int)
         self.surface = pygame.Surface(self.pixel_extent, pygame.SRCALPHA)
-        pygame.draw.rect(self.surface, color,
-                         pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]))
-        pygame.draw.rect(self.surface, (0, 0, 0),
-                         pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]),
-                         5)
+
+        if img_path is None:
+            pygame.draw.ellipse(self.surface, color, pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]))
+            pygame.draw.ellipse(self.surface, (0, 0, 0), pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]), 2)
+        else:
+            self.image = pygame.image.load(os.path.abspath(img_path)).convert_alpha()
+            self.image = pygame.transform.scale(self.image, self.pixel_extent)
+            self.surface.blit(self.image, self.surface.get_rect())
 
 class InteractableDish(PygameShape):
     def __init__(self, pose, radius, color=None, img_path=None, view_matrix=default_view_matrix):
@@ -133,6 +137,14 @@ class InteractableUtensil(PygameShape):
             self.image = pygame.transform.scale(self.image, self.pixel_extent)
             self.surface.blit(self.image, self.surface.get_rect())
 
+
+instructions_string = '''
+Left click and drag: translate object
+Right click and drag: rotate object about origin
+Middle click: Delete object
+Keys [1, 2, 3, 4]: Add [plate, fork, knife, spoon] at cursor.
+'''
+
 WHITE = (255, 255, 255)
 RED   = (255,   0,   0)
 
@@ -143,12 +155,18 @@ def main():
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Set Some Tables")
 
+    font = pygame.freetype.SysFont("", 12)
+
+    instructions = []
+    for instructions_substr in instructions_string.split("\n"):
+        ins, _ = font.render(instructions_substr, (255, 255, 255))
+        instructions.append(ins)
+
+    bg_image = pygame.image.load(os.path.abspath("table_setting_assets/wood_floor.png")).convert_alpha()
+    bg_image = pygame.transform.scale(bg_image, screen.get_rect().size)
+
     all_objects = [
-        FixedTable(pose=[0.5, 0.5, 0.], size=[0.9, 0.9], color=(200, 200, 200)),
-        InteractableDish(pose=[0.5, 0.8, 0.], radius=0.2, img_path="table_setting_assets/plate_bird.png"),
-        InteractableUtensil(pose=[0.625, 0.8, 0.], size=[0.02, 0.1], img_path="table_setting_assets/fork.png"),
-        InteractableDish(pose=[0.5, 0.2, np.pi], radius=0.2, img_path="table_setting_assets/plate_bird.png"),
-        InteractableUtensil(pose=[0.375, 0.2, np.pi], size=[0.02, 0.1], img_path="table_setting_assets/fork.png"),
+        FixedTable(pose=[0.5, 0.5, 0.], radius=0.9, img_path="table_setting_assets/tabletop_wood.png"),
     ]
 
     # Interface state:
@@ -169,9 +187,32 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            elif event.type == pygame.KEYDOWN:
+                # Add object at current mouse position with
+                # random orientation.
+                # key 1: Add plate
+                # key 2: Add fork
+                # key 3: Add knife
+                # key 4: Add spoon
+                new_object = None
+                if event.key == ord('1'):
+                    new_object = InteractableDish(pose=np.zeros(3), radius=0.2, img_path="table_setting_assets/plate_red.png")
+                elif event.key == ord('2'):
+                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.02, 0.14], img_path="table_setting_assets/fork.png")
+                elif event.key == ord('3'):
+                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.015, 0.15], img_path="table_setting_assets/knife.png")
+                elif event.key == ord('4'):
+                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.02, 0.12], img_path="table_setting_assets/spoon.png")
+                if new_object is not None:
+                    new_object.set_center(pygame.mouse.get_pos())
+                    new_object.pose[2] = np.random.uniform(0., 2.*np.pi)
+                    all_objects.append(new_object)
+
+
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                # event.button 1: Left
-                # event.button 3: Right
+                # event.button 1: Left -- click and drag to translate
+                # event.button 3: Right -- click and drag to rotate
+                # event.button 2: Middle -- click to delete object
                 if (not object_being_dragged) and (not object_being_rotated):
                     # See if we clicked an object. Objects are prioritized
                     # in the reverse order they appear in the all_objects list
@@ -194,6 +235,10 @@ def main():
                             rotate_start_angle = selected_object.pose[2]
                             offset = selected_object.get_center() - np.array(event.pos)
                             rotate_start_offset = np.arctan2(offset[1], offset[0])
+                        elif event.button == 2:
+                            # Remove object
+                            all_objects.remove(selected_object)
+
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 # Stop whatever dragging is happening.
@@ -216,7 +261,12 @@ def main():
                     rotate_current_offset = np.arctan2(offset[1], offset[0])
                     object_being_rotated.pose[2] = rotate_start_angle - (rotate_current_offset - rotate_start_offset)
 
-        screen.fill(WHITE)
+
+        # Background
+        #screen.fill(WHITE)
+        screen.blit(bg_image, screen.get_rect())
+        for i, ins in enumerate(instructions):
+            screen.blit(ins, (10, 10 + i * 15))
         for pygame_shape in all_objects:
             pygame_shape.draw(screen)
         pygame.display.flip()
