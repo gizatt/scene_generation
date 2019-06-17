@@ -78,31 +78,9 @@ class PygameShape(object):
                 return True
         return False
 
-
-class FixedTable(PygameShape):
-    def __init__(self, pose, radius, color=None, img_path=None, view_matrix=default_view_matrix):
-        PygameShape.__init__(self, class_name="table", selectable=False, view_matrix=view_matrix)
-        assert(len(pose) == 3)
-        assert(color is None or (len(color) == 3 or len(color) == 4))
-        assert(color is not None or img_path is not None)
-        self.radius = radius
-        self.pose = np.array(pose).copy()
-        self.pixel_extent = (np.diag(self.view_matrix[:2, :2])*radius).astype(int)
-        self.surface = pygame.Surface(self.pixel_extent, pygame.SRCALPHA)
-        self.img_path = img_path
-        self.color = color
-
-        if img_path is None:
-            pygame.draw.ellipse(self.surface, color, pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]))
-            pygame.draw.ellipse(self.surface, (0, 0, 0), pygame.Rect(0, 0, self.pixel_extent[0], self.pixel_extent[1]), 2)
-        else:
-            self.image = pygame.image.load(os.path.abspath(img_path)).convert_alpha()
-            self.image = pygame.transform.scale(self.image, self.pixel_extent)
-            self.surface.blit(self.image, self.surface.get_rect())
-
-class InteractableDish(PygameShape):
-    def __init__(self, pose, radius, class_name="dish", color=None, img_path=None, view_matrix=default_view_matrix):
-        PygameShape.__init__(self, class_name=class_name, selectable=True, view_matrix=view_matrix)
+class InteractableCylinder(PygameShape):
+    def __init__(self, pose, radius, class_name="cylinder", selectable=True, color=None, img_path=None, view_matrix=default_view_matrix):
+        PygameShape.__init__(self, class_name=class_name, selectable=selectable, view_matrix=view_matrix)
         assert(len(pose) == 3)
         assert(color is None or (len(color) == 3 or len(color) == 4))
         assert(color is not None or img_path is not None)
@@ -122,8 +100,8 @@ class InteractableDish(PygameShape):
             self.surface.blit(self.image, self.surface.get_rect())
 
 
-class InteractableUtensil(PygameShape):
-    def __init__(self, pose, size, class_name="utensil", color=None, img_path=None, view_matrix=default_view_matrix):
+class InteractableBox(PygameShape):
+    def __init__(self, pose, size, class_name="box", color=None, img_path=None, view_matrix=default_view_matrix):
         PygameShape.__init__(self, class_name=class_name, selectable=True, view_matrix=view_matrix)
         assert(len(pose) == 3)
         assert(color is None or (len(color) == 3 or len(color) == 4))
@@ -156,10 +134,10 @@ def save_objects(object_list):
             "img_path": obj.img_path,
             "color": obj.color,
         }
-        if isinstance(obj, InteractableUtensil):
+        if isinstance(obj, InteractableBox):
             output_dict["obj_%04d" % k]["params"] = obj.size.tolist()
             output_dict["obj_%04d" % k]["params_names"] = ["width", "height"]
-        elif isinstance(obj, InteractableDish) or isinstance(obj, FixedTable):
+        elif isinstance(obj, InteractableCylinder):
             output_dict["obj_%04d" % k]["params"] = [obj.radius]
             output_dict["obj_%04d" % k]["params_names"] = ["radius"]
         else:
@@ -203,7 +181,7 @@ def main():
 
     # Initialize objects to just the table.
     all_objects = [
-        FixedTable(pose=[0.5, 0.5, 0.], radius=0.9, img_path="table_setting_assets/tabletop_wood.png"),
+        InteractableCylinder(pose=[0.5, 0.5, 0.], radius=0.9, selectable=False, class_name="table", img_path="table_setting_assets/tabletop_wood.png"),
     ]
 
     # Interface state
@@ -247,13 +225,15 @@ def main():
                     for obj in all_objects:
                         del all_objects[1:]
                 elif event.key == ord('1'):
-                    new_object = InteractableDish(pose=np.zeros(3), radius=0.2, img_path="table_setting_assets/plate_red.png")
+                    new_object = InteractableCylinder(pose=np.zeros(3), radius=0.2, class_name="plate", img_path="table_setting_assets/plate_red.png")
                 elif event.key == ord('2'):
-                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.02, 0.14], img_path="table_setting_assets/fork.png")
+                    new_object = InteractableBox(pose=np.zeros(3), size=[0.02, 0.14], class_name="fork", img_path="table_setting_assets/fork.png")
                 elif event.key == ord('3'):
-                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.015, 0.15], img_path="table_setting_assets/knife.png")
+                    new_object = InteractableBox(pose=np.zeros(3), size=[0.015, 0.15], class_name="knife", img_path="table_setting_assets/knife.png")
                 elif event.key == ord('4'):
-                    new_object = InteractableUtensil(pose=np.zeros(3), size=[0.02, 0.12], img_path="table_setting_assets/spoon.png")
+                    new_object = InteractableBox(pose=np.zeros(3), size=[0.02, 0.12], class_name="spoon", img_path="table_setting_assets/spoon.png")
+                elif event.key == ord('5'):
+                    new_object = InteractableCylinder(pose=np.zeros(3), radius=0.05, class_name="cup", img_path="table_setting_assets/cup_water.png")
                 if new_object is not None:
                     new_object.set_center(pygame.mouse.get_pos())
                     new_object.pose[2] = np.random.uniform(0., 2.*np.pi)
