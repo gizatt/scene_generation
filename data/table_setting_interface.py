@@ -16,8 +16,8 @@ from pydrake.math import RigidTransform
 
 # Maps XY -> pixel coordinates
 
-SCREEN_WIDTH = 720
-SCREEN_HEIGHT = 1000
+SCREEN_WIDTH = 1000
+SCREEN_HEIGHT = 1500
 
 scaling = min(SCREEN_WIDTH, SCREEN_HEIGHT)
 default_view_matrix = np.array([[scaling, 0., SCREEN_WIDTH/2. - scaling/2.],
@@ -128,9 +128,7 @@ class InteractableBox(PygameShape):
 def save_objects(object_list):
     # Don't save table
     output_dict = {"n_objects": len(object_list) - 1}
-    for k, obj in enumerate(object_list):
-        if obj.class_name == "table":
-            continue
+    for k, obj in enumerate(object_list[1:]):
         output_dict["obj_%04d" % k] = {
             "class": obj.class_name,
             "pose": obj.pose.tolist(),

@@ -1,198 +1,89 @@
-env_1560803846954:
-  n_objects: 4
+env_1560804056281:
+  n_objects: 12
   obj_0000:
     class: plate
     color: null
     img_path: table_setting_assets/plate_red.png
     params: [0.2]
     params_names: [radius]
-    pose: [0.49444444444444446, 0.8222222222222222, 1.13305316423354]
+    pose: [0.35555555555555557, 0.7611111111111112, 0.7165837391606313]
   obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.6611111111111112, 0.7583333333333334, 6.053690244417941]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.8180555555555555, 0.5222222222222223, 5.961864337792825]
+  obj_0003:
     class: fork
     color: null
     img_path: table_setting_assets/fork.png
     params: [0.02, 0.14]
     params_names: [width, height]
-    pose: [0.625, 0.8138888888888889, 6.1948186798033085]
-  obj_0002:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.6555555555555557, 0.8055555555555558, 6.099831257299912]
-  obj_0003:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.4000000000000001, 0.6916666666666668, 4.593307494066495]
-env_1560803904838:
-  n_objects: 20
-  obj_0000:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.5069444444444444, 0.8097222222222222, 5.941611500453279]
-  obj_0001:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.23055555555555557, 0.6375000000000001, 4.552924344181008]
-  obj_0002:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.29305555555555557, 0.25555555555555554, 1.1802567683022351]
-  obj_0003:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.6347222222222223, 0.2166666666666667, 4.371501225846841]
+    pose: [0.4777777777777778, 0.8208333333333333, 6.25895488334785]
   obj_0004:
-    class: plate
+    class: fork
     color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.8041666666666668, 0.5625, 5.337526200951459]
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7569444444444446, 0.6763888888888889, 5.282050518616332]
   obj_0005:
     class: fork
     color: null
     img_path: table_setting_assets/fork.png
     params: [0.02, 0.14]
     params_names: [width, height]
-    pose: [0.7625000000000001, 0.6833333333333333, 5.369146346630466]
+    pose: [0.8402777777777778, 0.3958333333333335, 4.769636178187364]
   obj_0006:
-    class: fork
+    class: cup
     color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.375, 0.7652777777777778, 0.5201217085322041]
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
+    params_names: [radius]
+    pose: [0.4777777777777778, 0.6555555555555556, 5.8128440627589235]
   obj_0007:
-    class: fork
+    class: cup
     color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.16805555555555557, 0.5194444444444445, 1.3054883887273645]
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
+    params_names: [radius]
+    pose: [0.6472222222222223, 0.5958333333333334, 3.005214655255645]
   obj_0008:
-    class: fork
+    class: cup
     color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.3944444444444445, 0.18750000000000003, 2.780695713754339]
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
+    params_names: [radius]
+    pose: [0.7111111111111111, 0.4125000000000001, 1.999019467358469]
   obj_0009:
-    class: fork
+    class: knife
     color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
+    img_path: table_setting_assets/knife.png
+    params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.7194444444444444, 0.3111111111111112, 4.039898889235069]
+    pose: [0.5027777777777778, 0.8208333333333333, 6.182993303058963]
   obj_0010:
     class: knife
     color: null
     img_path: table_setting_assets/knife.png
     params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.8166666666666667, 0.44444444444444453, 4.761204758484208]
+    pose: [0.7736111111111111, 0.6569444444444446, 5.292176765792705]
   obj_0011:
     class: knife
     color: null
     img_path: table_setting_assets/knife.png
     params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.5125000000000001, 0.17083333333333336, 3.5421314866405447]
-  obj_0012:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.22777777777777777, 0.3666666666666668, 2.0789579149008572]
-  obj_0013:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.3152777777777778, 0.7333333333333334, 0.7281474781184407]
-  obj_0014:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.6361111111111112, 0.7972222222222223, 5.950382555506572]
-  obj_0015:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.5805555555555556, 0.6777777777777778, 4.011977475982249]
-  obj_0016:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.6916666666666667, 0.4541666666666667, 2.0519146647201856]
-  obj_0017:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.5194444444444445, 0.2930555555555556, 3.737652002370803]
-  obj_0018:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.3666666666666667, 0.4013888888888889, 2.3942343295170927]
-  obj_0019:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.3875, 0.6138888888888889, 1.0875998894700825]
-env_1560804111236:
-  n_objects: 3
-  obj_0000:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.5611111111111111, 0.19305555555555573, 6.221964334967901]
-  obj_0001:
-    class: spoon
-    color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
-    params_names: [width, height]
-    pose: [0.44305555555555565, 0.1625, 3.3655026883582835]
-  obj_0002:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.6597222222222223, 0.30694444444444446, 2.8676842176818687]
+    pose: [0.8333333333333335, 0.3694444444444446, 4.706159679912141]
 env_1560804202338:
   n_objects: 10
   obj_0000:
@@ -605,101 +496,6 @@ env_1560804441008:
     params: [0.05]
     params_names: [radius]
     pose: [0.6694444444444445, 0.5541666666666667, 1.1492801233436882]
-env_1560804488751:
-  n_objects: 8
-  obj_0000:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.4861111111111111, 0.8180555555555558, 4.738685734352204]
-  obj_0001:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.4861111111111112, 0.18055555555555555, 0.6781212951224376]
-  obj_0002:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.6125, 0.827777777777778, 0.04226405194768379]
-  obj_0003:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.35694444444444456, 0.18750000000000003, 3.1333893291198227]
-  obj_0004:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.33055555555555555, 0.1902777777777778, 3.1762585076736456]
-  obj_0005:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.6444444444444446, 0.8194444444444444, 6.275091088601339]
-  obj_0006:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.5875, 0.6833333333333333, 5.165278276774371]
-  obj_0007:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.3888888888888889, 0.3222222222222223, 4.477243649611746]
-env_1560804510569:
-  n_objects: 5
-  obj_0000:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.22777777777777777, 0.38888888888888895, 1.724027130224055]
-  obj_0001:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.18472222222222223, 0.5083333333333334, 1.88593785394721]
-  obj_0002:
-    class: spoon
-    color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
-    params_names: [width, height]
-    pose: [0.17500000000000002, 0.5472222222222223, 1.6862948512389098]
-  obj_0003:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.24722222222222223, 0.2694444444444445, 1.7504925046084807]
-  obj_0004:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.3625, 0.24444444444444455, 4.675271296469045]
 env_1560804721136:
   n_objects: 28
   obj_0000:
@@ -1021,29 +817,6 @@ env_1560804890217:
     params: [0.05]
     params_names: [radius]
     pose: [0.28055555555555556, 0.6486111111111111, 1.6633790203073024]
-env_1560804908741:
-  n_objects: 3
-  obj_0000:
-    class: knife
-    color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
-    params_names: [width, height]
-    pose: [0.3388888888888889, 0.7833333333333334, 0.4101977330520503]
-  obj_0001:
-    class: plate
-    color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
-    params_names: [radius]
-    pose: [0.2430555555555556, 0.6805555555555556, 1.6406123135439943]
-  obj_0002:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.1638888888888889, 0.5736111111111112, 0.9188809826782691]
 env_1560804936105:
   n_objects: 8
   obj_0000:
@@ -1209,145 +982,184 @@ env_1560804980399:
     params: [0.05]
     params_names: [radius]
     pose: [0.3902777777777778, 0.6847222222222222, 2.6461668239932075]
-env_1560805060064:
-  n_objects: 20
+env_1560878744296:
+  n_objects: 9
   obj_0000:
     class: plate
     color: null
     img_path: table_setting_assets/plate_red.png
     params: [0.2]
     params_names: [radius]
-    pose: [0.513888888888889, 0.8013888888888893, 0.6786897327815185]
+    pose: [0.28200000000000003, 0.6960000000000001, -0.8786557144365243]
   obj_0001:
-    class: cup
+    class: plate
     color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
     params_names: [radius]
-    pose: [0.6013888888888889, 0.638888888888889, 5.487646528709002]
+    pose: [0.19, 0.44800000000000006, -3.2243848691126944]
   obj_0002:
-    class: knife
+    class: spoon
     color: null
-    img_path: table_setting_assets/knife.png
-    params: [0.015, 0.15]
+    img_path: table_setting_assets/spoon.png
+    params: [0.02, 0.12]
     params_names: [width, height]
-    pose: [0.6694444444444446, 0.7791666666666667, 6.144475677793888]
+    pose: [0.364, 0.7909999999999999, 0.6564419885944699]
   obj_0003:
     class: fork
     color: null
     img_path: table_setting_assets/fork.png
     params: [0.02, 0.14]
     params_names: [width, height]
-    pose: [0.6375000000000001, 0.7819444444444446, 0.02387460623936022]
+    pose: [0.18900000000000003, 0.3340000000000002, -4.8400247128232206]
   obj_0004:
-    class: spoon
+    class: knife
     color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
+    img_path: table_setting_assets/knife.png
+    params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.7083333333333334, 0.7805555555555558, 5.996711099910487]
+    pose: [0.198, 0.5650000000000001, 1.3124513334727008]
   obj_0005:
-    class: plate
+    class: cup
     color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
     params_names: [radius]
-    pose: [0.18750000000000017, 0.4944444444444446, 3.904170562268613]
+    pose: [0.34800000000000003, 0.34099999999999997, -2.844496153401124]
   obj_0006:
-    class: plate
+    class: cup
     color: null
-    img_path: table_setting_assets/plate_red.png
-    params: [0.2]
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
     params_names: [radius]
-    pose: [0.4763888888888889, 0.1763888888888889, 0.2855085388084211]
+    pose: [0.44000000000000006, 0.64, -5.514698708070388]
   obj_0007:
     class: plate
     color: null
     img_path: table_setting_assets/plate_red.png
     params: [0.2]
     params_names: [radius]
-    pose: [0.8208333333333334, 0.41805555555555574, 2.6936282527435593]
+    pose: [0.802, 0.43100000000000005, -0.8380829369545866]
   obj_0008:
+    class: cup
+    color: null
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
+    params_names: [radius]
+    pose: [0.652, 0.398, -2.5753081014322343]
+env_1560879638225:
+  n_objects: 10
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.313, 0.756, -2.2980144996014515]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.771, 0.667, -6.0151897993367545]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.419, 0.8260000000000001, -5.922891747763588]
+  obj_0003:
+    class: spoon
+    color: null
+    img_path: table_setting_assets/spoon.png
+    params: [0.02, 0.12]
+    params_names: [width, height]
+    pose: [0.449, 0.837, 0.39929443418292765]
+  obj_0004:
     class: knife
     color: null
     img_path: table_setting_assets/knife.png
     params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.7458333333333333, 0.2680555555555556, 4.273506090363087]
+    pose: [0.47900000000000004, 0.8440000000000001, -6.025578771732622]
+  obj_0005:
+    class: knife
+    color: null
+    img_path: table_setting_assets/knife.png
+    params: [0.015, 0.15]
+    params_names: [width, height]
+    pose: [0.844, 0.521, -7.331978101633624]
+  obj_0006:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8240000000000001, 0.5660000000000002, -1.1473523577373983]
+  obj_0007:
+    class: spoon
+    color: null
+    img_path: table_setting_assets/spoon.png
+    params: [0.02, 0.12]
+    params_names: [width, height]
+    pose: [0.8310000000000001, 0.544, -1.1500317534368292]
+  obj_0008:
+    class: cup
+    color: null
+    img_path: table_setting_assets/cup_water.png
+    params: [0.05]
+    params_names: [radius]
+    pose: [0.718, 0.524, -2.989123093312722]
   obj_0009:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.7666666666666667, 0.2958333333333334, 4.1331515992016055]
-  obj_0010:
     class: cup
     color: null
     img_path: table_setting_assets/cup_water.png
     params: [0.05]
     params_names: [radius]
-    pose: [0.6694444444444445, 0.41666666666666674, 2.775065711974379]
-  obj_0011:
-    class: spoon
+    pose: [0.444, 0.677, -4.937091452045275]
+env_1560879869559:
+  n_objects: 6
+  obj_0000:
+    class: plate
     color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
-    params_names: [width, height]
-    pose: [0.7319444444444445, 0.24861111111111114, 4.202514147680986]
-  obj_0012:
-    class: spoon
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.358, 0.7789999999999999, -4.106962366376073]
+  obj_0001:
+    class: plate
     color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
-    params_names: [width, height]
-    pose: [0.3194444444444445, 0.21527777777777782, 2.7062797379819674]
-  obj_0013:
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.673, 0.22500000000000003, -2.32301330708419]
+  obj_0002:
     class: knife
     color: null
     img_path: table_setting_assets/knife.png
     params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.2930555555555556, 0.2347222222222223, 2.5446853334268518]
-  obj_0014:
+    pose: [0.503, 0.8280000000000001, 0.25528735073033537]
+  obj_0003:
     class: fork
     color: null
     img_path: table_setting_assets/fork.png
     params: [0.02, 0.14]
     params_names: [width, height]
-    pose: [0.34861111111111115, 0.20833333333333334, 2.7397066556531513]
-  obj_0015:
+    pose: [0.47800000000000004, 0.821, -6.037830184434367]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.554, 0.186, -2.562022970090552]
+  obj_0005:
     class: knife
     color: null
     img_path: table_setting_assets/knife.png
     params: [0.015, 0.15]
     params_names: [width, height]
-    pose: [0.22777777777777777, 0.6236111111111111, 1.1671111935640752]
-  obj_0016:
-    class: spoon
-    color: null
-    img_path: table_setting_assets/spoon.png
-    params: [0.02, 0.12]
-    params_names: [width, height]
-    pose: [0.2263888888888889, 0.65, 1.1623021065108823]
-  obj_0017:
-    class: fork
-    color: null
-    img_path: table_setting_assets/fork.png
-    params: [0.02, 0.14]
-    params_names: [width, height]
-    pose: [0.24444444444444446, 0.6763888888888889, 1.1985257353280385]
-  obj_0018:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.32916666666666666, 0.4194444444444445, 5.491612215089407]
-  obj_0019:
-    class: cup
-    color: null
-    img_path: table_setting_assets/cup_water.png
-    params: [0.05]
-    params_names: [radius]
-    pose: [0.4361111111111111, 0.33333333333333337, 5.221137186906395]
+    pose: [0.525, 0.16600000000000004, -8.96540529806623]
