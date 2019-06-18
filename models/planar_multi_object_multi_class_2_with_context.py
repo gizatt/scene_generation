@@ -17,7 +17,7 @@ import sys
 import time
 import traceback
 
-from tensorboardX import SummaryWriter
+#from tensorboardX import SummaryWriter
 
 import pyro
 import pyro.distributions as dist
@@ -65,7 +65,7 @@ class ProjectionWorker(object):
             mbp, diagram_context)
 
         # Pre-compute the "active" decision variable indices
-        if base_environment_type in ["planar_bin", "planar_tabletop"]:
+        if base_environment_type in ["planar_bin", "planar_tabletop", "table_setting"]:
             x_index = mbp.GetJointByName(
                 "body_{}_x".format(object_i)).position_start()
             z_index = mbp.GetJointByName(

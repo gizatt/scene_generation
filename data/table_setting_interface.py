@@ -134,6 +134,9 @@ def save_objects(object_list):
             "img_path": obj.img_path,
             "color": obj.color,
         }
+        # Flip sign on theta -- something about the different
+        # coordinate system is causing it to be backwards...
+        output_dict["obj_%04d" % k]["pose"][2] *= -1.
         if isinstance(obj, InteractableBox):
             output_dict["obj_%04d" % k]["params"] = obj.size.tolist()
             output_dict["obj_%04d" % k]["params_names"] = ["width", "height"]

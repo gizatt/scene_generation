@@ -25,6 +25,7 @@ from pydrake.multibody.inverse_kinematics import InverseKinematics
 from pydrake.systems.analysis import Simulator
 from pydrake.geometry import (
     Box,
+    Cylinder,
     HalfSpace,
     SceneGraph,
     Sphere
@@ -114,7 +115,7 @@ class ScenesDatasetVectorized(Dataset):
             classes not generated.
     '''
 
-    def __init__(self, file_or_folder, base_environment_type, max_num_objects=None):
+    def __init__(self, file_or_folder, base_environment_type, memorize_params=False, max_num_objects=None):
         temp_dataset = ScenesDataset(file_or_folder)
         self.yaml_environments = temp_dataset.yaml_environments
         self.yaml_environments_names = temp_dataset.yaml_environments_names
@@ -137,6 +138,7 @@ class ScenesDatasetVectorized(Dataset):
                                    dtype=torch.long)
         self.params_by_class = []
         self.params_names_by_class = []
+        self.memorized_params_by_class = []
 
         for env_i, env in enumerate(self.yaml_environments):
             # Keep-going is shifted by one -- it's whether to add an
@@ -147,16 +149,28 @@ class ScenesDatasetVectorized(Dataset):
                 # New object, initialize its generated params
                 pose = obj_yaml["pose"]
                 params = obj_yaml["params"]
-                if obj_yaml["class"] not in self.class_name_to_id.keys():
+                params_names = obj_yaml["params_names"]
+
+                if obj_yaml["class"] not in self.class_name_to_id.keys():                    
+                    if memorize_params:
+                        self.memorized_params_by_class.append(dict(zip(params_names, params)))
+                        params = []
+                        params_names = []
+                    else:
+                        self.memorized_params_by_class.append([])
+
                     class_id = len(self.class_name_to_id)
                     self.class_id_to_name.append(obj_yaml["class"])
                     self.class_name_to_id[obj_yaml["class"]] = class_id
                     self.params_by_class.append(
                         torch.zeros(self.n_envs, self.max_num_objects,
                                     len(pose) + len(params)))
-                    self.params_names_by_class.append(obj_yaml["params_names"])
+                    self.params_names_by_class.append(params_names)
                 else:
                     class_id = self.class_name_to_id[obj_yaml["class"]]
+                    if memorize_params:
+                        params = []
+                        params_names = []
                 self.classes[env_i, k] = class_id
                 self.params_by_class[class_id][env_i, k, :] = torch.tensor(
                     pose + params)
@@ -210,18 +224,25 @@ class ScenesDatasetVectorized(Dataset):
                 params_for_this_class = len(
                     self.params_names_by_class[class_i])
                 params = data.params_by_class[class_i][env_i, obj_i, :]
-                pose_split = params[:-params_for_this_class]
-                params_split = params[-params_for_this_class:]
+                if params_for_this_class > 0:
+                    pose_split = params[:-params_for_this_class]
+                    params_split = params[-params_for_this_class:]
+                else:
+                    pose_split = params[:]
+                    params_split = torch.tensor([])
                 # Decode those, splitting off the last params as
                 # params, and the first few as poses.
                 # TODO(gizatt) Maybe I should collapse pose into params
                 # in my datasets too...
+                memorized_params_dict = self.memorized_params_by_class[class_i]
+                memorized_params_names = memorized_params_dict.keys()
+                memorized_params_values = memorized_params_dict.values()
                 obj_entry = {"class": self.class_id_to_name[class_i],
                              "color": [np.random.uniform(0.5, 0.8), 0., 1., 1.0],
                              "pose": pose_split.tolist(),
-                             "params": params_split.tolist(),
-                             "params_names": self.params_names_by_class[
-                                class_i]}
+                             "params": params_split.tolist() + memorized_params_values,
+                             "params_names": self.params_names_by_class[class_i] + 
+                                memorized_params_names}
                 env["obj_%04d" % obj_i] = obj_entry
                 if data.keep_going[env_i, obj_i] == 0:
                     break
@@ -284,11 +305,17 @@ def BuildMbpAndSgFromYamlEnvironment(
         mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
     elif base_environment_type == "planar_tabletop":
         world_body = mbp.world_body()
+    elif base_environment_type == "table_setting":
+        world_body = mbp.world_body()
     else:
         raise ValueError("Unknown base environment type.")
 
     for k in range(yaml_environment["n_objects"]):
         obj_yaml = yaml_environment["obj_%04d" % k]
+
+        p_offset = np.zeros(3)
+        if obj_yaml["class"] == "table":
+            p_offset[2] = -0.02
 
         # Planar joints
         if len(obj_yaml["pose"]) == 3:
@@ -343,6 +370,16 @@ def BuildMbpAndSgFromYamlEnvironment(
                     body_shape = Box(length, 0.25, height)
                 else:
                     body_shape = Box(length, height, 0.25)
+            elif obj_yaml["class"] in ["table", "plate", "cup"]:
+                assert(base_environment_type == "table_setting")
+                radius = max(obj_yaml["params"][0], 0.01)
+                length = 0.05
+                body_shape = Cylinder(radius=radius/2, length=0.25)
+            elif obj_yaml["class"] in ["fork", "knife", "spoon"]:
+                assert(base_environment_type == "table_setting")
+                width = max(obj_yaml["params"][0], 0.02)
+                height = max(obj_yaml["params"][1], 0.02)
+                body_shape = Box(width, height, 0.25)
             else:
                 raise NotImplementedError(
                     "Can't handle planar object of type %s yet." %
@@ -350,11 +387,21 @@ def BuildMbpAndSgFromYamlEnvironment(
         else:
             raise NotImplementedError("Haven't done 6DOF floating bases yet.")
 
-        color = [1., 0., 0.]
+        color = [1., 0., 0., 1]
         if "color" in obj_yaml.keys():
-            color = obj_yaml["color"]
+            if obj_yaml["class"] == "table":
+                color = np.ones(4)*0.1
+            elif obj_yaml["class"] == "fork":
+                color = [1., 0.5, 0.5, 1.]
+            elif obj_yaml["class"] == "knife":
+                color = [0.5, 1., 0.5, 1.]
+            elif obj_yaml["class"] == "spoon":
+                color = [0.5, 0.5, 1., 1.]
+            elif obj_yaml["color"] is not None:
+                color = obj_yaml["color"]
+            
         RegisterVisualAndCollisionGeometry(
-            mbp, body, RigidTransform(), body_shape, "body_{}".format(k),
+            mbp, body, RigidTransform(p=p_offset), body_shape, "body_{}".format(k),
             color, CoulombFriction(0.9, 0.8))
 
     mbp.Finalize()
@@ -493,6 +540,10 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
     elif base_environment_type == "planar_tabletop":
         Tview = np.array([[1., 0., 0., 0.],
                           [0., 1., 0., 0.],
+                          [0., 0., 0., 1.]])
+    elif base_environment_type == "table_setting":
+        Tview = np.array([[1., 0., 0., -0.5],
+                          [0., 1., 0., -0.5],
                           [0., 0., 0., 1.]])
     else:
         raise NotImplementedError()
