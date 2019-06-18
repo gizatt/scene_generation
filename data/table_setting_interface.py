@@ -126,8 +126,11 @@ class InteractableBox(PygameShape):
 
 
 def save_objects(object_list):
-    output_dict = {"n_objects": len(object_list)}
+    # Don't save table
+    output_dict = {"n_objects": len(object_list) - 1}
     for k, obj in enumerate(object_list):
+        if obj.class_name == "table":
+            continue
         output_dict["obj_%04d" % k] = {
             "class": obj.class_name,
             "pose": obj.pose.tolist(),

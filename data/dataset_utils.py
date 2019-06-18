@@ -288,18 +288,18 @@ def BuildMbpAndSgFromYamlEnvironment(
                        RigidTransform())
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            RigidTransform(R=np.eye(3), p=[0, 0, -0.5]),
+            RigidTransform(p=[0, 0, -0.5]),
             ground_shape, "ground", np.array([0.5, 0.5, 0.5, 1.]),
             CoulombFriction(0.9, 0.8))
         # Short table walls
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            RigidTransform(R=np.eye(3), p=[-1, 0, 0]),
+            RigidTransform(p=[-1, 0, 0]),
             wall_shape, "wall_nx",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         RegisterVisualAndCollisionGeometry(
             mbp, ground_body,
-            RigidTransform(R=np.eye(3), p=[1, 0, 0]),
+            RigidTransform(p=[1, 0, 0]),
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
@@ -307,6 +307,18 @@ def BuildMbpAndSgFromYamlEnvironment(
         world_body = mbp.world_body()
     elif base_environment_type == "table_setting":
         world_body = mbp.world_body()
+        # Add table
+        table_shape = Cylinder(radius=0.9/2, length=0.2)
+        table_body = mbp.AddRigidBody("ground", SpatialInertia(
+            mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
+            G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
+        mbp.WeldFrames(world_body.body_frame(), table_body.body_frame(),
+                       RigidTransform(p=np.array([0., 0., -0.1])))
+        RegisterVisualAndCollisionGeometry(
+            mbp, table_body,
+            RigidTransform(p=[0.5, 0.5, -0.1]),
+            table_shape, "table", np.array([0.1, 0.1, 0.1, 0.25]),
+            CoulombFriction(0.9, 0.8))
     else:
         raise ValueError("Unknown base environment type.")
 

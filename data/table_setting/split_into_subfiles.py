@@ -9,7 +9,7 @@ except ImportError:
     from yaml import Loader
 
 f_in_base = "table_setting_environments"
-train_fraction = 0.8
+train_fraction = 0.75
 max_environments_per_subfile = 100
 
 with open(f_in_base + ".yaml", "r") as f:

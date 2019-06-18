@@ -17,11 +17,15 @@ print("Input: %d environments" % num_envs)
 
 for key in raw_yaml_environments:
     env = raw_yaml_environments[key]
+    found = 0
     for k in range(env["n_objects"]):
-        orig = env["obj_%04d" % k]["pose"][2]
-        orig *= -1
-        orig = (orig + np.pi*2) % (np.pi*2)
-        env["obj_%04d" % k]["pose"][2] = orig
+        if env["obj_%04d" % k]["class"] == "table":
+            env.pop("obj_%04d" % k)
+            found += 1
+        else:
+            env["obj_%04d" % (k - found)] = env.pop("obj_%04d" % k)
+    assert(found == 1)
+    env["n_objects"] -= found
 
 with open(f_in_base + "_fixed.yaml", "w") as f:
     yaml.dump(raw_yaml_environments, f)
