@@ -9,6 +9,7 @@ import pydrake
 
 import argparse
 import os
+from multiprocessing import Pool, Queue, Manager
 import random
 import time
 import sys
@@ -274,59 +275,14 @@ class MouseKeyboardTeleop(LeafSystem):
         elif (not events["p"]):
             self.p_down = False
 
-if __name__ == "__main__":
-    np.set_printoptions(precision=5, suppress=True)
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-T", "--duration",
-                        type=float,
-                        help="Duration of task.",
-                        default=3.0)
-    parser.add_argument("--seed",
-                        type=float, default=time.time(),
-                        help="RNG seed")
-    parser.add_argument("--planar_viz",
-                        action='store_true',
-                        help="Show planar viz?")
-    parser.add_argument("--planar_record",
-                        action='store_true',
-                        help="Record with planar viz?")
-    parser.add_argument("--teleop",
-                        action='store_true',
-                        help="Control with mouse keyboard mode?")
-    parser.add_argument("--do_param_sweep",
-                        action='store_true',
-                        help="Run a full parameter sweep of simulations.")
-    parser.add_argument("--realtime_rate",
-                        type=float,
-                        default=np.inf)
-    MeshcatVisualizer.add_argparse_argument(parser)
-    args = parser.parse_args()
-    assert(not (args.teleop and args.do_param_sweep))
-    if args.teleop:
-        args.duration = 100000.0
+class GeneratorWorker(object):
+    """Multiprocess worker."""
 
-    int_seed = int(args.seed*1000. % 2**32)
-    random.seed(int_seed)
-    np.random.seed(int_seed)
+    def __init__(self, args, output_queue=None):
+        self.output_queue = output_queue
+        self.args = args
 
-    # Pick the paramemeters for the rollouts.
-    # Parameters and bounds:
-    #   Carrot radius: [0.01, 0.05]
-    #   X init: -0.05, 0.05
-    # NOT VARYING: Density, Initial roll angle, or any physics params.
-    params_to_test = []
-    if args.do_param_sweep:
-        for radius in np.linspace(0.01, 0.05, 20):
-            for x_init in np.linspace(-0.05, 0.05, 20):
-                params_to_test.append(
-                    {"radius": radius,
-                     "x_init": x_init})
-    else:
-        params_to_test.append(
-            {"radius": np.random.uniform(0.01, 0.05),
-             "x_init": np.random.uniform(-0.05, 0.05)})
-
-    for param_set in params_to_test:
+    def __call__(self, param_set):
         builder = DiagramBuilder()
         
         station = builder.AddSystem(ManipulationStation(time_step=0.002))
@@ -347,7 +303,8 @@ if __name__ == "__main__":
         cyl = create_cut_cylinder(
             radius, height, cutting_planes, sections=15)
         cyl.density = 1000.  # Same as water
-        export_sdf(cyl, "carrot", "/home/gizatt/drake/build/install/share/drake/manipulation/models/", color=[0.75, 0.2, 0.2, 1.])
+        carrot_dir = "/tmp/carrot_%2.5f_%2.5f/" % (radius, x_init)
+        export_sdf(cyl, "carrot", carrot_dir, color=[0.75, 0.2, 0.2, 1.])
 
         #carrot_pose = RigidTransform(RollPitchYaw([0., 0., 0.]), [0.6, 0., 0.1])
         #station.AddManipulandFromFile("drake/manipulation/models/carrot.sdf", carrot_pose);
@@ -355,7 +312,7 @@ if __name__ == "__main__":
         mbp = station.get_mutable_multibody_plant()
 
         mbp_parser = Parser(mbp)
-        model_instance = mbp_parser.AddModelFromFile("/home/gizatt/drake/build/install/share/drake/manipulation/models/carrot.sdf", "carrot");
+        model_instance = mbp_parser.AddModelFromFile(carrot_dir + "carrot.sdf", "carrot");
         body = mbp.GetBodyByName("carrot")
 
         no_mass_no_inertia = SpatialInertia(
@@ -406,13 +363,13 @@ if __name__ == "__main__":
         body_joint_z.set_default_translation(0.05)
         body_joint_theta.set_default_angle(np.pi/2.)
         
-        if args.meshcat:
+        if self.args.meshcat:
             meshcat = builder.AddSystem(MeshcatVisualizer(
-                station.get_scene_graph(), zmq_url=args.meshcat))
+                station.get_scene_graph(), zmq_url=self.args.meshcat))
             builder.Connect(station.GetOutputPort("pose_bundle"),
                             meshcat.get_input_port(0))
 
-        if args.planar_viz or args.planar_record:
+        if self.args.planar_viz or self.args.planar_record:
             plt.gca().clear()
             viz = builder.AddSystem(PlanarSceneGraphVisualizer(
                 station.get_scene_graph(),
@@ -420,8 +377,8 @@ if __name__ == "__main__":
                 ax=plt.gca()))
             builder.Connect(station.GetOutputPort("pose_bundle"),
                             viz.get_input_port(0))
-            if args.planar_record:
-                viz.start_recording(show=args.planar_viz)
+            if self.args.planar_record:
+                viz.start_recording(show=self.args.planar_viz)
 
         robot = station.get_controller_plant()
         params = DifferentialInverseKinematicsParameters(robot.num_positions(),
@@ -443,7 +400,7 @@ if __name__ == "__main__":
         builder.Connect(differential_ik.GetOutputPort("joint_position_desired"),
                         station.GetInputPort("iiwa_position"))
 
-        if (args.teleop):
+        if (self.args.teleop):
             print_instructions()
             teleop = builder.AddSystem(MouseKeyboardTeleop(grab_focus=True))
             filter_ = builder.AddSystem(
@@ -474,7 +431,7 @@ if __name__ == "__main__":
                 [-3.46739, -0.05747,  4.70519,  0.42623, -0.     ,  0.2933 ],
                 [-3.46739, -0.05747,  4.70519,  0.40653, -0.     ,  0.3128 ],
             ]).T
-            ts = np.linspace(0., args.duration, knots.shape[1])
+            ts = np.linspace(0., self.args.duration, knots.shape[1])
 
             ee_traj = PiecewisePolynomial.Pchip(
                 ts, knots, True)
@@ -490,9 +447,6 @@ if __name__ == "__main__":
                             station.GetInputPort("wsg_position"))
             builder.Connect(wsg_force_limit_source.get_output_port(0),
                             station.GetInputPort("wsg_force_limit"))
-
-
-
 
         diagram = builder.Build()
         simulator = Simulator(diagram)
@@ -510,7 +464,7 @@ if __name__ == "__main__":
         q0 = station.GetOutputPort("iiwa_position_measured").Eval(station_context)
         differential_ik.parameters.set_nominal_joint_position(q0)
 
-        if (args.teleop):
+        if (self.args.teleop):
             teleop.SetPose(differential_ik.ForwardKinematics(q0))
             filter_.set_initial_output_value(
                 diagram.GetMutableSubsystemContext(
@@ -521,9 +475,13 @@ if __name__ == "__main__":
         differential_ik.SetPositions(diagram.GetMutableSubsystemContext(
             differential_ik, simulator.get_mutable_context()), q0)
 
-        simulator.set_target_realtime_rate(args.realtime_rate)
+        simulator.set_target_realtime_rate(self.args.realtime_rate)
 
-        simulator.AdvanceTo(args.duration + 1.)
+        try:
+            simulator.AdvanceTo(self.args.duration + 1.)
+        except:
+            print("Unhandled error in simulate. Not saving.")
+            return
 
         # Calculate score + success
         final_mbp_context = diagram.GetMutableSubsystemContext(mbp, simulator.get_mutable_context())
@@ -540,21 +498,103 @@ if __name__ == "__main__":
             score = 0.
             print("Carrot was not flipped.")
 
+        env = {"radius": float(radius),
+                   "x_init": float(x_init),
+                   "score": float(score)}
 
-        if args.do_param_sweep:
-            os.system("mkdir -p results")
-            with open("results/results.yaml", "a") as file:
-                env = {"radius": float(radius),
-                       "x_init": float(x_init),
-                       "score": float(score)}
-                yaml.dump(
-                    {"env_%d" % int(round(time.time() * 1000)): env},
-                     file)
-
-        if args.planar_record:
+        if self.args.planar_record:
             os.system("mkdir -p results/videos/")
             Writer = animation.writers['ffmpeg']
             writer = Writer(fps=1./viz.timestep, metadata=dict(artist='Me'), bitrate=1800)
             viz.get_recording().save(
-                "results/videos/" + 'radius_%2.2f_xinit_%2.2f.mp4' % (radius, x_init),
+                "results/videos/" + 'radius_%2.5f_xinit_%2.5f.mp4' % (radius, x_init),
                 writer=writer)
+
+        if self.output_queue:
+            self.output_queue.put(env)
+
+
+if __name__ == "__main__":
+    np.set_printoptions(precision=5, suppress=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-T", "--duration",
+                        type=float,
+                        help="Duration of task.",
+                        default=3.0)
+    parser.add_argument("--seed",
+                        type=float, default=time.time(),
+                        help="RNG seed")
+    parser.add_argument("--planar_viz",
+                        action='store_true',
+                        help="Show planar viz?")
+    parser.add_argument("--planar_record",
+                        action='store_true',
+                        help="Record with planar viz?")
+    parser.add_argument("--teleop",
+                        action='store_true',
+                        help="Control with mouse keyboard mode?")
+    parser.add_argument("--do_param_sweep",
+                        action='store_true',
+                        help="Run a full parameter sweep of simulations.")
+    parser.add_argument("--parallel",
+                        action='store_true',
+                        help="Work in many different threads.")
+    parser.add_argument("--realtime_rate",
+                        type=float,
+                        default=np.inf)
+    MeshcatVisualizer.add_argparse_argument(parser)
+    args = parser.parse_args()
+    assert(not (args.teleop and args.do_param_sweep))
+    assert(not (args.teleop and args.parallel))
+    assert(not (args.planar_viz and args.parallel))
+    if args.teleop:
+        args.duration = 100000.0
+
+    int_seed = int(args.seed*1000. % 2**32)
+    random.seed(int_seed)
+    np.random.seed(int_seed)
+
+    # Pick the paramemeters for the rollouts.
+    # Parameters and bounds:
+    #   Carrot radius: [0.01, 0.05]
+    #   X init: -0.05, 0.05
+    # NOT VARYING: Density, Initial roll angle, or any physics params.
+    params_to_test = []
+    if args.do_param_sweep:
+        for radius in np.linspace(0.02, 0.03, 20):
+            for x_init in np.linspace(0.0, 0.05, 20):
+                params_to_test.append(
+                    {"radius": radius,
+                     "x_init": x_init})
+
+    else:
+        params_to_test.append(
+            {"radius": 0.019697,
+             "x_init": -0.0015})
+        #params_to_test.append(
+        #    {"radius": np.random.uniform(0.01, 0.05),
+        #     "x_init": np.random.uniform(-0.05, 0.05)})
+
+    if args.parallel:
+        p = Pool(8, maxtasksperchild=1)
+        m = Manager()
+        output_queue = m.Queue()
+        result = p.map_async(GeneratorWorker(args, output_queue=output_queue),
+                             params_to_test)
+        while not result.ready():
+            try:
+                if not output_queue.empty():
+                    env = output_queue.get(timeout=0)
+                    if args.do_param_sweep:
+                        os.system("mkdir -p results")
+                        with open("results/results.yaml", "a") as file:
+                            yaml.dump(
+                                {"env_%d" % int(round(time.time() * 1000)): env},
+                                 file)
+
+            except Exception as e:
+                print "Unhandled exception while saving data: ", e
+
+    else:
+        for param_set in params_to_test:
+            GeneratorWorker(args)(param_set)
