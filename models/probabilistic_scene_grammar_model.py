@@ -4,6 +4,7 @@ import time
 import yaml
 
 import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 
 import pydrake
@@ -44,9 +45,13 @@ class ProductionRule(object):
     def log_prob(self, products):
         raise NotImplementedError()
 
+class Node(object):
+    def __init__(self, parent):
+        self.parent = parent
 
-class OrNode(object):
-    def __init__(self, production_rules, production_weights):
+class OrNode(Node):
+    def __init__(self, parent, production_rules, production_weights):
+        Node.__init__(self, parent)
         if len(production_weights) != len(production_rules):
             raise ValueError("# of production rules and weights must match.")
         if len(production_weights) == 0:
@@ -60,8 +65,9 @@ class OrNode(object):
         return self.production_rules[sampled_rule]
 
 
-class AndNode(object):
-    def __init__(self, production_rules):
+class AndNode(Node):
+    def __init__(self, parent, production_rules):
+        Node.__init__(self, parent)
         if len(production_rules) == 0:
             raise ValueError("Must have nonzero # of production rules.")
         self.production_rules = production_rules
@@ -70,8 +76,8 @@ class AndNode(object):
         return self.production_rules
 
 
-class ExhaustiveSetNode(object):
-    def __init__(self, site_prefix, production_rules,
+class ExhaustiveSetNode(Node):
+    def __init__(self, parent, site_prefix, production_rules,
                  production_weights_hints = {},
                  remaining_weight = 1.):
         ''' Make a categorical distribution over
@@ -83,7 +89,7 @@ class ExhaustiveSetNode(object):
            indicating the weight to distribute to the remaining
            pairs. These floats all indicate relative occurance
            weights. '''
-
+        Node.__init__(self, parent)
         # Build the initial weights, taking the suggestion
         # weights into account.
         assert(remaining_weight >= 0.)
@@ -143,12 +149,12 @@ class PlaceSetting(ExhaustiveSetNode):
             rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, self.object_name),
                                    self.offset_dist)
             abs_pose = get_planar_pose_w2_torch(self.parent.pose, rel_pose)
-            return [self.object_type(abs_pose)]
+            return [self.object_type(self, abs_pose)]
 
         def log_prob(self, products):
             raise NotImplementedError()
 
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
         self.pose = pose
         # Represent each object's relative position to the
         # place setting origin with a diagonal Normal distribution.
@@ -201,7 +207,7 @@ class PlaceSetting(ExhaustiveSetNode):
             (name_to_ind["cup"],): 0.5,
             (name_to_ind["plate"],): 1.,
         }
-        ExhaustiveSetNode.__init__(self, "place_setting", production_rules,
+        ExhaustiveSetNode.__init__(self, parent, "place_setting", production_rules,
                                    production_weights_hints,
                                    remaining_weight=0.)
 
@@ -226,13 +232,13 @@ class TableNode(ExhaustiveSetNode):
                                      self.offset_dist)
             # Rotate offset
             abs_offset = get_planar_pose_w2_torch(self.parent.pose, rel_offset)
-            return [PlaceSetting(pose=self.root_pose + abs_offset)]
+            return [PlaceSetting(self, pose=self.root_pose + abs_offset)]
 
         def log_prob(self, products):
             raise NotImplementedError()
 
 
-    def __init__(self, num_place_setting_locations=4):
+    def __init__(self, parent, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
         self.table_radius = pyro.param("table_radius", torch.tensor(0.45),
                                        constraint=constraints.positive)
@@ -247,14 +253,15 @@ class TableNode(ExhaustiveSetNode):
             root_pose[1] = self.table_radius * torch.sin(root_pose[2])
             production_rules.append(self.PlaceSettingProductionRule(
                 parent=self, root_pose=root_pose))
-        ExhaustiveSetNode.__init__(self, "table_node", production_rules)
+        ExhaustiveSetNode.__init__(self, parent, "table_node", production_rules)
 
-class TerminalNode(object):
-    def __init__(self):
-        Node.__init__(self, [], [])
+class TerminalNode(Node):
+    def __init__(self, parent):
+        Node.__init__(self, parent)
 
 class Plate(TerminalNode):
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
+        TerminalNode.__init__(self, parent)
         self.pose = pose
 
     def generate_yaml(self):
@@ -268,7 +275,8 @@ class Plate(TerminalNode):
         }
 
 class Cup(TerminalNode):
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
+        TerminalNode.__init__(self, parent)
         self.pose = pose
 
     def generate_yaml(self):
@@ -283,7 +291,8 @@ class Cup(TerminalNode):
 
 
 class Fork(TerminalNode):
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
+        TerminalNode.__init__(self, parent)
         self.pose = pose
     
     def generate_yaml(self):
@@ -297,7 +306,8 @@ class Fork(TerminalNode):
         }
 
 class Knife(TerminalNode):
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
+        TerminalNode.__init__(self, parent)
         self.pose = pose
     
     def generate_yaml(self):
@@ -311,7 +321,8 @@ class Knife(TerminalNode):
         }
 
 class Spoon(TerminalNode):
-    def __init__(self, pose):
+    def __init__(self, parent, pose):
+        TerminalNode.__init__(self, parent)
         self.pose = pose
     
     def generate_yaml(self):
@@ -329,12 +340,15 @@ class ProbabilisticSceneGrammarModel():
         pass
 
     def model(self, data=None):
-        nodes = [TableNode()]
+        nodes = [TableNode(parent=None)]
         all_terminal_nodes = []
+        all_nodes = []
+        all_production_rules = []
         num_productions = 0
         iter_k = 0
         while len(nodes) > 0:
             node = nodes.pop(0)
+            all_nodes.append(node)
             if isinstance(node, TerminalNode):
                 # Instantiate
                 all_terminal_nodes.append(node)
@@ -344,10 +358,11 @@ class ProbabilisticSceneGrammarModel():
                 for i, rule in enumerate(production_rules):
                     new_nodes = rule("production_%04d_sample_%04d" % (num_productions, i))
                     nodes += new_nodes
+                all_production_rules += production_rules
                 num_productions += 1
             iter_k += 1
 
-        return all_terminal_nodes
+        return all_terminal_nodes, all_production_rules, all_nodes
 
     def guide(self, data):
         pass
@@ -374,12 +389,12 @@ if __name__ == "__main__":
 
     model = ProbabilisticSceneGrammarModel()
 
-    plt.figure()
+    plt.figure().set_size_inches(15, 10)
     for k in range(10):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(model.model).get_trace()
-        terminal_node_list = trace.nodes["_RETURN"]["value"]
+        all_terminal_nodes, all_production_rules, all_nodes = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
         print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
@@ -390,9 +405,43 @@ if __name__ == "__main__":
             print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
+        G = nx.DiGraph()
+        label_dict = {}
+        def add_node_and_parents_to_graph(node):
+            if node not in G:
+                G.add_node(node)
+                label_dict[node] = node.__class__.__name__
+                edge = node.parent
+                if edge is None:
+                    return
+                parent_node = node.parent.parent
+                if parent_node is not None:
+                    add_node_and_parents_to_graph(parent_node)
+                G.add_edge(parent_node, node)
+        pos_dict = {}
+        for node in all_terminal_nodes:
+            add_node_and_parents_to_graph(node)
+            pos_dict[node] = node.pose[0:2].tolist()
+        for node in G.nodes:
+            avg_child_pose = np.zeros(2)
+            num_children = 0
+            if node not in pos_dict.keys():
+                if hasattr(node, "pose"):
+                    pos_dict[node] = node.pose[0:2].tolist()
+                else:
+                    child_queue = node.successors()
+                    while len(child_queue) > 0:
+                        child = child_queue.pop(0)
+                        if hasattr(child, "pose"):
+                            avg_child_pose += child.pose[0:2].detach().numpy()
+                            num_children += 1
+                        child_queue += child.successors()
 
-
-        yaml_env = convert_list_of_terminal_nodes_to_yaml_env(terminal_node_list)
+        plt.subplot(2, 1, 1)
+        nx.draw_networkx(G, pos=pos_dict, labels=label_dict, font_weight='bold')
+        plt.xlim(-0.2, 1.2)
+        plt.ylim(-0.2, 1.2)
+        yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
 
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
@@ -401,9 +450,10 @@ if __name__ == "__main__":
         #                                           make_static=False)[0]
 
         try:
+            plt.subplot(2, 1, 2)
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            plt.pause(1.0)
+            plt.show()
         except Exception as e:
             print("Exception ", e)
         except:
