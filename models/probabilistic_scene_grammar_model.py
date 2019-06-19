@@ -17,9 +17,9 @@ from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 
 def get_planar_pose_w2_torch(p_w1, p_12):
-    ''' p_w1: Pose 1 in world frame
-        p_12: Pose 2 in Pose 1's frame
-        Returns: Pose 2 in world frame. '''
+    ''' p_w1: xytheta Pose 1 in world frame
+        p_12: xytheta Pose 2 in Pose 1's frame
+        Returns: xytheta Pose 2 in world frame. '''
     p_out = torch.zeros(3, dtype=p_w1.dtype)
     p_out[:] = p_w1[:]
     # Rotations just add
@@ -30,6 +30,21 @@ def get_planar_pose_w2_torch(p_w1, p_12):
     p_out[1] += p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
     return p_out
 
+class ProductionRule(object):
+    ''' Abstract interface for a production rule.
+    Callable to perform the production, but also
+    queryable for what nodes this connects and able to
+    provide scoring for whether a candidate production
+    is a good idea at all. '''
+    def __init__(self, parent, products):
+        self.parent = parent
+        self.products = products
+    def __call__(self):
+        raise NotImplementedError()
+    def log_prob(self, products):
+        raise NotImplementedError()
+
+
 class OrNode(object):
     def __init__(self, production_rules, production_weights):
         if len(production_weights) != len(production_rules):
@@ -38,9 +53,10 @@ class OrNode(object):
             raise ValueError("Must have nonzero number of production rules.")
         self.production_rules = production_rules
         self.production_dist = dist.Categorical(production_weights)
-
+        self.active_production_rule_index = None
     def sample_production_rule(self, site_prefix, obs=None):
         sampled_rule = pyro.sample(site_prefix + "_or_sample", self.production_dist, obs=obs)
+        self.active_production_rule_index = sampled_rule
         return self.production_rules[sampled_rule](site_prefix)
 
 
@@ -92,6 +108,7 @@ class ExhaustiveSetNode(object):
         self.production_dist = dist.Categorical(self.exhaustive_set_weights)
         self.site_prefix = ""
         self.production_rules = production_rules
+        self.active_production_rule = None
 
     def sample_production_rule(self, site_prefix):
         selected_rules = pyro.sample(
@@ -99,13 +116,38 @@ class ExhaustiveSetNode(object):
             self.production_dist)
         # Select out the appropriate rules
         output = []
+        self.active_production_rule_indices = []
         for k, rule in enumerate(self.production_rules):
             if (selected_rules >> k) & 1:
                 output += rule(site_prefix + "_rule_%04d" % k)
+                self.active_production_rule_indices.append(k)
         return output
 
 
 class PlaceSetting(ExhaustiveSetNode):
+
+    class ObjectProductionRule(ProductionRule):
+        def __init__(self, parent, object_name, object_type, mean_init, var_init):
+            ProductionRule.__init__(self, parent, products=[object_type])
+            self.object_name = object_name
+            self.object_type = object_type
+            mean = pyro.param("place_setting_%s_mean" % object_name,
+                              torch.tensor(mean_init))
+            var = pyro.param("place_setting_%s_var" % object_name,
+                              torch.tensor(var_init),
+                              constraint=constraints.positive)
+            self.offset_dist = dist.Normal(
+                mean, var)
+
+        def __call__(self, site_prefix):
+            rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, self.object_name),
+                                   self.offset_dist)
+            abs_pose = get_planar_pose_w2_torch(self.parent.pose, rel_pose)
+            return [self.object_type(abs_pose)]
+
+        def log_prob(self, products):
+            raise NotImplementedError()
+
     def __init__(self, pose):
         self.pose = pose
         # Represent each object's relative position to the
@@ -135,21 +177,16 @@ class PlaceSetting(ExhaustiveSetNode):
             "right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
         }
         self.distributions_by_name = {}
-        self.params_by_name = {}
         production_rules = []
         name_to_ind = {}
         for k, object_name in enumerate(self.object_types_by_name.keys()):
             mean_init, var_init = param_guesses_by_name[object_name]
-            mean = pyro.param("place_setting_%s_mean" % object_name,
-                              torch.tensor(mean_init))
-            var = pyro.param("place_setting_%s_var" % object_name,
-                              torch.tensor(var_init),
-                              constraint=constraints.positive)
-            self.distributions_by_name[object_name] = dist.Normal(
-                mean, var)
-            self.params_by_name[object_name] = (mean, var)
-            production_rules.append(partial(
-                partial(self._produce_object, object_name=object_name)))
+            production_rules.append(
+                self.ObjectProductionRule(
+                    parent=self, object_name=object_name,
+                    object_type=self.object_types_by_name[object_name],
+                    mean_init=mean_init, var_init=var_init))
+            # Build name mapping for convenienc of building the hint dictionary
             name_to_ind[object_name] = k
 
         # Weight the "correct" rules very heavily
@@ -168,14 +205,33 @@ class PlaceSetting(ExhaustiveSetNode):
                                    production_weights_hints,
                                    remaining_weight=0.)
 
-    def _produce_object(self, site_prefix, object_name):
-        rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, object_name),
-                           self.distributions_by_name[object_name])
-        abs_pose = get_planar_pose_w2_torch(self.pose, rel_pose)
-        return [self.object_types_by_name[object_name](abs_pose)]
-
 
 class TableNode(ExhaustiveSetNode):
+
+    class PlaceSettingProductionRule(ProductionRule):
+        def __init__(self, parent, root_pose):
+            ProductionRule.__init__(self, parent, products=[PlaceSetting])
+            # Relative offset from root pose is drawn from a diagonal
+            # Normal. It's rotated into the root pose frame at sample time.
+            mean = pyro.param("table_place_setting_mean",
+                              torch.tensor([0.0, 0., np.pi/2.]))
+            var = pyro.param("table_place_setting_var",
+                              torch.tensor([0.01, 0.01, 0.01]),
+                              constraint=constraints.positive)
+            self.offset_dist = dist.Normal(mean, var)
+            self.root_pose = root_pose
+
+        def __call__(self, site_prefix):
+            rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
+                                     self.offset_dist)
+            # Rotate offset
+            abs_offset = get_planar_pose_w2_torch(self.parent.pose, rel_offset)
+            return [PlaceSetting(pose=self.root_pose + abs_offset)]
+
+        def log_prob(self, products):
+            raise NotImplementedError()
+
+
     def __init__(self, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
         self.table_radius = pyro.param("table_radius", torch.tensor(0.45),
@@ -183,36 +239,15 @@ class TableNode(ExhaustiveSetNode):
         # Set-valued: a plate may appear at each location.
         production_rules = []
         for k in range(num_place_setting_locations):
+            # TODO(gizatt) Root pose for each cluster could be a parameter.
+            # This turns this into a GMM, sort of?
             root_pose = torch.zeros(3)
             root_pose[2] = (k / float(num_place_setting_locations))*np.pi*2.
             root_pose[0] = self.table_radius * torch.cos(root_pose[2])
             root_pose[1] = self.table_radius * torch.sin(root_pose[2])
-            # TODO(gizatt) Root pose could be a parameter. This turns this
-            # into a GMM.
-            production_rules.append(partial(
-                self._produce_place_setting_at_pose,
-                root_pose=root_pose))
-
-        # Relative offset from root pose is drawn from a diagonal
-        # Normal. It's rotated into the root pose frame at sample time.
-        mean = pyro.param("table_place_setting_mean",
-                          torch.tensor([0.0, 0., np.pi/2.]))
-        var = pyro.param("table_place_setting_var",
-                          torch.tensor([0.01, 0.01, 0.01]),
-                          constraint=constraints.positive)
-        self.place_setting_offset_dist = dist.Normal(mean, var)
+            production_rules.append(self.PlaceSettingProductionRule(
+                parent=self, root_pose=root_pose))
         ExhaustiveSetNode.__init__(self, "table_node", production_rules)
-
-    def _produce_place_setting_at_pose(self, site_prefix, root_pose):
-        rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
-                             self.place_setting_offset_dist)
-        # Rotate offset
-        abs_offset = get_planar_pose_w2_torch(self.pose, rel_offset)
-        return [PlaceSetting(pose=root_pose + abs_offset)]
-
-    def _produce_two_place_settings(self, site_prefix):
-        return [PlaceSetting(pose=torch.tensor([0., 0., 0.])),
-                PlaceSetting(pose=torch.tensor([1., 0., 0.]))]
 
 class TerminalNode(object):
     def __init__(self):
@@ -338,7 +373,7 @@ if __name__ == "__main__":
     model = ProbabilisticSceneGrammarModel()
 
     plt.figure()
-    for k in range(1000):
+    for k in range(10):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(model.model).get_trace()
@@ -352,19 +387,21 @@ if __name__ == "__main__":
                 continue
             #print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
+        # Recover and print the parse tree
+
+
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(terminal_node_list)
-    
-        with open("table_setting_environments_generated.yaml", "a") as file:
-            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
+
+        #with open("table_setting_environments_generated.yaml", "a") as file:
+        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
 
         try:
-            if k % 10 == 0:
-                plt.gca().clear()
-                DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-                plt.pause(0.01)
+            plt.gca().clear()
+            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+            plt.show()
         except Exception as e:
             print("Exception ", e)
         except:
