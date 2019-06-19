@@ -54,10 +54,10 @@ class OrNode(object):
         self.production_rules = production_rules
         self.production_dist = dist.Categorical(production_weights)
         self.active_production_rule_index = None
-    def sample_production_rule(self, site_prefix, obs=None):
+    def sample_production_rules(self, site_prefix, obs=None):
         sampled_rule = pyro.sample(site_prefix + "_or_sample", self.production_dist, obs=obs)
         self.active_production_rule_index = sampled_rule
-        return self.production_rules[sampled_rule](site_prefix)
+        return self.production_rules[sampled_rule]
 
 
 class AndNode(object):
@@ -66,8 +66,8 @@ class AndNode(object):
             raise ValueError("Must have nonzero # of production rules.")
         self.production_rules = production_rules
         
-    def sample_production_rule(self, site_prefix):
-        return [x(site_prefix + "_rule_%04d" % i) for i, x in enumerate(self.production_rules)]
+    def sample_production_rules(self, site_prefix):
+        return self.production_rules
 
 
 class ExhaustiveSetNode(object):
@@ -110,7 +110,7 @@ class ExhaustiveSetNode(object):
         self.production_rules = production_rules
         self.active_production_rule = None
 
-    def sample_production_rule(self, site_prefix):
+    def sample_production_rules(self, site_prefix):
         selected_rules = pyro.sample(
             site_prefix + "_exhaustive_set_sample",
             self.production_dist)
@@ -119,7 +119,7 @@ class ExhaustiveSetNode(object):
         self.active_production_rule_indices = []
         for k, rule in enumerate(self.production_rules):
             if (selected_rules >> k) & 1:
-                output += rule(site_prefix + "_rule_%04d" % k)
+                output.append(rule)
                 self.active_production_rule_indices.append(k)
         return output
 
@@ -340,8 +340,10 @@ class ProbabilisticSceneGrammarModel():
                 all_terminal_nodes.append(node)
             else:
                 # Expand by picking a production rule
-                new_node_classes = node.sample_production_rule("production_%04d" % num_productions)
-                [nodes.append(x) for x in new_node_classes]
+                production_rules = node.sample_production_rules("production_%04d" % num_productions)
+                for i, rule in enumerate(production_rules):
+                    new_nodes = rule("production_%04d_sample_%04d" % (num_productions, i))
+                    nodes += new_nodes
                 num_productions += 1
             iter_k += 1
 
@@ -385,7 +387,7 @@ if __name__ == "__main__":
         for node_name in trace.nodes.keys():
             if node_name in ["_INPUT", "_RETURN"]:
                 continue
-            #print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
+            print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
 
@@ -401,7 +403,7 @@ if __name__ == "__main__":
         try:
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            plt.show()
+            plt.pause(1.0)
         except Exception as e:
             print("Exception ", e)
         except:
