@@ -1,14 +1,29 @@
 from __future__ import print_function
+from functools import partial
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-import time
 
 import torch
 import torch.distributions.constraints as constraints
 import pyro
 import pyro.distributions as dist
 from pyro import poutine
+
+def get_planar_pose_w2_torch(p_w1, p_12):
+    ''' p_w1: Pose 1 in world frame
+        p_12: Pose 2 in Pose 1's frame
+        Returns: Pose 2 in world frame. '''
+    p_out = torch.zeros(3, dtype=p_w1.dtype)
+    p_out[:] = p_w1[:]
+    # Rotations just add
+    p_out[2] += p_12[2]
+    # Rotate p_12 by p_w1's rotation
+    r = p_w1[2]
+    p_out[0] += p_12[0]*torch.cos(r) - p_12[1]*torch.sin(r)
+    p_out[1] += p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
+    return p_out
 
 class OrNode(object):
     def __init__(self, production_rules, production_weights):
@@ -61,32 +76,43 @@ class ExhaustiveSetNode(object):
         return output
 
 
-class TerminalNode(object):
-    def __init__(self):
-        Node.__init__(self, [], [])
-
-
 class PlaceSetting(ExhaustiveSetNode):
-    def __init__(self, pose):
-        production_rules = [ self._produce_place_setting,
-                             self._produce_dish_and_cup ]
-        ExhaustiveSetNode.__init__(self, "place_setting", production_rules)
+    def __init__(self, site_prefix, pose):
         self.pose = pose
+        # Represent each object's relative position to the
+        # place setting origin with a diagonal Normal distribution.
+        # So some objects will show up multiple
+        # times here (left/right variants) where we know ahead of time
+        # that they'll have multiple modes.
+        # TODO(gizatt) GMMs? Guide will be even harder to write.
+        self.object_types_by_name = {
+            "dish": Dish,
+            "cup": Cup,
+            "left_fork": Fork,
+            "right_fork": Fork
+        }
+        self.distributions_by_name = {}
+        self.params_by_name = {}
+        all_production_rules = []
+        for object_name in self.object_types_by_name.keys():
+            mean = pyro.param("%s_%s_mean" % (site_prefix, object_name),
+                              torch.tensor([0., 0., 0.]))
+            var = pyro.param("%s_%s_var" % (site_prefix, object_name),
+                              torch.tensor([0.1, 0.1, 0.1]),
+                              constraint=constraints.positive)
+            self.distributions_by_name[object_name] = dist.Normal(
+                mean, var)
+            self.params_by_name[object_name] = (mean, var)
+            all_production_rules.append(partial(
+                partial(self._produce_object, object_name=object_name)))
+        ExhaustiveSetNode.__init__(self, "place_setting", all_production_rules)
 
-    def _produce_place_setting(self, site_prefix):
-        return [Dish(self.pose)]
+    def _produce_object(self, site_prefix, object_name):
+        rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, object_name),
+                           self.distributions_by_name[object_name])
+        abs_pose = get_planar_pose_w2_torch(self.pose, rel_pose)
+        return [self.object_types_by_name[object_name](abs_pose)]
 
-    def _produce_dish_and_cup(self, site_prefix):
-        return [Dish(self.pose), Cup(self.pose + torch.tensor([0., 0.1, 0.]))]
-
-
-class Dish(TerminalNode):
-    def __init__(self, pose):
-        self.pose = pose
-
-class Cup(TerminalNode):
-    def __init__(self, pose):
-        self.pose = pose
 
 class RootNode(OrNode):
     def __init__(self):
@@ -96,12 +122,27 @@ class RootNode(OrNode):
         OrNode.__init__(self, production_rules, production_weights)
 
     def _produce_one_place_setting(self, site_prefix):
-        return [PlaceSetting(pose=torch.tensor([0., 0., 0.]))]
+        return [PlaceSetting("%s_place_setting_1" % site_prefix, pose=torch.tensor([0., 0., 0.]))]
 
     def _produce_two_place_settings(self, site_prefix):
-        return [PlaceSetting(pose=torch.tensor([0., 0., 0.])),
-                PlaceSetting(pose=torch.tensor([1., 0., 0.]))]
+        return [PlaceSetting("%s_place_setting_1" % site_prefix, pose=torch.tensor([0., 0., 0.])),
+                PlaceSetting("%s_place_setting_1" % site_prefix, pose=torch.tensor([1., 0., 0.]))]
 
+class TerminalNode(object):
+    def __init__(self):
+        Node.__init__(self, [], [])
+
+class Dish(TerminalNode):
+    def __init__(self, pose):
+        self.pose = pose
+
+class Cup(TerminalNode):
+    def __init__(self, pose):
+        self.pose = pose
+
+class Fork(TerminalNode):
+    def __init__(self, pose):
+        self.pose = pose
 
 class ProbabilisticSceneGrammarModel():
     def __init__(self):
