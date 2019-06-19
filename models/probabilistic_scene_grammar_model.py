@@ -1,6 +1,7 @@
 from __future__ import print_function
 from functools import partial
 import time
+import yaml
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,7 +13,8 @@ import pyro
 import pyro.distributions as dist
 from pyro import poutine
 
-from scene_generation.data.dataset_utils import DrawYamlEnvironmentPlanar
+from scene_generation.data.dataset_utils import (
+    DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 
 def get_planar_pose_w2_torch(p_w1, p_12):
     ''' p_w1: Pose 1 in world frame
@@ -116,13 +118,21 @@ class PlaceSetting(ExhaustiveSetNode):
             "plate": Plate,
             "cup": Cup,
             "left_fork": Fork,
-            "right_fork": Fork
+            "left_knife": Knife,
+            "left_spoon": Spoon,
+            "right_fork": Fork,
+            "right_knife": Knife,
+            "right_spoon": Spoon,
         }
         param_guesses_by_name = {
-            "plate": ([0., 0.1, 0.], [0.01, 0.01, 1.]),
-            "cup": ([0., 0.1 + 0.15, 0.], [0.05, 0.01, 1.]),
-            "right_fork": ([0.15, 0.1, 0.], [0.01, 0.01, 0.01]),
-            "left_fork": ([-0.15, 0.1, 0.], [0.01, 0.01, 0.01]),
+            "plate": ([0., 0.16, 0.], [0.01, 0.01, 1.]),
+            "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 1.]),
+            "right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
         }
         self.distributions_by_name = {}
         self.params_by_name = {}
@@ -144,8 +154,11 @@ class PlaceSetting(ExhaustiveSetNode):
 
         # Weight the "correct" rules very heavily
         production_weights_hints = {
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
             (name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
             (name_to_ind["plate"], name_to_ind["left_fork"]): 2.,
             (name_to_ind["cup"],): 0.5,
@@ -163,9 +176,9 @@ class PlaceSetting(ExhaustiveSetNode):
 
 
 class TableNode(ExhaustiveSetNode):
-    def __init__(self, num_place_setting_locations=6):
+    def __init__(self, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
-        self.table_radius = pyro.param("table_radius", torch.tensor(0.4),
+        self.table_radius = pyro.param("table_radius", torch.tensor(0.45),
                                        constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
         production_rules = []
@@ -248,6 +261,34 @@ class Fork(TerminalNode):
             "pose": self.pose.tolist()
         }
 
+class Knife(TerminalNode):
+    def __init__(self, pose):
+        self.pose = pose
+    
+    def generate_yaml(self):
+        return {
+            "class": "knife",
+            "color": None,
+            "img_path": "table_setting_assets/knife.png",
+            "params": [0.015, 0.15],
+            "params_names": ["width", "height"],
+            "pose": self.pose.tolist()
+        }
+
+class Spoon(TerminalNode):
+    def __init__(self, pose):
+        self.pose = pose
+    
+    def generate_yaml(self):
+        return {
+            "class": "spoon",
+            "color": None,
+            "img_path": "table_setting_assets/spoon.png",
+            "params": [0.02, 0.12],
+            "params_names": ["width", "height"],
+            "pose": self.pose.tolist()
+        }
+
 class ProbabilisticSceneGrammarModel():
     def __init__(self):
         pass
@@ -261,10 +302,8 @@ class ProbabilisticSceneGrammarModel():
             node = nodes.pop(0)
             if isinstance(node, TerminalNode):
                 # Instantiate
-                print("Instantiating terminal node: ", node, " at pose ", node.pose)
                 all_terminal_nodes.append(node)
             else:
-                print("Expanding non-terminal node ", node)
                 # Expand by picking a production rule
                 new_node_classes = node.sample_production_rule("production_%04d" % num_productions)
                 [nodes.append(x) for x in new_node_classes]
@@ -283,29 +322,50 @@ def convert_list_of_terminal_nodes_to_yaml_env(node_list):
         env["obj_%04d" % k] = node.generate_yaml()
     return env
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
 if __name__ == "__main__":
     pyro.enable_validation(True)
 
     model = ProbabilisticSceneGrammarModel()
 
     plt.figure()
-    for k in range(10):
+    for k in range(1000):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(model.model).get_trace()
         terminal_node_list = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
-        print("\n\n")
-        print("Generated data in %f seconds." % (end - start))
-        print("Full trace values:" )
+        print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
+        #print("Full trace values:" )
         for node_name in trace.nodes.keys():
             if node_name in ["_INPUT", "_RETURN"]:
                 continue
-            print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
+            #print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(terminal_node_list)
+    
+        with open("table_setting_environments_generated.yaml", "a") as file:
+            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
 
-        plt.gca().clear()
-        DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-        plt.pause(1.0)
+        #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
+        #                                           make_static=False)[0]
+
+        try:
+            if k % 10 == 0:
+                plt.gca().clear()
+                DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+                plt.pause(0.01)
+        except Exception as e:
+            print("Exception ", e)
+        except:
+            print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)

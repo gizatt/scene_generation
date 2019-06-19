@@ -389,8 +389,8 @@ def BuildMbpAndSgFromYamlEnvironment(
                 body_shape = Cylinder(radius=radius/2, length=0.25)
             elif obj_yaml["class"] in ["fork", "knife", "spoon"]:
                 assert(base_environment_type == "table_setting")
-                width = max(obj_yaml["params"][0], 0.02)
-                height = max(obj_yaml["params"][1], 0.02)
+                width = max(obj_yaml["params"][0], 0.01)
+                height = max(obj_yaml["params"][1], 0.01)
                 body_shape = Box(width, height, 0.25)
             else:
                 raise NotImplementedError(
@@ -451,7 +451,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         q_dec = ik.q()
         prog = ik.prog()
 
-        constraint = ik.AddMinimumDistanceConstraint(0.01)
+        constraint = ik.AddMinimumDistanceConstraint(0.001)
         prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
 
         if base_environment_type in ["planar_tabletop", "planar_bin"]:
@@ -461,6 +461,13 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                 body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
                 prog.AddBoundingBoxConstraint(-0.9, 0.9, q_dec[body_x_index])
                 prog.AddBoundingBoxConstraint(0, 2, q_dec[body_z_index])
+        elif base_environment_type in ["table_setting"]:
+            for i in range(yaml_environment["n_objects"]):
+                body_x_index = mbp.GetJointByName("body_{}_x".format(i)).position_start()
+                body_z_index = mbp.GetJointByName("body_{}_z".format(i)).position_start()
+                body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
+                prog.AddBoundingBoxConstraint(0., 1., q_dec[body_x_index])
+                prog.AddBoundingBoxConstraint(0., 1, q_dec[body_z_index])
         else:
             raise NotImplementedError()
         mbp.SetPositions(mbp_context, q0)
@@ -491,7 +498,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
     output_dicts = []
     for output_qf in outputs:
         output_dict = deepcopy(yaml_environment)
-        if base_environment_type in ["planar_tabletop", "planar_bin"]:
+        if base_environment_type in ["planar_tabletop", "planar_bin", "table_setting"]:
             for k in range(yaml_environment["n_objects"]):
                 x_index = mbp.GetJointByName(
                     "body_{}_x".format(k)).position_start()
