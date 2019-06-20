@@ -62,11 +62,13 @@ class OrNode(Node):
             raise ValueError("Must have nonzero number of production rules.")
         self.production_rules = production_rules
         self.production_dist = dist.Categorical(production_weights)
-        self.active_production_rule_index = None
+        
     def sample_production_rules(self, site_prefix, obs=None):
         sampled_rule = pyro.sample(site_prefix + "_or_sample", self.production_dist, obs=obs)
-        self.active_production_rule_index = sampled_rule
-        return self.production_rules[sampled_rule]
+        return [self.production_rules[sampled_rule]]
+
+    def score_production_rules(self, production_rules):
+        raise NotImplementedError()
 
 
 class AndNode(Node):
@@ -78,6 +80,9 @@ class AndNode(Node):
         
     def sample_production_rules(self, site_prefix):
         return self.production_rules
+
+    def score_production_rules(self, production_rules):
+        raise NotImplementedError()
 
 
 class ExhaustiveSetNode(Node):
@@ -118,7 +123,6 @@ class ExhaustiveSetNode(Node):
         self.production_dist = dist.Categorical(self.exhaustive_set_weights)
         self.site_prefix = ""
         self.production_rules = production_rules
-        self.active_production_rule = None
 
     def sample_production_rules(self, site_prefix):
         selected_rules = pyro.sample(
@@ -126,12 +130,13 @@ class ExhaustiveSetNode(Node):
             self.production_dist)
         # Select out the appropriate rules
         output = []
-        self.active_production_rule_indices = []
         for k, rule in enumerate(self.production_rules):
             if (selected_rules >> k) & 1:
                 output.append(rule)
-                self.active_production_rule_indices.append(k)
         return output
+
+    def score_production_rules(self, production_rules):
+        raise NotImplementedError()
 
 
 class PlaceSetting(ExhaustiveSetNode):
@@ -394,40 +399,64 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 def build_networkx_parse_tree(all_terminal_nodes):
+    ''' Represent the parse tree as a graph over two node
+    types: Nodes, and ProductionRules. '''
     G = nx.DiGraph()
     label_dict = {}
     def add_node_and_parents_to_graph(node):
-        # Recursively add all nodes and edges to the tree.
+        # Recursive construction
         if node not in G:
             G.add_node(node)
             label_dict[node] = node.__class__.__name__
-            edge = node.parent
-            if edge is None:
+            rule = node.parent
+            if rule is None:
                 return
-            parent_node = node.parent.parent
-            if parent_node is not None:
+            if rule not in G:
+                # New rule!
+                G.add_node(rule)
+                parent_node = rule.parent
+                # All production rules must have parents
+                if parent_node is None:
+                    raise ValueError("Tree had a production rule with no parent!")
                 add_node_and_parents_to_graph(parent_node)
-            G.add_edge(parent_node, node)
+                G.add_edge(parent_node, rule)
+            G.add_edge(rule, node)
+
     pos_dict = {}
     for node in all_terminal_nodes:
         add_node_and_parents_to_graph(node)
         pos_dict[node] = node.pose[0:2].tolist()
     for node in G.nodes:
-        avg_child_pose = np.zeros(2)
-        num_children = 0
-        if node not in pos_dict.keys():
-            if hasattr(node, "pose"):
-                pos_dict[node] = node.pose[0:2].tolist()
-            else:
-                child_queue = node.successors()
-                while len(child_queue) > 0:
-                    child = child_queue.pop(0)
-                    if hasattr(child, "pose"):
-                        avg_child_pose += child.pose[0:2].detach().numpy()
-                        num_children += 1
-                    child_queue += child.successors()
+        if node in pos_dict.keys():
+            # Already have the position
+            continue
+        if hasattr(node, "pose"):
+            pos_dict[node] = node.pose[0:2].tolist()
+        else:
+            # Compute avg child pose over all children
+            avg_child_pose = np.zeros(2)
+            num_children = 0
+            child_queue = list(G.successors(node))
+            while len(child_queue) > 0:
+                child = child_queue.pop(0)
+                if hasattr(child, "pose"):
+                    avg_child_pose += child.pose[0:2].detach().numpy()
+                    num_children += 1
+                child_queue += list(G.successors(child))
+            pos_dict[node] = avg_child_pose / num_children
     return G, pos_dict, label_dict
 
+def remove_production_rules_from_parse_tree(parse_tree):
+    ''' For drawing '''
+    new_tree = nx.DiGraph()
+    for node in parse_tree:
+        if isinstance(node, Node):
+            new_tree.add_node(node)
+    for node in parse_tree:
+        if isinstance(node, ProductionRule):
+            for child in list(parse_tree.successors(node)):
+                new_tree.add_edge(node.parent, child)
+    return new_tree
 
 class_name_to_type = {
     "plate": Plate,
@@ -451,17 +480,45 @@ def terminal_nodes_from_yaml(yaml_env):
 def is_tree_feasible(parse_tree):
     ''' Detects if this is a feasible parse tree
     by checking that every node that doesn't have a
-    parent is a RootNode. '''
+    parent is a RootNode.
+    TODO(gizatt) Check legitimacy of the non-terminal
+    nodes too, by checking that their outgoing edges
+    are all legit? '''
     for node in parse_tree.nodes:
         if node.parent is None and not isinstance(node, RootNode):
             return False
     return True
 
+def score_tree(parse_tree):
+    ''' Sum the log probabilities over the tree:
+    For every node, score its set of its production rules.
+    For every production rule, score its products.
+    If the tree is infeasible / ill-posed, return -inf. '''
+    if not is_tree_feasible(parse_tree):
+        return -np.inf
+    total_ll = 0.
+
+    for node in parse_tree.nodes:
+        if isinstance(node, Node):
+            if isinstance(node, TerminalNode):
+                # TODO(gizatt): Eventually, TerminalNodes
+                # may want to score their generated parameters.
+                pass
+            else:
+                # Score the kids
+                total_ll += node.score_production_rules(list(parse_tree.out_edges(node)))
+        elif isinstance(node, ProductionRule):
+            total_ll += node.parent.score_production_rules(list(parse_tree.out_edges(node)))
+        else:
+            raise ValueError("Invalid node type in tree: ", type(node))
+    return total_ll
+
 def guess_parse_tree_from_yaml(yaml_env):
     # Build a list of the terminal nodes.
     all_terminal_nodes = terminal_nodes_from_yaml(yaml_env)
 
-    # Build the preliminary parse tree.
+    # Build the preliminary parse tree of all terminal nodes
+    # being root nodes.
     G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
     print("Original tree is feasible?: ", is_tree_feasible(G))
 
@@ -491,12 +548,13 @@ if __name__ == "__main__":
         G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
         plt.subplot(2, 1, 1)
         plt.gca().clear()
-        nx.draw_networkx(G, pos=pos_dict, labels=label_dict, font_weight='bold')
+        nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, labels=label_dict, font_weight='bold')
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
         plt.title("Parse tree")
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
         assert(is_tree_feasible(G))
+        #print("Original tree score: ", score_tree(G))
 
         # And then try to parse it
         guess_parse_tree_from_yaml(yaml_env)
@@ -515,7 +573,7 @@ if __name__ == "__main__":
             plt.subplot(2, 2, 4)
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            nx.draw_networkx(G, pos=pos_dict, with_labels=False, node_color=[0., 0., 0.], alpha=0.5, node_size=100)
+            nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, with_labels=False, node_color=[0., 0., 0.], alpha=0.5, node_size=100)
             plt.title("Generated scene with parse tree")
             plt.show()
         except Exception as e:
