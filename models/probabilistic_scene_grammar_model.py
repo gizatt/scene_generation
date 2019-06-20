@@ -263,13 +263,14 @@ class Plate(TerminalNode):
     def __init__(self, parent, pose):
         TerminalNode.__init__(self, parent)
         self.pose = pose
+        self.params = [0.2]
 
     def generate_yaml(self):
         return {
             "class": "plate",
             "color": None,
             "img_path": "table_setting_assets/plate_red.png",
-            "params": [0.2],
+            "params": self.params,
             "params_names": ["radius"],
             "pose": self.pose.tolist()
         }
@@ -278,13 +279,14 @@ class Cup(TerminalNode):
     def __init__(self, parent, pose):
         TerminalNode.__init__(self, parent)
         self.pose = pose
+        self.params = [0.05]
 
     def generate_yaml(self):
         return {
             "class": "cup",
             "color": None,
             "img_path": "table_setting_assets/cup_water.png",
-            "params": [0.05],
+            "params": self.params,
             "params_names": ["radius"],
             "pose": self.pose.tolist()
         }
@@ -294,13 +296,14 @@ class Fork(TerminalNode):
     def __init__(self, parent, pose):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-    
+        self.params = [0.02, 0.14]
+
     def generate_yaml(self):
         return {
             "class": "fork",
             "color": None,
             "img_path": "table_setting_assets/fork.png",
-            "params": [0.02, 0.14],
+            "params": self.params,
             "params_names": ["width", "height"],
             "pose": self.pose.tolist()
         }
@@ -309,13 +312,14 @@ class Knife(TerminalNode):
     def __init__(self, parent, pose):
         TerminalNode.__init__(self, parent)
         self.pose = pose
+        self.params = [0.015, 0.15]
     
     def generate_yaml(self):
         return {
             "class": "knife",
             "color": None,
             "img_path": "table_setting_assets/knife.png",
-            "params": [0.015, 0.15],
+            "params": self.params,
             "params_names": ["width", "height"],
             "pose": self.pose.tolist()
         }
@@ -324,13 +328,14 @@ class Spoon(TerminalNode):
     def __init__(self, parent, pose):
         TerminalNode.__init__(self, parent)
         self.pose = pose
+        self.params = [0.02, 0.12]
     
     def generate_yaml(self):
         return {
             "class": "spoon",
             "color": None,
             "img_path": "table_setting_assets/spoon.png",
-            "params": [0.02, 0.12],
+            "params": self.params,
             "params_names": ["width", "height"],
             "pose": self.pose.tolist()
         }
@@ -433,7 +438,7 @@ if __name__ == "__main__":
         end = time.time()
 
         print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
-        #print("Full trace values:" )
+        print("Full trace values:" )
         for node_name in trace.nodes.keys():
             if node_name in ["_INPUT", "_RETURN"]:
                 continue
