@@ -384,6 +384,41 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
+def build_networkx_parse_tree(all_terminal_nodes):
+    G = nx.DiGraph()
+    label_dict = {}
+    def add_node_and_parents_to_graph(node):
+        # Recursively add all nodes and edges to the tree.
+        if node not in G:
+            G.add_node(node)
+            label_dict[node] = node.__class__.__name__
+            edge = node.parent
+            if edge is None:
+                return
+            parent_node = node.parent.parent
+            if parent_node is not None:
+                add_node_and_parents_to_graph(parent_node)
+            G.add_edge(parent_node, node)
+    pos_dict = {}
+    for node in all_terminal_nodes:
+        add_node_and_parents_to_graph(node)
+        pos_dict[node] = node.pose[0:2].tolist()
+    for node in G.nodes:
+        avg_child_pose = np.zeros(2)
+        num_children = 0
+        if node not in pos_dict.keys():
+            if hasattr(node, "pose"):
+                pos_dict[node] = node.pose[0:2].tolist()
+            else:
+                child_queue = node.successors()
+                while len(child_queue) > 0:
+                    child = child_queue.pop(0)
+                    if hasattr(child, "pose"):
+                        avg_child_pose += child.pose[0:2].detach().numpy()
+                        num_children += 1
+                    child_queue += child.successors()
+    return G, pos_dict, label_dict
+
 if __name__ == "__main__":
     pyro.enable_validation(True)
 
@@ -405,42 +440,13 @@ if __name__ == "__main__":
             print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
-        G = nx.DiGraph()
-        label_dict = {}
-        def add_node_and_parents_to_graph(node):
-            if node not in G:
-                G.add_node(node)
-                label_dict[node] = node.__class__.__name__
-                edge = node.parent
-                if edge is None:
-                    return
-                parent_node = node.parent.parent
-                if parent_node is not None:
-                    add_node_and_parents_to_graph(parent_node)
-                G.add_edge(parent_node, node)
-        pos_dict = {}
-        for node in all_terminal_nodes:
-            add_node_and_parents_to_graph(node)
-            pos_dict[node] = node.pose[0:2].tolist()
-        for node in G.nodes:
-            avg_child_pose = np.zeros(2)
-            num_children = 0
-            if node not in pos_dict.keys():
-                if hasattr(node, "pose"):
-                    pos_dict[node] = node.pose[0:2].tolist()
-                else:
-                    child_queue = node.successors()
-                    while len(child_queue) > 0:
-                        child = child_queue.pop(0)
-                        if hasattr(child, "pose"):
-                            avg_child_pose += child.pose[0:2].detach().numpy()
-                            num_children += 1
-                        child_queue += child.successors()
-
+        G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
         plt.subplot(2, 1, 1)
+        plt.gca().clear()
         nx.draw_networkx(G, pos=pos_dict, labels=label_dict, font_weight='bold')
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
+        plt.title("Parse tree")
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
 
         #with open("table_setting_environments_generated.yaml", "a") as file:
@@ -450,9 +456,15 @@ if __name__ == "__main__":
         #                                           make_static=False)[0]
 
         try:
-            plt.subplot(2, 1, 2)
+            plt.subplot(2, 2, 3)
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+            plt.title("Generated scene")
+            plt.subplot(2, 2, 4)
+            plt.gca().clear()
+            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+            nx.draw_networkx(G, pos=pos_dict, with_labels=False, node_color=[0., 0., 0.], alpha=0.5, node_size=100)
+            plt.title("Generated scene with parse tree")
             plt.show()
         except Exception as e:
             print("Exception ", e)

@@ -561,8 +561,8 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
                           [0., 1., 0., 0.],
                           [0., 0., 0., 1.]])
     elif base_environment_type == "table_setting":
-        Tview = np.array([[1., 0., 0., -0.5],
-                          [0., 1., 0., -0.5],
+        Tview = np.array([[1., 0., 0., 0.],
+                          [0., 1., 0., 0.],
                           [0., 0., 0., 1.]])
     else:
         raise NotImplementedError()
@@ -581,6 +581,8 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
     mbp.SetPositions(mbp_context, q0)
     visualizer.draw(diagram.GetMutableSubsystemContext(
         visualizer, diagram_context))
+    plt.xlim([-0.2, 1.2])
+    plt.ylim([-0.2, 1.2])
 
 
 if __name__ == "__main__":
