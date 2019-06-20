@@ -18,7 +18,8 @@ from pyro import poutine
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 
-def get_planar_pose_w2_torch(p_w1, p_12):
+
+def chain_pose_transforms(p_w1, p_12):
     ''' p_w1: xytheta Pose 1 in world frame
         p_12: xytheta Pose 2 in Pose 1's frame
         Returns: xytheta Pose 2 in world frame. '''
@@ -32,6 +33,16 @@ def get_planar_pose_w2_torch(p_w1, p_12):
     p_out[1] += p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
     return p_out
 
+def invert_pose(pose):
+    # TF^-1 = [R^t  -R.' T]
+    p_out = torch.zeros(3, dtype=pose.dtype)
+    r = pose[2]
+    p_out[0] -= pose[0]*torch.cos(-r) - pose[1]*torch.sin(-r)
+    p_out[1] -= pose[0]*torch.sin(-r) + pose[1]*torch.cos(-r)
+    p_out[2] = -r
+    return p_out
+
+
 class ProductionRule(object):
     ''' Abstract interface for a production rule.
     Callable to perform the production, but also
@@ -43,7 +54,7 @@ class ProductionRule(object):
         self.products = products
     def __call__(self):
         raise NotImplementedError()
-    def log_prob(self, products):
+    def score_products(self, products):
         raise NotImplementedError()
 
 class RootNode(object):
@@ -68,8 +79,13 @@ class OrNode(Node):
         return [self.production_rules[sampled_rule]]
 
     def score_production_rules(self, production_rules):
-        raise NotImplementedError()
-
+        if len(production_rules) != 1:
+            print("Warning: invalid # of production rules for OrNode.")
+            return -np.inf
+        if production_rules[0] not in self.production_rules:
+            print("Warning: rule not in OrNode production rules.")
+        active_rule = torch.tensor(self.production_rules.index(production_rules[0]))
+        return self.production_dist.log_prob(active_rule).sum()
 
 class AndNode(Node):
     def __init__(self, parent, production_rules):
@@ -82,7 +98,11 @@ class AndNode(Node):
         return self.production_rules
 
     def score_production_rules(self, production_rules):
-        raise NotImplementedError()
+        if production_rules != self.production_rules:
+            print("Warning: invalid production rules given to AndNode.")
+            return -np.inf
+        else:
+            return 0.0
 
 
 class ExhaustiveSetNode(Node):
@@ -136,7 +156,14 @@ class ExhaustiveSetNode(Node):
         return output
 
     def score_production_rules(self, production_rules):
-        raise NotImplementedError()
+        selected_rules = 0
+        for rule in production_rules:
+            if rule not in self.production_rules:
+                print("Warning: rule not in ExhaustiveSetNode production rules: ", rule)
+                return -np.inf
+            k = self.production_rules.index(rule)
+            selected_rules += 2**k
+        return self.production_dist.log_prob(torch.tensor(selected_rules)).sum()
 
 
 class PlaceSetting(ExhaustiveSetNode):
@@ -157,11 +184,17 @@ class PlaceSetting(ExhaustiveSetNode):
         def __call__(self, site_prefix):
             rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, self.object_name),
                                    self.offset_dist)
-            abs_pose = get_planar_pose_w2_torch(self.parent.pose, rel_pose)
+            abs_pose = chain_pose_transforms(self.parent.pose, rel_pose)
             return [self.object_type(self, abs_pose)]
 
-        def log_prob(self, products):
-            raise NotImplementedError()
+        def score_products(self, products):
+            if len(products) != 1 or not isinstance(products[0], self.object_type):
+                print("Warning: invalid input to scoreproducts for %sProductionRule: " % 
+                      self.object_name, products)
+            # Get relative offset of the PlaceSetting
+            abs_pose = products[0].pose
+            rel_pose = chain_pose_transforms(invert_pose(self.parent.pose), abs_pose)
+            return self.offset_dist.log_prob(rel_pose).sum()
 
     def __init__(self, parent, pose):
         self.pose = pose
@@ -240,12 +273,16 @@ class TableNode(ExhaustiveSetNode, RootNode):
             rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
                                      self.offset_dist)
             # Rotate offset
-            abs_offset = get_planar_pose_w2_torch(self.parent.pose, rel_offset)
+            abs_offset = chain_pose_transforms(self.parent.pose, rel_offset)
             return [PlaceSetting(self, pose=self.root_pose + abs_offset)]
 
-        def log_prob(self, products):
-            raise NotImplementedError()
-
+        def score_products(self, products):
+            if len(products) != 1 or not isinstance(products[0], PlaceSetting):
+                print("Warning: invalid input to scoreproducts for PlaceSettingProductionRule: ", products)
+            # Get relative offset of the PlaceSetting
+            abs_offset = products[0].pose - self.root_pose
+            rel_offset = chain_pose_transforms(invert_pose(self.parent.pose), abs_offset)
+            return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, parent, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
@@ -477,38 +514,34 @@ def terminal_nodes_from_yaml(yaml_env):
             params=new_obj["params"]))
     return all_terminal_nodes
 
-def is_tree_feasible(parse_tree):
-    ''' Detects if this is a feasible parse tree
-    by checking that every node that doesn't have a
-    parent is a RootNode.
-    TODO(gizatt) Check legitimacy of the non-terminal
-    nodes too, by checking that their outgoing edges
-    are all legit? '''
-    for node in parse_tree.nodes:
-        if node.parent is None and not isinstance(node, RootNode):
-            return False
-    return True
-
 def score_tree(parse_tree):
     ''' Sum the log probabilities over the tree:
     For every node, score its set of its production rules.
     For every production rule, score its products.
-    If the tree is infeasible / ill-posed, return -inf. '''
-    if not is_tree_feasible(parse_tree):
-        return -np.inf
+    If the tree is infeasible / ill-posed, return -inf.
+
+    TODO(gizatt): My tree-building here echos a lot of the
+    machinery from within pyro's execution trace checking,
+    to the degree that I sanity check in the tests down below
+    by comparing a pyro-log-prob-sum of a forward run of the model
+    to the value I compute here. Can I better use Pyro's machinery
+    to do less work?'''
     total_ll = 0.
 
     for node in parse_tree.nodes:
         if isinstance(node, Node):
+            # Sanity-check feasibility
+            if node.parent is None and not isinstance(node, RootNode):
+                total_ll -= np.inf
             if isinstance(node, TerminalNode):
                 # TODO(gizatt): Eventually, TerminalNodes
                 # may want to score their generated parameters.
                 pass
             else:
                 # Score the kids
-                total_ll += node.score_production_rules(list(parse_tree.out_edges(node)))
+                total_ll += node.score_production_rules(list(parse_tree.successors(node)))
         elif isinstance(node, ProductionRule):
-            total_ll += node.parent.score_production_rules(list(parse_tree.out_edges(node)))
+            total_ll += node.score_products(list(parse_tree.successors(node)))
         else:
             raise ValueError("Invalid node type in tree: ", type(node))
     return total_ll
@@ -520,7 +553,7 @@ def guess_parse_tree_from_yaml(yaml_env):
     # Build the preliminary parse tree of all terminal nodes
     # being root nodes.
     G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
-    print("Original tree is feasible?: ", is_tree_feasible(G))
+    print("Flat tree score: ", score_tree(G))
 
 
 if __name__ == "__main__":
@@ -553,8 +586,9 @@ if __name__ == "__main__":
         plt.ylim(-0.2, 1.2)
         plt.title("Parse tree")
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
-        assert(is_tree_feasible(G))
-        #print("Original tree score: ", score_tree(G))
+        print("Original tree score: ", score_tree(G))
+        assert(score_tree(G) == trace.log_prob_sum())
+        print("And that matches what pyro says.")
 
         # And then try to parse it
         guess_parse_tree_from_yaml(yaml_env)
