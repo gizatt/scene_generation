@@ -1,6 +1,7 @@
 from __future__ import print_function
 from functools import partial
 import time
+import sys
 import yaml
 
 import matplotlib.pyplot as plt
@@ -44,6 +45,9 @@ class ProductionRule(object):
         raise NotImplementedError()
     def log_prob(self, products):
         raise NotImplementedError()
+
+class RootNode(object):
+    pass
 
 class Node(object):
     def __init__(self, parent):
@@ -212,7 +216,7 @@ class PlaceSetting(ExhaustiveSetNode):
                                    remaining_weight=0.)
 
 
-class TableNode(ExhaustiveSetNode):
+class TableNode(ExhaustiveSetNode, RootNode):
 
     class PlaceSettingProductionRule(ProductionRule):
         def __init__(self, parent, root_pose):
@@ -260,10 +264,10 @@ class TerminalNode(Node):
         Node.__init__(self, parent)
 
 class Plate(TerminalNode):
-    def __init__(self, parent, pose):
+    def __init__(self, parent, pose, params=[0.2]):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-        self.params = [0.2]
+        self.params = params
 
     def generate_yaml(self):
         return {
@@ -276,10 +280,10 @@ class Plate(TerminalNode):
         }
 
 class Cup(TerminalNode):
-    def __init__(self, parent, pose):
+    def __init__(self, parent, pose, params=[0.05]):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-        self.params = [0.05]
+        self.params = params
 
     def generate_yaml(self):
         return {
@@ -293,10 +297,10 @@ class Cup(TerminalNode):
 
 
 class Fork(TerminalNode):
-    def __init__(self, parent, pose):
+    def __init__(self, parent, pose, params=[0.02, 0.14]):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-        self.params = [0.02, 0.14]
+        self.params = params
 
     def generate_yaml(self):
         return {
@@ -309,10 +313,10 @@ class Fork(TerminalNode):
         }
 
 class Knife(TerminalNode):
-    def __init__(self, parent, pose):
+    def __init__(self, parent, pose, params=[0.015, 0.15]):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-        self.params = [0.015, 0.15]
+        self.params = params
     
     def generate_yaml(self):
         return {
@@ -325,10 +329,10 @@ class Knife(TerminalNode):
         }
 
 class Spoon(TerminalNode):
-    def __init__(self, parent, pose):
+    def __init__(self, parent, pose, params=[0.02, 0.12]):
         TerminalNode.__init__(self, parent)
         self.pose = pose
-        self.params = [0.02, 0.12]
+        self.params = params
     
     def generate_yaml(self):
         return {
@@ -424,13 +428,52 @@ def build_networkx_parse_tree(all_terminal_nodes):
                     child_queue += child.successors()
     return G, pos_dict, label_dict
 
+
+class_name_to_type = {
+    "plate": Plate,
+    "cup": Cup,
+    "fork": Fork,
+    "knife": Knife,
+    "spoon": Spoon,
+}
+def terminal_nodes_from_yaml(yaml_env):
+    all_terminal_nodes = []
+    for k in range(yaml_env["n_objects"]):
+        new_obj = yaml_env["obj_%04d" % k]
+        if new_obj["class"] not in class_name_to_type.keys():
+            raise NotImplementedError("Unknown class: ", new_obj["class"])
+        all_terminal_nodes.append(class_name_to_type[new_obj['class']](
+            parent=None,
+            pose=torch.tensor(new_obj["pose"]),
+            params=new_obj["params"]))
+    return all_terminal_nodes
+
+def is_tree_feasible(parse_tree):
+    ''' Detects if this is a feasible parse tree
+    by checking that every node that doesn't have a
+    parent is a RootNode. '''
+    for node in parse_tree.nodes:
+        if node.parent is None and not isinstance(node, RootNode):
+            return False
+    return True
+
+def guess_parse_tree_from_yaml(yaml_env):
+    # Build a list of the terminal nodes.
+    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env)
+
+    # Build the preliminary parse tree.
+    G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
+    print("Original tree is feasible?: ", is_tree_feasible(G))
+
+
 if __name__ == "__main__":
+    torch.manual_seed(43)
     pyro.enable_validation(True)
 
     model = ProbabilisticSceneGrammarModel()
 
     plt.figure().set_size_inches(15, 10)
-    for k in range(10):
+    for k in range(1):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(model.model).get_trace()
@@ -453,6 +496,10 @@ if __name__ == "__main__":
         plt.ylim(-0.2, 1.2)
         plt.title("Parse tree")
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
+        assert(is_tree_feasible(G))
+
+        # And then try to parse it
+        guess_parse_tree_from_yaml(yaml_env)
 
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
