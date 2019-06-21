@@ -24,24 +24,21 @@ def chain_pose_transforms(p_w1, p_12):
     ''' p_w1: xytheta Pose 1 in world frame
         p_12: xytheta Pose 2 in Pose 1's frame
         Returns: xytheta Pose 2 in world frame. '''
-    p_out = torch.zeros(3, dtype=p_w1.dtype)
-    p_out[:] = p_w1[:]
-    # Rotations just add
-    p_out[2] += p_12[2]
-    # Rotate p_12 by p_w1's rotation
+    out = torch.empty(3)
     r = p_w1[2]
-    p_out[0] += p_12[0]*torch.cos(r) - p_12[1]*torch.sin(r)
-    p_out[1] += p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
-    return p_out
+    out[0] = p_w1[0] + p_12[0]*torch.cos(r) - p_12[1]*torch.sin(r)
+    out[1] = p_w1[1] + p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
+    out[2] = p_w1[2] + p_12[2]
+    return out
 
 def invert_pose(pose):
     # TF^-1 = [R^t  -R.' T]
-    p_out = torch.zeros(3, dtype=pose.dtype)
+    out = torch.empty(3)
     r = pose[2]
-    p_out[0] -= pose[0]*torch.cos(-r) - pose[1]*torch.sin(-r)
-    p_out[1] -= pose[0]*torch.sin(-r) + pose[1]*torch.cos(-r)
-    p_out[2] = -r
-    return p_out
+    out[0] = -(pose[0]*torch.cos(-r) - pose[1]*torch.sin(-r))
+    out[1] = -(pose[0]*torch.sin(-r) + pose[1]*torch.cos(-r))
+    out[2] = -r
+    return out
 
 
 class ProductionRule(object):
@@ -320,23 +317,23 @@ class Table(IndependentSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_offset = products[0].pose
-            root_pose = chain_pose_transforms(self.parent.pose, self.root_pose)
-            rel_offset = chain_pose_transforms(invert_pose(root_pose), abs_offset)
+            root_pose_in_world = chain_pose_transforms(self.parent.pose, self.root_pose)
+            rel_offset = chain_pose_transforms(invert_pose(root_pose_in_world), abs_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, parent, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
-        self.table_radius = pyro.param("table_radius", torch.tensor(0.45),
-                                       constraint=constraints.positive)
+        self.table_radius = pyro.param("table_radius", torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
         production_rules = []
         for k in range(num_place_setting_locations):
             # TODO(gizatt) Root pose for each cluster could be a parameter.
             # This turns this into a GMM, sort of?
-            root_pose = torch.zeros(3)
-            root_pose[2] = (k / float(num_place_setting_locations))*np.pi*2.
-            root_pose[0] = self.table_radius * torch.cos(root_pose[2])
-            root_pose[1] = self.table_radius * torch.sin(root_pose[2])
+            r = torch.tensor((k / float(num_place_setting_locations))*np.pi*2.)
+            root_pose = torch.empty(3)
+            root_pose[0] = self.table_radius * torch.cos(r)
+            root_pose[1] = self.table_radius * torch.sin(r)
+            root_pose[2] = r
             production_rules.append(self.PlaceSettingProductionRule(
                 parent=self, root_pose=root_pose))
         IndependentSetNode.__init__(self, parent, "table_node", production_rules,
@@ -547,7 +544,7 @@ def score_tree(parse_tree):
     by comparing a pyro-log-prob-sum of a forward run of the model
     to the value I compute here. Can I better use Pyro's machinery
     to do less work?'''
-    total_ll = 0.
+    total_ll = torch.tensor(0.)
     scores_by_node = {}
 
     for node in parse_tree.nodes:
@@ -567,7 +564,7 @@ def score_tree(parse_tree):
         else:
             raise ValueError("Invalid node type in tree: ", type(node))
         scores_by_node[node] = node_score
-        total_ll += node_score
+        total_ll = total_ll + node_score
 
     return total_ll, scores_by_node
 
@@ -622,7 +619,7 @@ def guess_spatial_node(spatial_node_type, child_nodes):
     "Spatial node" meaning its constructor takes a single "pose" argument. '''
     raise NotImplementedError("This interface seems like a good idea")
 
-def draw_parse_tree(parse_tree, label_score=True):
+def draw_parse_tree(parse_tree, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
     score, scores_by_node = score_tree(parse_tree)
     pos_dict = {
@@ -630,12 +627,15 @@ def draw_parse_tree(parse_tree, label_score=True):
     }
     label_dict = {}
     for node in pruned_tree.nodes:
-        label_name = node.__class__.__name__
+        label_str = ""
+        if label_name:
+            label_str += node.__class__.__name__
         if label_score:
             score_of_node = scores_by_node[node].item()
             score_of_children = sum(scores_by_node[child] for child in parse_tree.successors(node))
-            label_name += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
-        label_dict[node] = label_name
+            label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
+        if label_name != "":
+            label_dict[node] = label_str
     colors = [scores_by_node[node] + score for node in pruned_tree.nodes]
     if len(colors) == 0:
         colors = None
@@ -645,7 +645,7 @@ def draw_parse_tree(parse_tree, label_score=True):
         vmin = min(colors)
         vmax = max(colors)
     # Convert scores to colors
-    nx.draw_networkx(pruned_tree, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold')
+    nx.draw_networkx(pruned_tree, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold', **kwargs)
     plt.xlim(-0.2, 1.2)
     plt.ylim(-0.2, 1.2)
     plt.title("Score: %f" % score)
@@ -690,7 +690,7 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
             possible_parent_nodes = []
             possible_parent_nodes_scores = []
 
-            for inner_iter in range(50):
+            for inner_iter in range(10):
                 # Sample a subset of infeasible nodes.
                 number_of_sampled_nodes = 1 # min(np.random.geometric(p=0.5), len(infeasible_nodes))
                 sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
@@ -723,7 +723,7 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
                             if rule in existing_rules:
                                 continue
                             score = rule.score_products(sampled_nodes)
-                            score += node.score_production_rules( existing_rules + [rule] )
+                            score = score + node.score_production_rules( existing_rules + [rule] )
                             if not torch.isinf(score):
                                 possible_child_nodes.append(sampled_nodes)
                                 possible_parent_nodes.append(rule)
@@ -758,26 +758,40 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
                 for child_node in child_nodes:
                     child_node.parent = new_prod_node
                     assert(new_prod_node.parent == new_parent_node)
-
-
         else:
-            # Consider possible mutations of the tree?
+            # If the whole tree is feasible, then do MCMC in its continuous-parameter
+            # space.
 
             #print("Tree is feasible!")
             #print("But if we have any root nodes that can also be generated by ")
             #print("rules, we never tried to expand them upwards.")
             #print("Perhaps an assumption works: there's only one root node, ever.")
             break
-
         iter_k += 1
 
     parse_tree = build_networkx_parse_tree(all_terminal_nodes)
-    tree_ll, _ = score_tree(parse_tree)
-    print ("Guessed a parse tree with score %f" % tree_ll)
+
+    # Prepare to do HMC on the continuous paramaters (poses of the place settings)
+    continuous_params = []
+    for node in parse_tree:
+        if isinstance(node, PlaceSetting):
+            node.pose.requires_grad = True
+            continuous_params.append(node.pose)
+
+    for hmc_k in range(10):
+        print("\nSCORING TREE AGAIN")
+        tree_ll, _ = score_tree(parse_tree)
+        print ("Guessed a parse tree with score: ", tree_ll)
+        tree_ll.backward(retain_graph=True)
+
+        for p in continuous_params:
+            print(p, p.grad)
+
     return parse_tree, tree_ll
 
 
 if __name__ == "__main__":
+    torch.autograd.set_detect_anomaly(True)
     seed = 43
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -828,7 +842,7 @@ if __name__ == "__main__":
             plt.subplot(2, 2, 4)
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, with_labels=False, node_color=[0., 0., 0.], alpha=0.5, node_size=100)
+            draw_parse_tree(G, label_name=False, label_score=False, alpha=0.25)
             plt.title("Generated scene with parse tree")
             plt.pause(0.5)
         except Exception as e:
