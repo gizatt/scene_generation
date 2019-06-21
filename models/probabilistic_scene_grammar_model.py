@@ -302,7 +302,7 @@ class Table(IndependentSetNode, RootNode):
             mean = pyro.param("table_place_setting_mean",
                               torch.tensor([0.0, 0., np.pi/2.]))
             var = pyro.param("table_place_setting_var",
-                              torch.tensor([0.01, 0.01, 0.01]),
+                              torch.tensor([0.01, 0.01, 0.1]),
                               constraint=constraints.positive)
             self.offset_dist = dist.Normal(mean, var)
             self.root_pose = root_pose
@@ -311,15 +311,17 @@ class Table(IndependentSetNode, RootNode):
             rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
                                      self.offset_dist)
             # Rotate offset
-            abs_offset = chain_pose_transforms(self.parent.pose, rel_offset)
-            return [PlaceSetting(self, pose=self.root_pose + abs_offset)]
+            root_pose_in_world = chain_pose_transforms(self.parent.pose, self.root_pose)
+            abs_offset = chain_pose_transforms(root_pose_in_world, rel_offset)
+            return [PlaceSetting(self, pose=abs_offset)]
 
         def score_products(self, products):
             if len(products) != 1 or not isinstance(products[0], PlaceSetting):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
-            abs_offset = products[0].pose - self.root_pose
-            rel_offset = chain_pose_transforms(invert_pose(self.parent.pose), abs_offset)
+            abs_offset = products[0].pose
+            root_pose = chain_pose_transforms(self.parent.pose, self.root_pose)
+            rel_offset = chain_pose_transforms(invert_pose(root_pose), abs_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, parent, num_place_setting_locations=4):
@@ -478,12 +480,10 @@ def build_networkx_parse_tree(all_terminal_nodes):
     ''' Represent the parse tree as a graph over two node
     types: Nodes, and ProductionRules. '''
     G = nx.DiGraph()
-    label_dict = {}
     def add_node_and_parents_to_graph(node):
         # Recursive construction
         if node not in G:
             G.add_node(node)
-            label_dict[node] = node.__class__.__name__
             rule = node.parent
             if rule is None:
                 return
@@ -497,30 +497,9 @@ def build_networkx_parse_tree(all_terminal_nodes):
                 add_node_and_parents_to_graph(parent_node)
                 G.add_edge(parent_node, rule)
             G.add_edge(rule, node)
-
-    pos_dict = {}
     for node in all_terminal_nodes:
         add_node_and_parents_to_graph(node)
-        pos_dict[node] = node.pose[0:2].tolist()
-    for node in G.nodes:
-        if node in pos_dict.keys():
-            # Already have the position
-            continue
-        if hasattr(node, "pose"):
-            pos_dict[node] = node.pose[0:2].tolist()
-        else:
-            # Compute avg child pose over all children
-            avg_child_pose = np.zeros(2)
-            num_children = 0
-            child_queue = list(G.successors(node))
-            while len(child_queue) > 0:
-                child = child_queue.pop(0)
-                if hasattr(child, "pose"):
-                    avg_child_pose += child.pose[0:2].detach().numpy()
-                    num_children += 1
-                child_queue += list(G.successors(child))
-            pos_dict[node] = avg_child_pose / num_children
-    return G, pos_dict, label_dict
+    return G
 
 def remove_production_rules_from_parse_tree(parse_tree):
     ''' For drawing '''
@@ -590,8 +569,7 @@ def score_tree(parse_tree):
         scores_by_node[node] = node_score
         total_ll += node_score
 
-    nx.set_node_attributes(parse_tree, scores_by_node, name="log_prob")
-    return total_ll
+    return total_ll, scores_by_node
 
 
 #def guess_table(child_nodes):
@@ -622,8 +600,8 @@ def guess_place_setting(child_nodes):
         if not torch.isinf(total_ll):
             # Do some quick MCMC to try to refine the node pose.
             # TODO(gizatt) HMC, since we have gradients.
-            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.1]))
-            for step_k in range(50):
+            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.5]))
+            for step_k in range(10):
                 new_pose = init_pose + jump_proposal.sample()
                 old_pose = place_setting_node.pose
                 place_setting_node.pose = new_pose
@@ -644,6 +622,35 @@ def guess_spatial_node(spatial_node_type, child_nodes):
     "Spatial node" meaning its constructor takes a single "pose" argument. '''
     raise NotImplementedError("This interface seems like a good idea")
 
+def draw_parse_tree(parse_tree, label_score=True):
+    pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
+    score, scores_by_node = score_tree(parse_tree)
+    pos_dict = {
+        node: node.pose[:2].detach().numpy() for node in pruned_tree
+    }
+    label_dict = {}
+    for node in pruned_tree.nodes:
+        label_name = node.__class__.__name__
+        if label_score:
+            score_of_node = scores_by_node[node].item()
+            score_of_children = sum(scores_by_node[child] for child in parse_tree.successors(node))
+            label_name += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
+        label_dict[node] = label_name
+    colors = [scores_by_node[node] + score for node in pruned_tree.nodes]
+    if len(colors) == 0:
+        colors = None
+        vmin = 0.
+        vmax = 1.
+    else:
+        vmin = min(colors)
+        vmax = max(colors)
+    # Convert scores to colors
+    nx.draw_networkx(pruned_tree, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold')
+    plt.xlim(-0.2, 1.2)
+    plt.ylim(-0.2, 1.2)
+    plt.title("Score: %f" % score)
+
+
 def greedily_guess_parse_tree_from_yaml(yaml_env):
     candidate_intermediate_node_generators = [
         #partial(guess_spatial_node, spatial_node_type=PlaceSetting),
@@ -659,12 +666,11 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
     # being root nodes.
     iter_k = 0
     while iter_k < 1000:
-        parse_tree, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
-        tree_ll = score_tree(parse_tree)
+        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+        tree_ll, log_probs = score_tree(parse_tree)
         print("At start of iter %d, tree score is %f" % (iter_k, tree_ll))
-        log_probs = nx.get_node_attributes(parse_tree, name="log_prob")
-
-        nx.draw_networkx(remove_production_rules_from_parse_tree(parse_tree), pos=pos_dict, labels=label_dict, font_weight='bold')
+        plt.gca().clear()
+        draw_parse_tree(parse_tree)
         plt.draw()
         plt.pause(0.01)
         
@@ -686,7 +692,7 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
 
             for inner_iter in range(50):
                 # Sample a subset of infeasible nodes.
-                number_of_sampled_nodes = min(np.random.geometric(p=0.5), len(infeasible_nodes))
+                number_of_sampled_nodes = 1 # min(np.random.geometric(p=0.5), len(infeasible_nodes))
                 sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
 
                 # Check all ways of adding this to the tree:
@@ -717,7 +723,7 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
                             if rule in existing_rules:
                                 continue
                             score = rule.score_products(sampled_nodes)
-                            score += node.score_production_rules( list(parse_tree.successors(node)) + [rule] )
+                            score += node.score_production_rules( existing_rules + [rule] )
                             if not torch.isinf(score):
                                 possible_child_nodes.append(sampled_nodes)
                                 possible_parent_nodes.append(rule)
@@ -765,10 +771,10 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
 
         iter_k += 1
 
-    parse_tree, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
-    tree_ll = score_tree(parse_tree)
+    parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+    tree_ll, _ = score_tree(parse_tree)
     print ("Guessed a parse tree with score %f" % tree_ll)
-    return parse_tree, pos_dict, label_dict, tree_ll
+    return parse_tree, tree_ll
 
 
 if __name__ == "__main__":
@@ -796,25 +802,18 @@ if __name__ == "__main__":
             print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
-        G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
-        plt.subplot(2, 2, 1)
+        G = build_networkx_parse_tree(all_terminal_nodes)
+        plt.subplot(2, 1, 1)
         plt.gca().clear()
-        nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, labels=label_dict, font_weight='bold')
+        draw_parse_tree(G)
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
-        score = score_tree(G)
+        score, _ = score_tree(G)
         plt.title("Real parse tree with score %f" % score)
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
-        assert(abs(score_tree(G) - trace.log_prob_sum()) < 0.001)
+        assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        # And then try to parse it
-        plt.subplot(2, 2, 2)
-        plt.xlim(-0.2, 1.2)
-        plt.ylim(-0.2, 1.2)
-        guessed_parse_tree, guessed_pos_dict, guessed_label_dict, score = greedily_guess_parse_tree_from_yaml(yaml_env)
-        plt.title("Guessed parse tree with score %f" % score)
-        nx.draw_networkx(remove_production_rules_from_parse_tree(guessed_parse_tree), pos=guessed_pos_dict, labels=guessed_label_dict, font_weight='bold')
-
+        
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
 
@@ -831,8 +830,21 @@ if __name__ == "__main__":
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
             nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, with_labels=False, node_color=[0., 0., 0.], alpha=0.5, node_size=100)
             plt.title("Generated scene with parse tree")
-            plt.show()
+            plt.pause(0.5)
         except Exception as e:
             print("Exception ", e)
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
+
+        plt.figure()
+        for k in range(1):
+            # And then try to parse it
+            plt.subplot(1, 1, k+1)
+            plt.xlim(-0.2, 1.2)
+            plt.ylim(-0.2, 1.2)
+            guessed_parse_tree, score = greedily_guess_parse_tree_from_yaml(yaml_env)
+            print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
+            plt.title("Guessed parse tree with score %f" % score)
+            plt.gca().clear()
+            draw_parse_tree(guessed_parse_tree)
+        plt.show()
