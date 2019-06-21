@@ -773,25 +773,91 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
 
     # Prepare to do HMC on the continuous paramaters (poses of the place settings)
     continuous_params = []
+    v_proposal_dists = []
+    num_hmc_steps = 30
+    num_dynamics_steps = 10
+    epsilon_v = 5E-3
+    epsilon_p = 5E-3
+    proposal_variance = 1.0
     for node in parse_tree:
         if isinstance(node, PlaceSetting):
             node.pose.requires_grad = True
             continuous_params.append(node.pose)
+            v_proposal_dists.append(dist.Normal(torch.zeros(3), torch.ones(3)*proposal_variance))
 
-    for hmc_k in range(10):
-        print("\nSCORING TREE AGAIN")
-        tree_ll, _ = score_tree(parse_tree)
-        print ("Guessed a parse tree with score: ", tree_ll)
-        tree_ll.backward(retain_graph=True)
 
-        for p in continuous_params:
-            print(p, p.grad)
+    print("\nSTARTING HMC")
+
+    for hmc_step in range(num_hmc_steps):
+        plt.gca().clear()
+        draw_parse_tree(parse_tree)
+        plt.pause(0.1)
+        initial_score, _ = score_tree(parse_tree)
+        initial_score.backward(retain_graph=True)
+        print("Initial score: %f" % initial_score)
+        initial_param_vals = [p.detach().numpy().copy() for p in continuous_params]
+        current_vs = [v_dist.sample() for v_dist in v_proposal_dists]
+        initial_potential = (sum([torch.pow(v, 2) for v in current_vs])/2.).sum()
+        print("initial potential: ", initial_potential)
+
+        # Simulate trajectory for a few steps
+        # following https://arxiv.org/pdf/1206.1901.pdf page 14
+
+        # First half-step the velocities
+        for p, v in zip(continuous_params, current_vs):
+            v.data = v - epsilon_v * -p.grad / 2.
+        for step in range(num_dynamics_steps):
+            # Step positions
+            for p, v in zip(continuous_params, current_vs):
+                p.data = p + epsilon_p * v
+            # Update grads
+            for p in continuous_params:
+                p.grad.zero_()
+
+            current_score, _ = score_tree(parse_tree)
+            current_score.backward(retain_graph=True)
+            print("\tstep score: %f" % current_score)
+            print("\tGrads and vs:")
+            for p,v in zip(continuous_params, current_vs):
+                print(p.grad.detach().numpy(), v.detach().numpy())
+
+            
+            # Step momentum normally, except at final step.
+            if step < (num_dynamics_steps - 1):
+                for p, v in zip(continuous_params, current_vs):
+                    v.data = v - epsilon_v * -p.grad
+            else:
+                # Final half momentum step and momentum flip for final energy calc
+                for p, v in zip(continuous_params, current_vs):
+                    v.data = - (v - epsilon_v * -p.grad / 2.)
+
+        proposed_score = current_score
+        proposed_potential = (sum([torch.pow(v, 2) for v in current_vs])/2.).sum()
+
+        # Accept or reject
+        thresh = torch.exp((initial_score - proposed_score) +
+                           (initial_potential - proposed_potential))
+        print(thresh)
+        print("\tProposed score: %f" % proposed_score)
+        print("\tAccept thresh: %f" % thresh)
+        if dist.Bernoulli(1. - min(thresh, 1.)).sample():
+            # Poses are already updated in-place
+            print("Accepted")
+        else:
+            print("Rejected")
+            for p, p0 in zip(continuous_params, initial_param_vals):
+                p.data = torch.tensor(p0)
+
+
+
+    current_vs
+    for p in continuous_params:
+        print(p, p.grad)
 
     return parse_tree, tree_ll
 
 
 if __name__ == "__main__":
-    torch.autograd.set_detect_anomaly(True)
     seed = 43
     torch.manual_seed(seed)
     np.random.seed(seed)
