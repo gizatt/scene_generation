@@ -81,8 +81,7 @@ class OrNode(Node):
 
     def score_production_rules(self, production_rules):
         if len(production_rules) != 1:
-            print("Warning: invalid # of production rules for OrNode.")
-            return -np.inf
+            return torch.tensor(-np.inf)
         if production_rules[0] not in self.production_rules:
             print("Warning: rule not in OrNode production rules.")
         active_rule = torch.tensor(self.production_rules.index(production_rules[0]))
@@ -101,10 +100,9 @@ class AndNode(Node):
 
     def score_production_rules(self, production_rules):
         if production_rules != self.production_rules:
-            print("Warning: invalid production rules given to AndNode.")
-            return -np.inf
+            return torch.tensor(-np.inf)
         else:
-            return 0.0
+            return torch.tensor(-np.inf)
 
 
 class CovaryingSetNode(Node):
@@ -125,7 +123,7 @@ class CovaryingSetNode(Node):
         # Build the initial weights, taking the suggestion
         # weights into account.
         assert(remaining_weight >= 0.)
-        num_combinations = 2**len(production_rules)
+        num_combinations = 2**len(production_rules) + 1
         init_weights = torch.ones(num_combinations) * remaining_weight
         for hint in production_weights_hints.keys():
             val = production_weights_hints[hint]
@@ -163,9 +161,10 @@ class CovaryingSetNode(Node):
         for rule in production_rules:
             if rule not in self.production_rules:
                 print("Warning: rule not in CovaryingSetNode production rules: ", rule)
-                return -np.inf
+                return torch.tensor(-np.inf)
             k = self.production_rules.index(rule)
             selected_rules += 2**k
+        assert(selected_rules >= 0 and selected_rules <= len(self.exhaustive_set_weights))
         return self.production_dist.log_prob(torch.tensor(selected_rules)).sum()
 
 
@@ -200,7 +199,7 @@ class IndependentSetNode(Node):
         for rule in production_rules:
             if rule not in self.production_rules:
                 print("Warning: rule not in IndependentSetNode production rules: ", rule)
-                return -np.inf
+                return torch.tensor(-np.inf)
             selected_rules[self.production_rules.index(rule)] = 1
         return self.production_dist.log_prob(selected_rules).sum()
 
@@ -228,8 +227,7 @@ class PlaceSetting(CovaryingSetNode):
 
         def score_products(self, products):
             if len(products) != 1 or not isinstance(products[0], self.object_type):
-                print("Warning: invalid input to scoreproducts for %sProductionRule: " % 
-                      self.object_name, products)
+                return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_pose = products[0].pose
             rel_pose = chain_pose_transforms(invert_pose(self.parent.pose), abs_pose)
@@ -246,22 +244,22 @@ class PlaceSetting(CovaryingSetNode):
         self.object_types_by_name = {
             "plate": Plate,
             "cup": Cup,
-            "left_fork": Fork,
-            "left_knife": Knife,
-            "left_spoon": Spoon,
-            "right_fork": Fork,
-            "right_knife": Knife,
-            "right_spoon": Spoon,
+            #"left_fork": Fork,
+            #"left_knife": Knife,
+            #"left_spoon": Spoon,
+            #"right_fork": Fork,
+            #"right_knife": Knife,
+            #"right_spoon": Spoon,
         }
         param_guesses_by_name = {
-            "plate": ([0., 0.16, 0.], [0.01, 0.01, 1.]),
-            "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 1.]),
-            "right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "plate": ([0., 0.16, 0.], [0.01, 0.01, 3.]),
+            "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 3.]),
+            #"right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
         }
         self.distributions_by_name = {}
         production_rules = []
@@ -278,14 +276,15 @@ class PlaceSetting(CovaryingSetNode):
 
         # Weight the "correct" rules very heavily
         production_weights_hints = {
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
-            (name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
-            (name_to_ind["plate"], name_to_ind["left_fork"]): 2.,
-            (name_to_ind["cup"],): 0.5,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["left_fork"]): 2.,
+            #(name_to_ind["cup"],): 0.5,
+            (name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
         }
         CovaryingSetNode.__init__(self, parent, "place_setting", production_rules,
@@ -317,7 +316,7 @@ class Table(IndependentSetNode, RootNode):
 
         def score_products(self, products):
             if len(products) != 1 or not isinstance(products[0], PlaceSetting):
-                print("Warning: invalid input to scoreproducts for PlaceSettingProductionRule: ", products)
+                return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_offset = products[0].pose - self.root_pose
             rel_offset = chain_pose_transforms(invert_pose(self.parent.pose), abs_offset)
@@ -576,11 +575,11 @@ def score_tree(parse_tree):
         if isinstance(node, Node):
             # Sanity-check feasibility
             if node.parent is None and not isinstance(node, RootNode):
-                node_score = -np.inf
+                node_score = torch.tensor(-np.inf)
             elif isinstance(node, TerminalNode):
                 # TODO(gizatt): Eventually, TerminalNodes
                 # may want to score their generated parameters.
-                node_score = 0.
+                node_score = torch.tensor(0.)
             else:
                 # Score the kids
                 node_score = node.score_production_rules(list(parse_tree.successors(node)))
@@ -595,29 +594,82 @@ def score_tree(parse_tree):
     return total_ll
 
 
-def guess_place_setting(nodes):
-    todo
+#def guess_table(child_nodes):
+#   # Tables are always at the same place
+#   table_node = Table(parent=None)
+#   candidate_rules = []
+#   candidate_lls = []
+#   for rule in table_node.production_rules:
+#       total_ll = rule.score_products(child_nodes) + table_node.score_production_rules([rule])
+#       if not torch.isinf(total_ll):
+#           candidate_rules.append(rule)
+#           candidate_lls.append(total_ll)
+#   return table_node, candidate_rules, candidate_lls
 
-def guess_table(nodes):
-    todo
+def guess_place_setting(child_nodes):
+    # Sample a place setting root pose at the average
+    # location of child poses
+    init_pose = torch.zeros(3)
+    for node in child_nodes:
+        init_pose = init_pose + node.pose
+    init_pose /= len(child_nodes)
+    place_setting_node = PlaceSetting(parent=None, pose=init_pose)
+
+    candidate_rules = []
+    candidate_lls = []
+    for rule in place_setting_node.production_rules:
+        total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
+        if not torch.isinf(total_ll):
+            # Do some quick MCMC to try to refine the node pose.
+            # TODO(gizatt) HMC, since we have gradients.
+            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.1]))
+            for step_k in range(50):
+                new_pose = init_pose + jump_proposal.sample()
+                old_pose = place_setting_node.pose
+                place_setting_node.pose = new_pose
+                new_total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
+                accept_prob = min(1, torch.exp(new_total_ll - total_ll))
+                if not dist.Bernoulli(accept_prob).sample():
+                    place_setting_node.pose = old_pose
+
+            total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
+            candidate_rules.append(rule)
+            candidate_lls.append(total_ll)
+
+    return place_setting_node, candidate_rules, candidate_lls
+
+
+def guess_spatial_node(spatial_node_type, child_nodes):
+    ''' Samples a spatial node conditioned on having these children.
+    "Spatial node" meaning its constructor takes a single "pose" argument. '''
+    raise NotImplementedError("This interface seems like a good idea")
 
 def greedily_guess_parse_tree_from_yaml(yaml_env):
-    candidate_intermediate_node_generators = [guess_place_setting, guess_table]
+    candidate_intermediate_node_generators = [
+        #partial(guess_spatial_node, spatial_node_type=PlaceSetting),
+        #partial(guess_spatial_node, spatial_node_type=guess_table)
+        #guess_table,
+        guess_place_setting
+    ]
 
-    # Build a list of the terminal nodes.
-    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env)
+    # Build a list of the terminal nodes plus the root node
+    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env) + [Table(parent=None)]
 
     # Build the preliminary parse tree of all terminal nodes
     # being root nodes.
-    parse_tree, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
     iter_k = 0
-    while iter_k < 10:
+    while iter_k < 1000:
+        parse_tree, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
         tree_ll = score_tree(parse_tree)
         print("At start of iter %d, tree score is %f" % (iter_k, tree_ll))
         log_probs = nx.get_node_attributes(parse_tree, name="log_prob")
+
+        nx.draw_networkx(remove_production_rules_from_parse_tree(parse_tree), pos=pos_dict, labels=label_dict, font_weight='bold')
+        plt.draw()
+        plt.pause(0.01)
         
         # Find the currently-infeasible nodes.
-        infeasible_nodes = [key for key in log_probs.keys() if np.isinf(log_probs[key])]
+        infeasible_nodes = [key for key in log_probs.keys() if torch.isinf(log_probs[key])]
 
         # Assert that they're all infeasible Nodes. Infeasible rules
         # should never appear by construction.
@@ -627,60 +679,96 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
         print("%d infeasible nodes" % len(infeasible_nodes))
 
         if len(infeasible_nodes) > 0:
-            # Sample a subset of infeasible nodes.
-            number_of_sampled_nodes = min(np.random.geometric(p=0.5), len(infeasible_nodes))
-            sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
 
+            possible_child_nodes = []
             possible_parent_nodes = []
             possible_parent_nodes_scores = []
-            # Check all ways of adding this to the tree:
-            #  - Append this to products of an existing rule.
-            #  - Append a production rule to an already existing non-terminal node.
-            for node in parse_tree.nodes():
-                if isinstance(node, ProductionRule):
-                    # Try adding this to the products of this rule
-                    score = node.score_products( list(parse_tree.successors(node)) + sampled_nodes )
-                    if not np.inf(score):
-                        possible_parent_nodes.append(node)
-                        possible_parent_nodes_scores.append(score)
-                elif isinstance(node, AndNode):
-                    # This can't ever work either, as an instantiated AndNode
-                    # is already feasible by construction, and the output
-                    # set isn't flexible.
-                    pass
-                elif isinstance(node, OrNode):
-                    # This can never work, as instantiated OrNode is already
-                    # feasible by construction, so adding another product
-                    # isn't possible.
-                    pass
-                elif isinstance(node, CovaryingSetNode):
-                    # Try adding this via any of this node's production rules
-                    for rule in node.production_rules:
-                        score = rule.score_products(sampled_nodes)
-                        score += node.score_production_rules( list(parse_tree.successors(node)) + [rule] )
-                        if not np.inf(score):
-                            possible_parent_nodes.append(rule)
-                            possible_parent_nodes_scores.append(score)
-                elif isinstance(node, IndependentSetNode):
-                    raise NotImplementedError()
-                else:
-                    pass
-            # Make a new intermediate node with these as the products.
-            for node_type in candidate_intermediate_node_generators:
-                pass
 
-            print("Possible parent nodes: ", possible_parent_nodes)
-            print("Possible parent node scores: ", possible_parent_nodes_scores)
+            for inner_iter in range(50):
+                # Sample a subset of infeasible nodes.
+                number_of_sampled_nodes = min(np.random.geometric(p=0.5), len(infeasible_nodes))
+                sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
+
+                # Check all ways of adding this to the tree:
+                #  - Append this to products of an existing rule.
+                #  - Append a production rule to an already existing non-terminal node.
+                for node in parse_tree.nodes():
+                    if isinstance(node, ProductionRule):
+                        # Try adding this to the products of this rule
+                        score = node.score_products( list(parse_tree.successors(node)) + sampled_nodes )
+                        if not torch.isinf(score):
+                            possible_child_nodes.append(sampled_nodes)
+                            possible_parent_nodes.append(node)
+                            possible_parent_nodes_scores.append(score)
+                    elif isinstance(node, AndNode):
+                        # This can't ever work either, as an instantiated AndNode
+                        # is already feasible by construction, and the output
+                        # set isn't flexible.
+                        pass
+                    elif isinstance(node, OrNode):
+                        # This can never work, as instantiated OrNode is already
+                        # feasible by construction, so adding another product
+                        # isn't possible.
+                        pass
+                    elif isinstance(node, CovaryingSetNode) or isinstance(node, IndependentSetNode):
+                        # Try adding this via any of this node's production rules
+                        existing_rules = list(parse_tree.successors(node))
+                        for rule in node.production_rules:
+                            if rule in existing_rules:
+                                continue
+                            score = rule.score_products(sampled_nodes)
+                            score += node.score_production_rules( list(parse_tree.successors(node)) + [rule] )
+                            if not torch.isinf(score):
+                                possible_child_nodes.append(sampled_nodes)
+                                possible_parent_nodes.append(rule)
+                                possible_parent_nodes_scores.append(score)
+                    else:
+                        pass
+                # - Make a new intermediate node and rule with these as the products.
+                for node_sampler in candidate_intermediate_node_generators:
+                    new_node, new_rules, scores = node_sampler(sampled_nodes)
+                    for rule, score in zip(new_rules, scores):
+                        possible_child_nodes.append(sampled_nodes)
+                        possible_parent_nodes.append((new_node, rule))
+                        possible_parent_nodes_scores.append(score)
+
+
+            possible_parent_nodes_scores = torch.stack(possible_parent_nodes_scores)
+            # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores)))
+            # See https://en.wikipedia.org/wiki/LogSumExp
+            maxval = possible_parent_nodes_scores.max()
+            normalization_factor = maxval + torch.log(torch.exp(possible_parent_nodes_scores - maxval).sum())
+            possible_parent_nodes_scores -= normalization_factor
+            possible_parent_nodes_scores = torch.exp(possible_parent_nodes_scores)
+            # Sample an action from that set
+            ind = dist.Categorical(possible_parent_nodes_scores).sample()
+            child_nodes = possible_child_nodes[ind]
+            addition = possible_parent_nodes[ind]
+            if isinstance(addition, ProductionRule):
+                for child_node in child_nodes:
+                    child_node.parent = addition
+            elif isinstance(addition, tuple):
+                new_parent_node, new_prod_node = addition
+                for child_node in child_nodes:
+                    child_node.parent = new_prod_node
+                    assert(new_prod_node.parent == new_parent_node)
+
 
         else:
             # Consider possible mutations of the tree?
-            print("Tree is feasible!")
-            print("But if we have any root nodes that can also be generated by ")
-            print("rules, we never tried to expand them upwards.")
-            print("Perhaps an assumption works: there's only one root node, ever.")
+
+            #print("Tree is feasible!")
+            #print("But if we have any root nodes that can also be generated by ")
+            #print("rules, we never tried to expand them upwards.")
+            #print("Perhaps an assumption works: there's only one root node, ever.")
             break
+
         iter_k += 1
 
+    parse_tree, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
+    tree_ll = score_tree(parse_tree)
+    print ("Guessed a parse tree with score %f" % tree_ll)
+    return parse_tree, pos_dict, label_dict, tree_ll
 
 
 if __name__ == "__main__":
@@ -709,20 +797,23 @@ if __name__ == "__main__":
 
         # Recover and print the parse tree
         G, pos_dict, label_dict = build_networkx_parse_tree(all_terminal_nodes)
-        plt.subplot(2, 1, 1)
+        plt.subplot(2, 2, 1)
         plt.gca().clear()
         nx.draw_networkx(remove_production_rules_from_parse_tree(G), pos=pos_dict, labels=label_dict, font_weight='bold')
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
-        plt.title("Parse tree")
+        score = score_tree(G)
+        plt.title("Real parse tree with score %f" % score)
         yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
-        print("Original tree score: ", score_tree(G))
-        print("Pyro trace ll: ", trace.log_prob_sum())
         assert(abs(score_tree(G) - trace.log_prob_sum()) < 0.001)
-        print("And that matches what pyro says.")
 
         # And then try to parse it
-        greedily_guess_parse_tree_from_yaml(yaml_env)
+        plt.subplot(2, 2, 2)
+        plt.xlim(-0.2, 1.2)
+        plt.ylim(-0.2, 1.2)
+        guessed_parse_tree, guessed_pos_dict, guessed_label_dict, score = greedily_guess_parse_tree_from_yaml(yaml_env)
+        plt.title("Guessed parse tree with score %f" % score)
+        nx.draw_networkx(remove_production_rules_from_parse_tree(guessed_parse_tree), pos=guessed_pos_dict, labels=guessed_label_dict, font_weight='bold')
 
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
