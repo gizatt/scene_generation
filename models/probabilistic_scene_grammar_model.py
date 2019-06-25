@@ -1,4 +1,5 @@
 from __future__ import print_function
+from copy import deepcopy
 from functools import partial
 import time
 import random
@@ -581,13 +582,14 @@ def score_tree(parse_tree):
 #           candidate_lls.append(total_ll)
 #   return table_node, candidate_rules, candidate_lls
 
-def guess_place_setting(child_nodes):
+def guess_place_setting(child_nodes, parent=None):
     # Sample a place setting root pose at the average
     # location of child poses
     init_pose = torch.zeros(3)
     for node in child_nodes:
         init_pose = init_pose + node.pose
     init_pose /= len(child_nodes)
+    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 1.0])).sample()
     place_setting_node = PlaceSetting(parent=None, pose=init_pose)
 
     candidate_rules = []
@@ -597,8 +599,8 @@ def guess_place_setting(child_nodes):
         if not torch.isinf(total_ll):
             # Do some quick MCMC to try to refine the node pose.
             # TODO(gizatt) HMC, since we have gradients.
-            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.5]))
-            for step_k in range(10):
+            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.01]))
+            for step_k in range(0):
                 new_pose = init_pose + jump_proposal.sample()
                 old_pose = place_setting_node.pose
                 place_setting_node.pose = new_pose
@@ -619,7 +621,7 @@ def guess_spatial_node(spatial_node_type, child_nodes):
     "Spatial node" meaning its constructor takes a single "pose" argument. '''
     raise NotImplementedError("This interface seems like a good idea")
 
-def draw_parse_tree(parse_tree, label_score=True, label_name=True, **kwargs):
+def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
     score, scores_by_node = score_tree(parse_tree)
     pos_dict = {
@@ -645,13 +647,19 @@ def draw_parse_tree(parse_tree, label_score=True, label_name=True, **kwargs):
         vmin = min(colors)
         vmax = max(colors)
     # Convert scores to colors
-    nx.draw_networkx(pruned_tree, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold', **kwargs)
-    plt.xlim(-0.2, 1.2)
-    plt.ylim(-0.2, 1.2)
-    plt.title("Score: %f" % score)
+    if ax is None:
+        ax = plt.gca()
+    nx.draw_networkx(pruned_tree, ax=ax, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold', **kwargs)
+    ax.set_xlim(-0.2, 1.2)
+    ax.set_ylim(-0.2, 1.2)
+    ax.set_title("Score: %f" % score)
 
 
-def greedily_guess_parse_tree_from_yaml(yaml_env):
+def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
+    # Build that tree into a feasible one by repeatedly sampling
+    # subsets of infeasible nodes and selecting among the rules
+    # that could have generated them.
+
     candidate_intermediate_node_generators = [
         #partial(guess_spatial_node, spatial_node_type=PlaceSetting),
         #partial(guess_spatial_node, spatial_node_type=guess_table)
@@ -659,20 +667,15 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
         guess_place_setting
     ]
 
-    # Build a list of the terminal nodes plus the root node
-    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env) + [Table(parent=None)]
-
-    # Build the preliminary parse tree of all terminal nodes
-    # being root nodes.
     iter_k = 0
-    while iter_k < 1000:
+    while iter_k < max_num_iters:
         parse_tree = build_networkx_parse_tree(all_terminal_nodes)
         tree_ll, log_probs = score_tree(parse_tree)
-        print("At start of iter %d, tree score is %f" % (iter_k, tree_ll))
-        plt.gca().clear()
-        draw_parse_tree(parse_tree)
-        plt.draw()
-        plt.pause(0.01)
+        # print("At start of iter %d, tree score is %f" % (iter_k, tree_ll))
+        if ax is not None:
+            ax.clear()
+            draw_parse_tree(parse_tree, ax=ax)
+            plt.pause(0.01)
         
         # Find the currently-infeasible nodes.
         infeasible_nodes = [key for key in log_probs.keys() if torch.isinf(log_probs[key])]
@@ -680,9 +683,11 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
         # Assert that they're all infeasible Nodes. Infeasible rules
         # should never appear by construction.
         for node in infeasible_nodes:
+            # TODO(gizatt) I could conceivably just handle productionrules
+            # as a special case. They can be crammed into the tree the
+            # same way -- iterate over all nodes and see how they fit into
+            # the available products.
             assert(isinstance(node, Node))
-
-        print("%d infeasible nodes" % len(infeasible_nodes))
 
         if len(infeasible_nodes) > 0:
 
@@ -690,9 +695,9 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
             possible_parent_nodes = []
             possible_parent_nodes_scores = []
 
-            for inner_iter in range(10):
+            for inner_iter in range(5):
                 # Sample a subset of infeasible nodes.
-                number_of_sampled_nodes = 1 # min(np.random.geometric(p=0.5), len(infeasible_nodes))
+                number_of_sampled_nodes = min(np.random.geometric(p=0.5), len(infeasible_nodes))
                 sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
 
                 # Check all ways of adding this to the tree:
@@ -738,18 +743,19 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
                         possible_parent_nodes.append((new_node, rule))
                         possible_parent_nodes_scores.append(score)
 
-
-            possible_parent_nodes_scores = torch.stack(possible_parent_nodes_scores)
-            # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores)))
+            if len(possible_parent_nodes_scores) == 0:
+                continue
+            possible_parent_nodes_scores_raw = torch.stack(possible_parent_nodes_scores)
+            # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
             # See https://en.wikipedia.org/wiki/LogSumExp
-            maxval = possible_parent_nodes_scores.max()
-            normalization_factor = maxval + torch.log(torch.exp(possible_parent_nodes_scores - maxval).sum())
-            possible_parent_nodes_scores -= normalization_factor
-            possible_parent_nodes_scores = torch.exp(possible_parent_nodes_scores)
+            maxval = possible_parent_nodes_scores_raw.max()
+            normalization_factor = maxval + torch.log(torch.exp(possible_parent_nodes_scores_raw - maxval).sum())
+            possible_parent_nodes_scores = torch.exp(possible_parent_nodes_scores_raw - normalization_factor)
             # Sample an action from that set
             ind = dist.Categorical(possible_parent_nodes_scores).sample()
             child_nodes = possible_child_nodes[ind]
             addition = possible_parent_nodes[ind]
+            best_score = possible_parent_nodes_scores_raw[ind]
             if isinstance(addition, ProductionRule):
                 for child_node in child_nodes:
                     child_node.parent = addition
@@ -759,22 +765,18 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
                     child_node.parent = new_prod_node
                     assert(new_prod_node.parent == new_parent_node)
         else:
-            # If the whole tree is feasible, then do MCMC in its continuous-parameter
-            # space.
-
-            #print("Tree is feasible!")
-            #print("But if we have any root nodes that can also be generated by ")
-            #print("rules, we never tried to expand them upwards.")
-            #print("Perhaps an assumption works: there's only one root node, ever.")
+            # Whole tree is feasible!
             break
         iter_k += 1
 
+def optimize_parse_tree_hmc_in_place(all_terminal_nodes, ax=None):
     parse_tree = build_networkx_parse_tree(all_terminal_nodes)
 
-    # Prepare to do HMC on the continuous paramaters (poses of the place settings)
+    # Run HMC on the continuous paramaters (poses of the place settings)
+    # for a few steps.
     continuous_params = []
     v_proposal_dists = []
-    num_hmc_steps = 30
+    num_hmc_steps = 5
     num_dynamics_steps = 10
     epsilon_v = 5E-3
     epsilon_p = 5E-3
@@ -784,25 +786,18 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
             node.pose.requires_grad = True
             continuous_params.append(node.pose)
             v_proposal_dists.append(dist.Normal(torch.zeros(3), torch.ones(3)*proposal_variance))
-
-
-    print("\nSTARTING HMC")
-
     for hmc_step in range(num_hmc_steps):
-        plt.gca().clear()
-        draw_parse_tree(parse_tree)
-        plt.pause(0.1)
+        if ax is not None:
+            ax.clear()
+            draw_parse_tree(parse_tree)
+            plt.pause(0.1)
         initial_score, _ = score_tree(parse_tree)
         initial_score.backward(retain_graph=True)
-        print("Initial score: %f" % initial_score)
         initial_param_vals = [p.detach().numpy().copy() for p in continuous_params]
         current_vs = [v_dist.sample() for v_dist in v_proposal_dists]
         initial_potential = (sum([torch.pow(v, 2) for v in current_vs])/2.).sum()
-        print("initial potential: ", initial_potential)
-
         # Simulate trajectory for a few steps
         # following https://arxiv.org/pdf/1206.1901.pdf page 14
-
         # First half-step the velocities
         for p, v in zip(continuous_params, current_vs):
             v.data = v - epsilon_v * -p.grad / 2.
@@ -816,12 +811,7 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
 
             current_score, _ = score_tree(parse_tree)
             current_score.backward(retain_graph=True)
-            print("\tstep score: %f" % current_score)
-            print("\tGrads and vs:")
-            for p,v in zip(continuous_params, current_vs):
-                print(p.grad.detach().numpy(), v.detach().numpy())
 
-            
             # Step momentum normally, except at final step.
             if step < (num_dynamics_steps - 1):
                 for p, v in zip(continuous_params, current_vs):
@@ -837,28 +827,89 @@ def greedily_guess_parse_tree_from_yaml(yaml_env):
         # Accept or reject
         thresh = torch.exp((initial_score - proposed_score) +
                            (initial_potential - proposed_potential))
-        print(thresh)
-        print("\tProposed score: %f" % proposed_score)
-        print("\tAccept thresh: %f" % thresh)
         if dist.Bernoulli(1. - min(thresh, 1.)).sample():
             # Poses are already updated in-place
-            print("Accepted")
+            pass
         else:
-            print("Rejected")
             for p, p0 in zip(continuous_params, initial_param_vals):
                 p.data = torch.tensor(p0)
 
+def parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
+    # Build a list of the terminal nodes plus the root node
+    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env) + [Table(parent=None)]
 
 
-    current_vs
-    for p in continuous_params:
-        print(p, p.grad)
+    for outer_k in range(outer_iterations):
+        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+        original_parse_tree = parse_tree
+        original_poses = {p: p.pose.detach().numpy().copy() for p in original_parse_tree.nodes if isinstance(p, Node)}
+        score, scores_by_node = score_tree(parse_tree)
+        print("Starting iter %d at score %f" % (outer_k, score))
 
-    return parse_tree, tree_ll
+        if not torch.isinf(score):
+            # Take random nodes (taking the less likely nodes more
+            # frequently) and remove them.
+            orphanable_nodes = [
+                n for n in parse_tree.nodes if
+                (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
+            ]
+            number_of_sampled_nodes = min(np.random.geometric(p=0.8), len(orphanable_nodes))
+            num_removed_nodes = 0
+            while num_removed_nodes < number_of_sampled_nodes:
+                scores_raw = torch.tensor([-scores_by_node[n] for n in orphanable_nodes])
+                # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
+                # See https://en.wikipedia.org/wiki/LogSumExp
+                maxval = scores_raw.max()
+                normalization_factor = maxval + torch.log(torch.exp(scores_raw - maxval).sum())
+                scores_normed = torch.exp(scores_raw - normalization_factor)
+                ind = dist.Categorical(scores_normed).sample()
+                node_to_orphan = orphanable_nodes[ind]
+                if isinstance(node_to_orphan, Node):
+                    node_to_orphan.parent = None
+                    for child_rule in parse_tree.successors(node_to_orphan):
+                        for child_node in parse_tree.successors(child_rule):
+                            child_node.parent = None
+                else:
+                    assert(isinstance(node_to_orphan, ProductionRule))
+                    for node in parse_tree.successors(node_to_orphan):
+                        node.parent = None
+                        for child_rule in parse_tree.successors(node):
+                            for child_node in parse_tree.successors(child_rule):
+                                child_node.parent = None
+                orphanable_nodes.remove(node_to_orphan)
+                num_removed_nodes += 1
+
+        repair_parse_tree_in_place(all_terminal_nodes, ax=ax)
+        optimize_parse_tree_hmc_in_place(all_terminal_nodes, ax=ax)
+
+        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+        new_score, _ = score_tree(parse_tree)
+        # Accept probability based on ratio of old score and current score
+        accept_prob = min(1., torch.exp(new_score - score))
+        if not dist.Bernoulli(accept_prob).sample():
+            print("\tRejected step to score %f" % new_score)
+            # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
+            # has led to disgusting code here...
+            # TODO(gizatt) This doesn't deal with the issue of poses getting updated
+            # in the loop. Tree-cloning might be good to slip in first.
+            for edge in original_parse_tree.edges:
+                if isinstance(edge[1], Node):
+                    # Re-assert parent relationships that used to exist.
+                    edge[1].parent = edge[0]
+                    edge[1].pose.data = torch.tensor(original_poses[edge[1]])
+
+        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+        score, _ = score_tree(parse_tree)
+        ax.clear()
+        draw_parse_tree(parse_tree, ax=ax)
+        print("\tEnding iter %d at score %f" % (outer_k, score))
+        plt.pause(1E-3)
+
+    return parse_tree, score
 
 
 if __name__ == "__main__":
-    seed = 43
+    seed = 46
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -917,14 +968,17 @@ if __name__ == "__main__":
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 
         plt.figure()
-        for k in range(1):
+        for k in range(9):
             # And then try to parse it
-            plt.subplot(1, 1, k+1)
+            ax = plt.subplot(3, 3, k+1)
             plt.xlim(-0.2, 1.2)
             plt.ylim(-0.2, 1.2)
-            guessed_parse_tree, score = greedily_guess_parse_tree_from_yaml(yaml_env)
+
+            guessed_parse_tree, score = parse_tree_from_yaml(yaml_env, ax=plt.gca())
+
             print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
             plt.title("Guessed parse tree with score %f" % score)
             plt.gca().clear()
             draw_parse_tree(guessed_parse_tree)
+            plt.pause(1E-3)
         plt.show()
