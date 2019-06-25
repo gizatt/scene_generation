@@ -48,24 +48,23 @@ class ProductionRule(object):
     queryable for what nodes this connects and able to
     provide scoring for whether a candidate production
     is a good idea at all. '''
-    def __init__(self, parent, products):
-        self.parent = parent
+    def __init__(self, products):
         self.products = products
-    def __call__(self):
+    def __call__(self, parent, site_prefix):
         raise NotImplementedError()
-    def score_products(self, products):
+    def score_products(self, parent, products):
         raise NotImplementedError()
 
 class RootNode(object):
     pass
 
 class Node(object):
-    def __init__(self, parent):
-        self.parent = parent
+    def __init__(self):
+        pass
 
 class OrNode(Node):
-    def __init__(self, parent, production_rules, production_weights):
-        Node.__init__(self, parent)
+    def __init__(self, production_rules, production_weights):
+        Node.__init__(self)
         if len(production_weights) != len(production_rules):
             raise ValueError("# of production rules and weights must match.")
         if len(production_weights) == 0:
@@ -73,11 +72,11 @@ class OrNode(Node):
         self.production_rules = production_rules
         self.production_dist = dist.Categorical(production_weights)
         
-    def sample_production_rules(self, site_prefix, obs=None):
+    def sample_production_rules(self, parent, site_prefix, obs=None):
         sampled_rule = pyro.sample(site_prefix + "_or_sample", self.production_dist, obs=obs)
         return [self.production_rules[sampled_rule]]
 
-    def score_production_rules(self, production_rules):
+    def score_production_rules(self, parent, production_rules):
         if len(production_rules) != 1:
             return torch.tensor(-np.inf)
         if production_rules[0] not in self.production_rules:
@@ -87,16 +86,16 @@ class OrNode(Node):
 
 
 class AndNode(Node):
-    def __init__(self, parent, production_rules):
-        Node.__init__(self, parent)
+    def __init__(self, production_rules):
+        Node.__init__(self)
         if len(production_rules) == 0:
             raise ValueError("Must have nonzero # of production rules.")
         self.production_rules = production_rules
         
-    def sample_production_rules(self, site_prefix):
+    def sample_production_rules(self, parent, site_prefix):
         return self.production_rules
 
-    def score_production_rules(self, production_rules):
+    def score_production_rules(self, parent, production_rules):
         if production_rules != self.production_rules:
             return torch.tensor(-np.inf)
         else:
@@ -104,7 +103,7 @@ class AndNode(Node):
 
 
 class CovaryingSetNode(Node):
-    def __init__(self, parent, site_prefix, production_rules,
+    def __init__(self, site_prefix, production_rules,
                  production_weights_hints = {},
                  remaining_weight = 1.):
         ''' Make a categorical distribution over
@@ -117,7 +116,7 @@ class CovaryingSetNode(Node):
            indicating the weight to distribute to the remaining
            pairs. These floats all indicate relative occurance
            weights. '''
-        Node.__init__(self, parent)
+        Node.__init__(self)
         # Build the initial weights, taking the suggestion
         # weights into account.
         assert(remaining_weight >= 0.)
@@ -143,7 +142,7 @@ class CovaryingSetNode(Node):
         self.site_prefix = ""
         self.production_rules = production_rules
 
-    def sample_production_rules(self, site_prefix):
+    def sample_production_rules(self, parent, site_prefix):
         selected_rules = pyro.sample(
             site_prefix + "_exhaustive_set_sample",
             self.production_dist)
@@ -154,7 +153,7 @@ class CovaryingSetNode(Node):
                 output.append(rule)
         return output
 
-    def score_production_rules(self, production_rules):
+    def score_production_rules(self, parent, production_rules):
         selected_rules = 0
         for rule in production_rules:
             if rule not in self.production_rules:
@@ -167,13 +166,13 @@ class CovaryingSetNode(Node):
 
 
 class IndependentSetNode(Node):
-    def __init__(self, parent, site_prefix, production_rules,
+    def __init__(self, site_prefix, production_rules,
                  production_probs):
         ''' Make a categorical distribution over production rules
             that could be active, where each rule occurs
             independently of the others. Each production weight
             is a probability of that rule being active. '''
-        Node.__init__(self, parent)
+        Node.__init__(self)
         if len(production_probs) != len(production_rules):
             raise ValueError("Must have same number of production probs "
                              "as rules.")
@@ -181,7 +180,7 @@ class IndependentSetNode(Node):
         self.site_prefix = ""
         self.production_rules = production_rules
 
-    def sample_production_rules(self, site_prefix):
+    def sample_production_rules(self, parent, site_prefix):
         active_rules = pyro.sample(
             site_prefix + "_independent_set_sample",
             self.production_dist)
@@ -192,7 +191,7 @@ class IndependentSetNode(Node):
                 output.append(rule)
         return output
 
-    def score_production_rules(self, production_rules):
+    def score_production_rules(self, parent, production_rules):
         selected_rules = torch.zeros(len(self.production_rules))
         for rule in production_rules:
             if rule not in self.production_rules:
@@ -205,8 +204,8 @@ class IndependentSetNode(Node):
 class PlaceSetting(CovaryingSetNode):
 
     class ObjectProductionRule(ProductionRule):
-        def __init__(self, parent, object_name, object_type, mean_init, var_init):
-            ProductionRule.__init__(self, parent, products=[object_type])
+        def __init__(self, object_name, object_type, mean_init, var_init):
+            ProductionRule.__init__(self, products=[object_type])
             self.object_name = object_name
             self.object_type = object_type
             mean = pyro.param("place_setting_%s_mean" % object_name,
@@ -217,21 +216,21 @@ class PlaceSetting(CovaryingSetNode):
             self.offset_dist = dist.Normal(
                 mean, var)
 
-        def __call__(self, site_prefix):
+        def __call__(self, parent, site_prefix):
             rel_pose = pyro.sample("%s_%s_pose" % (site_prefix, self.object_name),
                                    self.offset_dist)
-            abs_pose = chain_pose_transforms(self.parent.pose, rel_pose)
-            return [self.object_type(self, abs_pose)]
+            abs_pose = chain_pose_transforms(parent.pose, rel_pose)
+            return [self.object_type(abs_pose)]
 
-        def score_products(self, products):
+        def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], self.object_type):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_pose = products[0].pose
-            rel_pose = chain_pose_transforms(invert_pose(self.parent.pose), abs_pose)
+            rel_pose = chain_pose_transforms(invert_pose(parent.pose), abs_pose)
             return self.offset_dist.log_prob(rel_pose).sum()
 
-    def __init__(self, parent, pose):
+    def __init__(self, pose):
         self.pose = pose
         # Represent each object's relative position to the
         # place setting origin with a diagonal Normal distribution.
@@ -266,7 +265,7 @@ class PlaceSetting(CovaryingSetNode):
             mean_init, var_init = param_guesses_by_name[object_name]
             production_rules.append(
                 self.ObjectProductionRule(
-                    parent=self, object_name=object_name,
+                    object_name=object_name,
                     object_type=self.object_types_by_name[object_name],
                     mean_init=mean_init, var_init=var_init))
             # Build name mapping for convenienc of building the hint dictionary
@@ -285,7 +284,7 @@ class PlaceSetting(CovaryingSetNode):
             (name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
         }
-        CovaryingSetNode.__init__(self, parent, "place_setting", production_rules,
+        CovaryingSetNode.__init__(self, "place_setting", production_rules,
                                    production_weights_hints,
                                    remaining_weight=0.)
 
@@ -293,8 +292,8 @@ class PlaceSetting(CovaryingSetNode):
 class Table(IndependentSetNode, RootNode):
 
     class PlaceSettingProductionRule(ProductionRule):
-        def __init__(self, parent, root_pose):
-            ProductionRule.__init__(self, parent, products=[PlaceSetting])
+        def __init__(self, root_pose):
+            ProductionRule.__init__(self, products=[PlaceSetting])
             # Relative offset from root pose is drawn from a diagonal
             # Normal. It's rotated into the root pose frame at sample time.
             mean = pyro.param("table_place_setting_mean",
@@ -305,24 +304,24 @@ class Table(IndependentSetNode, RootNode):
             self.offset_dist = dist.Normal(mean, var)
             self.root_pose = root_pose
 
-        def __call__(self, site_prefix):
+        def __call__(self, parent, site_prefix):
             rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
                                      self.offset_dist)
             # Rotate offset
-            root_pose_in_world = chain_pose_transforms(self.parent.pose, self.root_pose)
+            root_pose_in_world = chain_pose_transforms(parent.pose, self.root_pose)
             abs_offset = chain_pose_transforms(root_pose_in_world, rel_offset)
-            return [PlaceSetting(self, pose=abs_offset)]
+            return [PlaceSetting(pose=abs_offset)]
 
-        def score_products(self, products):
+        def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], PlaceSetting):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_offset = products[0].pose
-            root_pose_in_world = chain_pose_transforms(self.parent.pose, self.root_pose)
+            root_pose_in_world = chain_pose_transforms(parent.pose, self.root_pose)
             rel_offset = chain_pose_transforms(invert_pose(root_pose_in_world), abs_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
-    def __init__(self, parent, num_place_setting_locations=4):
+    def __init__(self, num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
         self.table_radius = pyro.param("table_radius", torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
@@ -336,17 +335,17 @@ class Table(IndependentSetNode, RootNode):
             root_pose[1] = self.table_radius * torch.sin(r)
             root_pose[2] = r
             production_rules.append(self.PlaceSettingProductionRule(
-                parent=self, root_pose=root_pose))
-        IndependentSetNode.__init__(self, parent, "table_node", production_rules,
+                root_pose=root_pose))
+        IndependentSetNode.__init__(self, "table_node", production_rules,
                                     torch.ones(num_place_setting_locations)*0.5)
 
 class TerminalNode(Node):
-    def __init__(self, parent):
-        Node.__init__(self, parent)
+    def __init__(self):
+        Node.__init__(self)
 
 class Plate(TerminalNode):
-    def __init__(self, parent, pose, params=[0.2]):
-        TerminalNode.__init__(self, parent)
+    def __init__(self, pose, params=[0.2]):
+        TerminalNode.__init__(self)
         self.pose = pose
         self.params = params
 
@@ -361,8 +360,8 @@ class Plate(TerminalNode):
         }
 
 class Cup(TerminalNode):
-    def __init__(self, parent, pose, params=[0.05]):
-        TerminalNode.__init__(self, parent)
+    def __init__(self, pose, params=[0.05]):
+        TerminalNode.__init__(self)
         self.pose = pose
         self.params = params
 
@@ -378,8 +377,8 @@ class Cup(TerminalNode):
 
 
 class Fork(TerminalNode):
-    def __init__(self, parent, pose, params=[0.02, 0.14]):
-        TerminalNode.__init__(self, parent)
+    def __init__(self, pose, params=[0.02, 0.14]):
+        TerminalNode.__init__(self)
         self.pose = pose
         self.params = params
 
@@ -394,8 +393,8 @@ class Fork(TerminalNode):
         }
 
 class Knife(TerminalNode):
-    def __init__(self, parent, pose, params=[0.015, 0.15]):
-        TerminalNode.__init__(self, parent)
+    def __init__(self, pose, params=[0.015, 0.15]):
+        TerminalNode.__init__(self)
         self.pose = pose
         self.params = params
     
@@ -410,8 +409,8 @@ class Knife(TerminalNode):
         }
 
 class Spoon(TerminalNode):
-    def __init__(self, parent, pose, params=[0.02, 0.12]):
-        TerminalNode.__init__(self, parent)
+    def __init__(self, pose, params=[0.02, 0.12]):
+        TerminalNode.__init__(self)
         self.pose = pose
         self.params = params
     
@@ -425,44 +424,60 @@ class Spoon(TerminalNode):
             "pose": self.pose.tolist()
         }
 
+
+def get_node_parent_or_none(parse_tree, node):
+    parents = list(parse_tree.predecessors(node))
+    if len(parents) == 0:
+        return None
+    elif len(parents) == 1:
+        return parents[0]
+    else:
+        raise NotImplementedError("> 1 parent --> bad parse tree")
+
+
 class ProbabilisticSceneGrammarModel():
     def __init__(self):
         pass
 
     def model(self, data=None):
-        nodes = [Table(parent=None)]
-        all_terminal_nodes = []
-        all_nodes = []
-        all_production_rules = []
+        root_node = Table()
+        input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
+        parse_tree = nx.DiGraph()
+        parse_tree.add_node(root_node)
         num_productions = 0
-        iter_k = 0
-        while len(nodes) > 0:
-            node = nodes.pop(0)
-            all_nodes.append(node)
+        while len(input_nodes_with_parents) > 0:
+            parent, node = input_nodes_with_parents.pop(0)
             if isinstance(node, TerminalNode):
-                # Instantiate
-                all_terminal_nodes.append(node)
+                # Nothing more to do with this node
+                pass
             else:
                 # Expand by picking a production rule
-                production_rules = node.sample_production_rules("production_%04d" % num_productions)
+                production_rules = node.sample_production_rules(parent, "production_%04d" % num_productions)
                 for i, rule in enumerate(production_rules):
-                    new_nodes = rule("production_%04d_sample_%04d" % (num_productions, i))
-                    nodes += new_nodes
-                all_production_rules += production_rules
+                    parse_tree.add_node(rule)
+                    parse_tree.add_edge(node, rule)
+                    new_nodes = rule(node, "production_%04d_sample_%04d" % (num_productions, i))
+                    for new_node in new_nodes:
+                        parse_tree.add_node(new_node)
+                        parse_tree.add_edge(rule, new_node)
+                        input_nodes_with_parents.append((rule, new_node))
                 num_productions += 1
-            iter_k += 1
-
-        return all_terminal_nodes, all_production_rules, all_nodes
+        return parse_tree
 
     def guide(self, data):
         pass
 
 
-def convert_list_of_terminal_nodes_to_yaml_env(node_list):
-    env = {"n_objects": len(node_list)}
-    for k, node in enumerate(node_list):
+def convert_tree_to_yaml_env(parse_tree):
+    terminal_nodes = []
+    for node in parse_tree:
+        if isinstance(node, TerminalNode):
+            terminal_nodes.append(node)
+    env = {"n_objects": len(terminal_nodes)}
+    for k, node in enumerate(terminal_nodes):
         env["obj_%04d" % k] = node.generate_yaml()
     return env
+
 
 class bcolors:
     HEADER = '\033[95m'
@@ -507,8 +522,10 @@ def remove_production_rules_from_parse_tree(parse_tree):
             new_tree.add_node(node)
     for node in parse_tree:
         if isinstance(node, ProductionRule):
+            parent = get_node_parent_or_none(parse_tree, node)
+            assert(parent is not None)
             for child in list(parse_tree.successors(node)):
-                new_tree.add_edge(node.parent, child)
+                new_tree.add_edge(parent, child)
     return new_tree
 
 class_name_to_type = {
@@ -519,18 +536,17 @@ class_name_to_type = {
     "spoon": Spoon,
 }
 def terminal_nodes_from_yaml(yaml_env):
-    all_terminal_nodes = []
+    terminal_nodes = []
     for k in range(yaml_env["n_objects"]):
         new_obj = yaml_env["obj_%04d" % k]
         if new_obj["class"] not in class_name_to_type.keys():
             raise NotImplementedError("Unknown class: ", new_obj["class"])
-        all_terminal_nodes.append(class_name_to_type[new_obj['class']](
-            parent=None,
+        terminal_nodes.append(class_name_to_type[new_obj['class']](
             pose=torch.tensor(new_obj["pose"]),
             params=new_obj["params"]))
-    return all_terminal_nodes
+    return terminal_nodes
 
-def score_tree(parse_tree):
+def score_tree(parse_tree, assert_rooted=True):
     ''' Sum the log probabilities over the tree:
     For every node, score its set of its production rules.
     For every production rule, score its products.
@@ -549,9 +565,10 @@ def score_tree(parse_tree):
     scores_by_node = {}
 
     for node in parse_tree.nodes:
+        parent = get_node_parent_or_none(parse_tree, node)
         if isinstance(node, Node):
             # Sanity-check feasibility
-            if node.parent is None and not isinstance(node, RootNode):
+            if parent is None and assert_rooted and not isinstance(node, RootNode):
                 node_score = torch.tensor(-np.inf)
             elif isinstance(node, TerminalNode):
                 # TODO(gizatt): Eventually, TerminalNodes
@@ -559,67 +576,15 @@ def score_tree(parse_tree):
                 node_score = torch.tensor(0.)
             else:
                 # Score the kids
-                node_score = node.score_production_rules(list(parse_tree.successors(node)))
+                node_score = node.score_production_rules(parent, list(parse_tree.successors(node)))
         elif isinstance(node, ProductionRule):
-            node_score = node.score_products(list(parse_tree.successors(node)))
+            node_score = node.score_products(parent, list(parse_tree.successors(node)))
         else:
             raise ValueError("Invalid node type in tree: ", type(node))
         scores_by_node[node] = node_score
         total_ll = total_ll + node_score
 
     return total_ll, scores_by_node
-
-
-#def guess_table(child_nodes):
-#   # Tables are always at the same place
-#   table_node = Table(parent=None)
-#   candidate_rules = []
-#   candidate_lls = []
-#   for rule in table_node.production_rules:
-#       total_ll = rule.score_products(child_nodes) + table_node.score_production_rules([rule])
-#       if not torch.isinf(total_ll):
-#           candidate_rules.append(rule)
-#           candidate_lls.append(total_ll)
-#   return table_node, candidate_rules, candidate_lls
-
-def guess_place_setting(child_nodes, parent=None):
-    # Sample a place setting root pose at the average
-    # location of child poses
-    init_pose = torch.zeros(3)
-    for node in child_nodes:
-        init_pose = init_pose + node.pose
-    init_pose /= len(child_nodes)
-    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 1.0])).sample()
-    place_setting_node = PlaceSetting(parent=None, pose=init_pose)
-
-    candidate_rules = []
-    candidate_lls = []
-    for rule in place_setting_node.production_rules:
-        total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
-        if not torch.isinf(total_ll):
-            # Do some quick MCMC to try to refine the node pose.
-            # TODO(gizatt) HMC, since we have gradients.
-            jump_proposal = dist.Normal(torch.zeros(3), torch.tensor([0.1, 0.1, 0.01]))
-            for step_k in range(0):
-                new_pose = init_pose + jump_proposal.sample()
-                old_pose = place_setting_node.pose
-                place_setting_node.pose = new_pose
-                new_total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
-                accept_prob = min(1, torch.exp(new_total_ll - total_ll))
-                if not dist.Bernoulli(accept_prob).sample():
-                    place_setting_node.pose = old_pose
-
-            total_ll = rule.score_products(child_nodes) + place_setting_node.score_production_rules([rule])
-            candidate_rules.append(rule)
-            candidate_lls.append(total_ll)
-
-    return place_setting_node, candidate_rules, candidate_lls
-
-
-def guess_spatial_node(spatial_node_type, child_nodes):
-    ''' Samples a spatial node conditioned on having these children.
-    "Spatial node" meaning its constructor takes a single "pose" argument. '''
-    raise NotImplementedError("This interface seems like a good idea")
 
 def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
@@ -638,47 +603,75 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
             label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
         if label_name != "":
             label_dict[node] = label_str
-    colors = [scores_by_node[node] + score for node in pruned_tree.nodes]
+    colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
     if len(colors) == 0:
         colors = None
-        vmin = 0.
-        vmax = 1.
     else:
-        vmin = min(colors)
-        vmax = max(colors)
+        colors -= min(colors)
+        colors /= max(colors)
     # Convert scores to colors
     if ax is None:
         ax = plt.gca()
-    nx.draw_networkx(pruned_tree, ax=ax, pos=pos_dict, labels=label_dict, colors=colors, vmin=vmin, vmax=vmax, font_weight='bold', **kwargs)
+    nx.draw_networkx(pruned_tree, ax=ax, pos=pos_dict, labels=label_dict,
+                     node_color=colors, cmap='jet', font_weight='bold', **kwargs)
     ax.set_xlim(-0.2, 1.2)
     ax.set_ylim(-0.2, 1.2)
     ax.set_title("Score: %f" % score)
 
 
-def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
+#def guess_table(child_nodes):
+#   # Tables are always at the same place
+#   table_node = Table(parent=None)
+#   candidate_rules = []
+#   candidate_lls = []
+#   for rule in table_node.production_rules:
+#       total_ll = rule.score_products(child_nodes) + table_node.score_production_rules([rule])
+#       if not torch.isinf(total_ll):
+#           candidate_rules.append(rule)
+#           candidate_lls.append(total_ll)
+#   return table_node, candidate_rules, candidate_lls
+
+def guess_place_setting(parent, child_nodes):
+    # Sample a place setting root pose at the average
+    # location of child poses
+    init_pose = torch.zeros(3)
+    for node in child_nodes:
+        init_pose = init_pose + node.pose
+    init_pose /= len(child_nodes)
+    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 1.0])).sample()
+    place_setting_node = PlaceSetting(pose=init_pose)
+
+    candidate_rules = []
+    candidate_lls = []
+    for rule in place_setting_node.production_rules:
+        total_ll = rule.score_products(place_setting_node, child_nodes) + place_setting_node.score_production_rules(parent, [rule])
+        if not torch.isinf(total_ll):
+            candidate_rules.append(rule)
+            candidate_lls.append(total_ll)
+
+    return place_setting_node, candidate_rules, candidate_lls
+
+
+def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
     # Build that tree into a feasible one by repeatedly sampling
     # subsets of infeasible nodes and selecting among the rules
     # that could have generated them.
 
     candidate_intermediate_node_generators = [
-        #partial(guess_spatial_node, spatial_node_type=PlaceSetting),
-        #partial(guess_spatial_node, spatial_node_type=guess_table)
-        #guess_table,
         guess_place_setting
     ]
 
     iter_k = 0
     while iter_k < max_num_iters:
-        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
-        tree_ll, log_probs = score_tree(parse_tree)
-        # print("At start of iter %d, tree score is %f" % (iter_k, tree_ll))
+        score, scores_by_node = score_tree(parse_tree,  assert_rooted=True)
+        # print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
             draw_parse_tree(parse_tree, ax=ax)
             plt.pause(0.01)
         
         # Find the currently-infeasible nodes.
-        infeasible_nodes = [key for key in log_probs.keys() if torch.isinf(log_probs[key])]
+        infeasible_nodes = [key for key in scores_by_node.keys() if torch.isinf(scores_by_node[key])]
 
         # Assert that they're all infeasible Nodes. Infeasible rules
         # should never appear by construction.
@@ -690,7 +683,6 @@ def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
             assert(isinstance(node, Node))
 
         if len(infeasible_nodes) > 0:
-
             possible_child_nodes = []
             possible_parent_nodes = []
             possible_parent_nodes_scores = []
@@ -704,12 +696,13 @@ def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
                 #  - Append this to products of an existing rule.
                 #  - Append a production rule to an already existing non-terminal node.
                 for node in parse_tree.nodes():
+                    parent = get_node_parent_or_none(parse_tree, node)
                     if isinstance(node, ProductionRule):
                         # Try adding this to the products of this rule
-                        score = node.score_products( list(parse_tree.successors(node)) + sampled_nodes )
+                        score = node.score_products(parent, list(parse_tree.successors(node)) + sampled_nodes)
                         if not torch.isinf(score):
                             possible_child_nodes.append(sampled_nodes)
-                            possible_parent_nodes.append(node)
+                            possible_parent_nodes.append((parent, node))
                             possible_parent_nodes_scores.append(score)
                     elif isinstance(node, AndNode):
                         # This can't ever work either, as an instantiated AndNode
@@ -727,17 +720,17 @@ def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
                         for rule in node.production_rules:
                             if rule in existing_rules:
                                 continue
-                            score = rule.score_products(sampled_nodes)
-                            score = score + node.score_production_rules( existing_rules + [rule] )
+                            score = rule.score_products(node, sampled_nodes)
+                            score = score + node.score_production_rules(parent, existing_rules + [rule])
                             if not torch.isinf(score):
                                 possible_child_nodes.append(sampled_nodes)
-                                possible_parent_nodes.append(rule)
+                                possible_parent_nodes.append((node, rule))
                                 possible_parent_nodes_scores.append(score)
                     else:
                         pass
                 # - Make a new intermediate node and rule with these as the products.
                 for node_sampler in candidate_intermediate_node_generators:
-                    new_node, new_rules, scores = node_sampler(sampled_nodes)
+                    new_node, new_rules, scores = node_sampler(None, sampled_nodes)
                     for rule, score in zip(new_rules, scores):
                         possible_child_nodes.append(sampled_nodes)
                         possible_parent_nodes.append((new_node, rule))
@@ -754,23 +747,23 @@ def repair_parse_tree_in_place(all_terminal_nodes, max_num_iters=100, ax=None):
             # Sample an action from that set
             ind = dist.Categorical(possible_parent_nodes_scores).sample()
             child_nodes = possible_child_nodes[ind]
-            addition = possible_parent_nodes[ind]
+            new_parent_node, new_prod_node = possible_parent_nodes[ind]
             best_score = possible_parent_nodes_scores_raw[ind]
-            if isinstance(addition, ProductionRule):
-                for child_node in child_nodes:
-                    child_node.parent = addition
-            elif isinstance(addition, tuple):
-                new_parent_node, new_prod_node = addition
-                for child_node in child_nodes:
-                    child_node.parent = new_prod_node
-                    assert(new_prod_node.parent == new_parent_node)
+            if new_parent_node not in parse_tree.nodes:
+                parse_tree.add_node(new_parent_node)
+                parse_tree.add_node(new_prod_node)
+                parse_tree.add_edge(new_parent_node, new_prod_node)
+            elif new_prod_node not in parse_tree.nodes:
+                parse_tree.add_node(new_prod_node)
+                parse_tree.add_edge(new_parent_node, new_prod_node)
+            for child_node in child_nodes:
+                parse_tree.add_edge(new_prod_node, child_node)
         else:
             # Whole tree is feasible!
             break
         iter_k += 1
 
-def optimize_parse_tree_hmc_in_place(all_terminal_nodes, ax=None):
-    parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
 
     # Run HMC on the continuous paramaters (poses of the place settings)
     # for a few steps.
@@ -834,55 +827,82 @@ def optimize_parse_tree_hmc_in_place(all_terminal_nodes, ax=None):
             for p, p0 in zip(continuous_params, initial_param_vals):
                 p.data = torch.tensor(p0)
 
-def parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
-    # Build a list of the terminal nodes plus the root node
-    all_terminal_nodes = terminal_nodes_from_yaml(yaml_env) + [Table(parent=None)]
 
+class ParseTreeState():
+    def __init__(self, source_tree):
+        self.tree = source_tree.copy()
+        self.poses_by_node = {}
+        for node in self.tree.nodes:
+            if hasattr(node, "pose"):
+                self.poses_by_node[node] = node.pose.detach().numpy().copy()
+
+    def rebuild_original_tree(self):
+        # Restore attributes
+        for node in self.poses_by_node.keys():
+            self.tree[node].pose = self.poses_by_node[node]
+        return self.tree
+
+
+def prune_node_from_tree(parse_tree, victim_node):
+    # Removes the node from the tree.
+    # If it's a Node: also remove its production rule
+    # if the rule isn't producing anything else, or
+    # if removing this node makes the rule invalid.
+    # Remove all of the node's rules as well.
+    # If it's a ProductionRule: just remove the
+    # rule.
+    if isinstance(victim_node, Node):
+        parent = get_node_parent_or_none(parse_tree, victim_node)
+        # Remove all child rules
+        child_rules = list(parse_tree.successors(victim_node))
+        for child_rule in child_rules:
+            parse_tree.remove_node(child_rule)
+        parse_tree.remove_node(victim_node)
+        # Clean up the parent rule if this made it invalid
+        if parent is not None:
+            remaining_siblings = list(parse_tree.successors(parent))
+            parent_parent = get_node_parent_or_none(parse_tree, parent)
+            if (len(remaining_siblings) == 0 or
+                np.isinf(parent.score_products(parent_parent, remaining_siblings))):
+                parse_tree.remove_node(parent)
+    else:
+        assert(isinstance(victim_node, ProductionRule))
+        parse_tree.remove_node(victim_node)
+
+def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
+    # Build an initial parse tree.
+    parse_tree = nx.DiGraph()
+    parse_tree.add_node(Table()) # Root node
+    for terminal_node in terminal_nodes_from_yaml(yaml_env):
+        parse_tree.add_node(terminal_node)
 
     for outer_k in range(outer_iterations):
-        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
-        original_parse_tree = parse_tree
-        original_poses = {p: p.pose.detach().numpy().copy() for p in original_parse_tree.nodes if isinstance(p, Node)}
+        original_parse_tree_state = ParseTreeState(parse_tree)
         score, scores_by_node = score_tree(parse_tree)
         print("Starting iter %d at score %f" % (outer_k, score))
 
         if not torch.isinf(score):
             # Take random nodes (taking the less likely nodes more
             # frequently) and remove them.
-            orphanable_nodes = [
-                n for n in parse_tree.nodes if
-                (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
-            ]
-            number_of_sampled_nodes = min(np.random.geometric(p=0.8), len(orphanable_nodes))
-            num_removed_nodes = 0
-            while num_removed_nodes < number_of_sampled_nodes:
-                scores_raw = torch.tensor([-scores_by_node[n] for n in orphanable_nodes])
+            for remove_k in range(np.random.geometric(p=0.7)):
+                removable_nodes = [
+                    n for n in parse_tree.nodes if
+                    (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
+                ]
+                if len(removable_nodes) == 0:
+                    break
+                scores_raw = torch.tensor([-scores_by_node[n] for n in removable_nodes])
                 # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
                 # See https://en.wikipedia.org/wiki/LogSumExp
                 maxval = scores_raw.max()
                 normalization_factor = maxval + torch.log(torch.exp(scores_raw - maxval).sum())
                 scores_normed = torch.exp(scores_raw - normalization_factor)
                 ind = dist.Categorical(scores_normed).sample()
-                node_to_orphan = orphanable_nodes[ind]
-                if isinstance(node_to_orphan, Node):
-                    node_to_orphan.parent = None
-                    for child_rule in parse_tree.successors(node_to_orphan):
-                        for child_node in parse_tree.successors(child_rule):
-                            child_node.parent = None
-                else:
-                    assert(isinstance(node_to_orphan, ProductionRule))
-                    for node in parse_tree.successors(node_to_orphan):
-                        node.parent = None
-                        for child_rule in parse_tree.successors(node):
-                            for child_node in parse_tree.successors(child_rule):
-                                child_node.parent = None
-                orphanable_nodes.remove(node_to_orphan)
-                num_removed_nodes += 1
+                print("Pruning node ", removable_nodes[ind])
+                prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-        repair_parse_tree_in_place(all_terminal_nodes, ax=ax)
-        optimize_parse_tree_hmc_in_place(all_terminal_nodes, ax=ax)
-
-        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
+        repair_parse_tree_in_place(parse_tree, ax=ax)
+        optimize_parse_tree_hmc_in_place(parse_tree, ax=ax)
         new_score, _ = score_tree(parse_tree)
         # Accept probability based on ratio of old score and current score
         accept_prob = min(1., torch.exp(new_score - score))
@@ -892,13 +912,8 @@ def parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
             # has led to disgusting code here...
             # TODO(gizatt) This doesn't deal with the issue of poses getting updated
             # in the loop. Tree-cloning might be good to slip in first.
-            for edge in original_parse_tree.edges:
-                if isinstance(edge[1], Node):
-                    # Re-assert parent relationships that used to exist.
-                    edge[1].parent = edge[0]
-                    edge[1].pose.data = torch.tensor(original_poses[edge[1]])
+            parse_tree = original_parse_tree_state.rebuild_original_tree()
 
-        parse_tree = build_networkx_parse_tree(all_terminal_nodes)
         score, _ = score_tree(parse_tree)
         ax.clear()
         draw_parse_tree(parse_tree, ax=ax)
@@ -922,7 +937,7 @@ if __name__ == "__main__":
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(model.model).get_trace()
-        all_terminal_nodes, all_production_rules, all_nodes = trace.nodes["_RETURN"]["value"]
+        parse_tree = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
         print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
@@ -933,18 +948,18 @@ if __name__ == "__main__":
             print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
-        G = build_networkx_parse_tree(all_terminal_nodes)
         plt.subplot(2, 1, 1)
         plt.gca().clear()
-        draw_parse_tree(G)
+        draw_parse_tree(parse_tree)
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
-        score, _ = score_tree(G)
-        plt.title("Real parse tree with score %f" % score)
-        yaml_env = convert_list_of_terminal_nodes_to_yaml_env(all_terminal_nodes)
+        score, score_by_node = score_tree(parse_tree)
+        print("Score by node: ", score_by_node)
+        yaml_env = convert_tree_to_yaml_env(parse_tree)
+        print("Our score: %f" % score)
+        print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
 
@@ -959,7 +974,7 @@ if __name__ == "__main__":
             plt.subplot(2, 2, 4)
             plt.gca().clear()
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            draw_parse_tree(G, label_name=False, label_score=False, alpha=0.25)
+            draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
             plt.title("Generated scene with parse tree")
             plt.pause(0.5)
         except Exception as e:
@@ -974,7 +989,7 @@ if __name__ == "__main__":
             plt.xlim(-0.2, 1.2)
             plt.ylim(-0.2, 1.2)
 
-            guessed_parse_tree, score = parse_tree_from_yaml(yaml_env, ax=plt.gca())
+            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, ax=plt.gca())
 
             print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
             plt.title("Guessed parse tree with score %f" % score)
