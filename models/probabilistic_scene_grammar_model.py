@@ -138,7 +138,7 @@ class CovaryingSetNode(Node):
             init_weights,
             constraint=constraints.simplex)
 
-        self.production_dist = dist.Categorical(self.exhaustive_set_weights)
+        self.production_dist = dist.Categorical(logits=torch.log(self.exhaustive_set_weights))
         self.site_prefix = ""
         self.production_rules = production_rules
 
@@ -241,7 +241,7 @@ class PlaceSetting(CovaryingSetNode):
         self.object_types_by_name = {
             "plate": Plate,
             "cup": Cup,
-            #"left_fork": Fork,
+            "left_fork": Fork,
             #"left_knife": Knife,
             #"left_spoon": Spoon,
             #"right_fork": Fork,
@@ -252,7 +252,7 @@ class PlaceSetting(CovaryingSetNode):
             "plate": ([0., 0.16, 0.], [0.01, 0.01, 3.]),
             "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 3.]),
             #"right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            #"left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
@@ -279,7 +279,7 @@ class PlaceSetting(CovaryingSetNode):
             #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
             #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
             #(name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["left_fork"]): 2.,
+            (name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
             #(name_to_ind["cup"],): 0.5,
             (name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
@@ -432,6 +432,9 @@ def get_node_parent_or_none(parse_tree, node):
     elif len(parents) == 1:
         return parents[0]
     else:
+        print("Bad parse tree: ", parse_tree)
+        print("Node: ", node)
+        print("Parents: ", parents)
         raise NotImplementedError("> 1 parent --> bad parse tree")
 
 
@@ -664,7 +667,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
     iter_k = 0
     while iter_k < max_num_iters:
         score, scores_by_node = score_tree(parse_tree,  assert_rooted=True)
-        # print("At start of iter %d, tree score is %f" % (iter_k, score))
+        print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
             draw_parse_tree(parse_tree, ax=ax)
@@ -737,6 +740,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
                         possible_parent_nodes_scores.append(score)
 
             if len(possible_parent_nodes_scores) == 0:
+                iter_k  += 1
                 continue
             possible_parent_nodes_scores_raw = torch.stack(possible_parent_nodes_scores)
             # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
@@ -749,8 +753,10 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
             child_nodes = possible_child_nodes[ind]
             new_parent_node, new_prod_node = possible_parent_nodes[ind]
             best_score = possible_parent_nodes_scores_raw[ind]
+            # print("Adding ", new_parent_node, " and rule ", new_prod_node, " as parent to ", child_nodes)
             if new_parent_node not in parse_tree.nodes:
                 parse_tree.add_node(new_parent_node)
+                assert(new_prod_node not in parse_tree.nodes)
                 parse_tree.add_node(new_prod_node)
                 parse_tree.add_edge(new_parent_node, new_prod_node)
             elif new_prod_node not in parse_tree.nodes:
@@ -762,6 +768,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
             # Whole tree is feasible!
             break
         iter_k += 1
+    return score_tree(parse_tree)[0]
 
 def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
 
@@ -849,8 +856,22 @@ def prune_node_from_tree(parse_tree, victim_node):
     # if the rule isn't producing anything else, or
     # if removing this node makes the rule invalid.
     # Remove all of the node's rules as well.
-    # If it's a ProductionRule: just remove the
-    # rule.
+    # If it's a ProductionRule: remove the ProductionRule,
+    # and the parent node as well if this makes it
+    # infeasible.
+    if isinstance(victim_node, ProductionRule):
+        parent = get_node_parent_or_none(parse_tree, victim_node)
+        assert(parent)  # All Rules should always have parents
+        parse_tree.remove_node(victim_node)
+        # Clean up the parent Node if this made it invalid
+        remaining_siblings = list(parse_tree.successors(parent))
+        parent_parent = get_node_parent_or_none(parse_tree, parent)
+        if (torch.isinf(
+                parent.score_production_rules(parent_parent, remaining_siblings))):
+            # This will fall down into the next case, which
+            # is removing a Node.
+            victim_node = parent
+
     if isinstance(victim_node, Node):
         parent = get_node_parent_or_none(parse_tree, victim_node)
         # Remove all child rules
@@ -865,9 +886,7 @@ def prune_node_from_tree(parse_tree, victim_node):
             if (len(remaining_siblings) == 0 or
                 np.isinf(parent.score_products(parent_parent, remaining_siblings))):
                 parse_tree.remove_node(parent)
-    else:
-        assert(isinstance(victim_node, ProductionRule))
-        parse_tree.remove_node(victim_node)
+
 
 def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
     # Build an initial parse tree.
@@ -884,7 +903,7 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
         if not torch.isinf(score):
             # Take random nodes (taking the less likely nodes more
             # frequently) and remove them.
-            for remove_k in range(np.random.geometric(p=0.7)):
+            for remove_k in range(np.random.geometric(p=0.5)):
                 removable_nodes = [
                     n for n in parse_tree.nodes if
                     (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
@@ -901,8 +920,12 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
                 print("Pruning node ", removable_nodes[ind])
                 prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-        repair_parse_tree_in_place(parse_tree, ax=ax)
-        optimize_parse_tree_hmc_in_place(parse_tree, ax=ax)
+        repaired_score = repair_parse_tree_in_place(parse_tree, ax=None)
+        if torch.isinf(repaired_score):
+            print("\tRejecting due to failure to find a feasible repair.")
+            parse_tree = original_parse_tree_state.rebuild_original_tree()
+
+        optimize_parse_tree_hmc_in_place(parse_tree, ax=None)
         new_score, _ = score_tree(parse_tree)
         # Accept probability based on ratio of old score and current score
         accept_prob = min(1., torch.exp(new_score - score))
@@ -924,7 +947,7 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
 
 
 if __name__ == "__main__":
-    seed = 46
+    seed = 47
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
