@@ -8,6 +8,7 @@ import yaml
 
 import matplotlib.pyplot as plt
 import networkx as nx
+from networkx.algorithms.traversal.depth_first_search import dfs_tree
 import numpy as np
 
 import pydrake
@@ -241,7 +242,7 @@ class PlaceSetting(CovaryingSetNode):
         self.object_types_by_name = {
             "plate": Plate,
             "cup": Cup,
-            "left_fork": Fork,
+            #"left_fork": Fork,
             #"left_knife": Knife,
             #"left_spoon": Spoon,
             #"right_fork": Fork,
@@ -252,7 +253,7 @@ class PlaceSetting(CovaryingSetNode):
             "plate": ([0., 0.16, 0.], [0.01, 0.01, 3.]),
             "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 3.]),
             #"right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            #"left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
@@ -279,7 +280,7 @@ class PlaceSetting(CovaryingSetNode):
             #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
             #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
             #(name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
-            (name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
+            #(name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
             #(name_to_ind["cup"],): 0.5,
             (name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
@@ -606,7 +607,7 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
             label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
         if label_name != "":
             label_dict[node] = label_str
-    colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
+    colors = np.array([max(scores_by_node[node].item(), -1000) for node in pruned_tree.nodes])
     if len(colors) == 0:
         colors = None
     else:
@@ -655,7 +656,7 @@ def guess_place_setting(parent, child_nodes):
     return place_setting_node, candidate_rules, candidate_lls
 
 
-def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
+def repair_parse_tree(parse_tree, max_num_iters=100, ax=None):
     # Build that tree into a feasible one by repeatedly sampling
     # subsets of infeasible nodes and selecting among the rules
     # that could have generated them.
@@ -667,11 +668,13 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
     iter_k = 0
     while iter_k < max_num_iters:
         score, scores_by_node = score_tree(parse_tree,  assert_rooted=True)
-        print("At start of iter %d, tree score is %f" % (iter_k, score))
+        original_parse_tree_state = ParseTreeState(parse_tree)
+
+        print("\n\nAt start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
             draw_parse_tree(parse_tree, ax=ax)
-            plt.pause(0.01)
+            plt.pause(1E-3)
         
         # Find the currently-infeasible nodes.
         infeasible_nodes = [key for key in scores_by_node.keys() if torch.isinf(scores_by_node[key])]
@@ -689,24 +692,42 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
             possible_child_nodes = []
             possible_parent_nodes = []
             possible_parent_nodes_scores = []
+            possible_parent_nodes_states = []
 
-            for inner_iter in range(5):
+            def evaluate_subtree(subtree, parent, rule, sampled_nodes):
+                subtree_score = optimize_parse_tree_hmc_in_place(subtree, assert_rooted=False, num_hmc_steps=10, num_dynamics_steps=10)
+                if not torch.isinf(subtree_score):
+                    possible_child_nodes.append(sampled_nodes)
+                    possible_parent_nodes.append((parent, rule))
+                    possible_parent_nodes_scores.append(subtree_score)
+                    possible_parent_nodes_states.append(ParseTreeState(subtree))
+
+            # TODO(gizatt) Sample multiple nodes at once.
+            # Not doing it right now because I know all rules are single-production-capable.
+            for inner_iter in range(len(infeasible_nodes)):
                 # Sample a subset of infeasible nodes.
-                number_of_sampled_nodes = min(np.random.geometric(p=0.5), len(infeasible_nodes))
-                sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
+                #number_of_sampled_nodes = 1 # min(np.random.geometric(p=0.5), len(infeasible_nodes))
+                #sampled_nodes = random.sample(infeasible_nodes, number_of_sampled_nodes)
+                sampled_nodes = [infeasible_nodes[inner_iter]]
 
                 # Check all ways of adding this to the tree:
                 #  - Append this to products of an existing rule.
                 #  - Append a production rule to an already existing non-terminal node.
                 for node in parse_tree.nodes():
+                    # Undo any parameter mods we made exploring the last option
+                    parse_tree = original_parse_tree_state.rebuild_original_tree()
                     parent = get_node_parent_or_none(parse_tree, node)
                     if isinstance(node, ProductionRule):
                         # Try adding this to the products of this rule
                         score = node.score_products(parent, list(parse_tree.successors(node)) + sampled_nodes)
                         if not torch.isinf(score):
-                            possible_child_nodes.append(sampled_nodes)
-                            possible_parent_nodes.append((parent, node))
-                            possible_parent_nodes_scores.append(score)
+                            # Try forming this subtree and doing some HMC
+                            # Parent is guaranteed to exist, as this is a rule, and all rules
+                            # have parents by construction.
+                            subtree = nx.compose_all([dfs_tree(parse_tree, n) for n in sampled_nodes + [parent]])
+                            for new_node in sampled_nodes:
+                                subtree.add_edge(node, new_node)
+                            evaluate_subtree(subtree, parent, node, sampled_nodes)
                     elif isinstance(node, AndNode):
                         # This can't ever work either, as an instantiated AndNode
                         # is already feasible by construction, and the output
@@ -726,18 +747,24 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
                             score = rule.score_products(node, sampled_nodes)
                             score = score + node.score_production_rules(parent, existing_rules + [rule])
                             if not torch.isinf(score):
-                                possible_child_nodes.append(sampled_nodes)
-                                possible_parent_nodes.append((node, rule))
-                                possible_parent_nodes_scores.append(score)
+                                subtree = nx.compose_all([dfs_tree(parse_tree, n) for n in sampled_nodes + [node]])
+                                subtree.add_node(rule)
+                                subtree.add_edge(node, rule)
+                                for new_node in sampled_nodes:
+                                    subtree.add_edge(rule, new_node)
+                                evaluate_subtree(subtree, node, rule, sampled_nodes)
                     else:
                         pass
                 # - Make a new intermediate node and rule with these as the products.
                 for node_sampler in candidate_intermediate_node_generators:
-                    new_node, new_rules, scores = node_sampler(None, sampled_nodes)
+                    new_parent, new_rules, scores = node_sampler(None, sampled_nodes)
                     for rule, score in zip(new_rules, scores):
-                        possible_child_nodes.append(sampled_nodes)
-                        possible_parent_nodes.append((new_node, rule))
-                        possible_parent_nodes_scores.append(score)
+                        subtree = nx.compose_all([dfs_tree(parse_tree, n) for n in sampled_nodes])
+                        subtree.add_node(new_parent)
+                        subtree.add_edge(new_parent, rule)
+                        for new_node in sampled_nodes:
+                            subtree.add_edge(rule, new_node)
+                        evaluate_subtree(subtree, new_parent, rule, sampled_nodes)
 
             if len(possible_parent_nodes_scores) == 0:
                 iter_k  += 1
@@ -753,7 +780,6 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
             child_nodes = possible_child_nodes[ind]
             new_parent_node, new_prod_node = possible_parent_nodes[ind]
             best_score = possible_parent_nodes_scores_raw[ind]
-            # print("Adding ", new_parent_node, " and rule ", new_prod_node, " as parent to ", child_nodes)
             if new_parent_node not in parse_tree.nodes:
                 parse_tree.add_node(new_parent_node)
                 assert(new_prod_node not in parse_tree.nodes)
@@ -764,22 +790,21 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
                 parse_tree.add_edge(new_parent_node, new_prod_node)
             for child_node in child_nodes:
                 parse_tree.add_edge(new_prod_node, child_node)
+            possible_parent_nodes_states[ind].rebuild_original_tree()
         else:
             # Whole tree is feasible!
             break
         iter_k += 1
-    return score_tree(parse_tree)[0]
+    return parse_tree, score_tree(parse_tree)[0]
 
-def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
+def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, num_hmc_steps=5, num_dynamics_steps=10, assert_rooted=True):
 
     # Run HMC on the continuous paramaters (poses of the place settings)
     # for a few steps.
     continuous_params = []
     v_proposal_dists = []
-    num_hmc_steps = 5
-    num_dynamics_steps = 10
-    epsilon_v = 5E-3
-    epsilon_p = 5E-3
+    epsilon_v = 1E-3
+    epsilon_p = 1E-3
     proposal_variance = 1.0
     for node in parse_tree:
         if isinstance(node, PlaceSetting):
@@ -791,9 +816,13 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
             ax.clear()
             draw_parse_tree(parse_tree)
             plt.pause(0.1)
-        initial_score, _ = score_tree(parse_tree)
+        initial_score, _ = score_tree(parse_tree, assert_rooted=assert_rooted)
+        if torch.isinf(initial_score) or initial_score.grad_fn is None:
+            return initial_score
         initial_score.backward(retain_graph=True)
         initial_param_vals = [p.detach().numpy().copy() for p in continuous_params]
+        if len(initial_param_vals) == 0:
+            return initial_score
         current_vs = [v_dist.sample() for v_dist in v_proposal_dists]
         initial_potential = (sum([torch.pow(v, 2) for v in current_vs])/2.).sum()
         # Simulate trajectory for a few steps
@@ -809,9 +838,8 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
             for p in continuous_params:
                 p.grad.zero_()
 
-            current_score, _ = score_tree(parse_tree)
+            current_score, _ = score_tree(parse_tree, assert_rooted=assert_rooted)
             current_score.backward(retain_graph=True)
-
             # Step momentum normally, except at final step.
             if step < (num_dynamics_steps - 1):
                 for p, v in zip(continuous_params, current_vs):
@@ -833,7 +861,7 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
         else:
             for p, p0 in zip(continuous_params, initial_param_vals):
                 p.data = torch.tensor(p0)
-
+    return score_tree(parse_tree, assert_rooted=assert_rooted)[0]
 
 class ParseTreeState():
     def __init__(self, source_tree):
@@ -920,13 +948,13 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
                 print("Pruning node ", removable_nodes[ind])
                 prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-        repaired_score = repair_parse_tree_in_place(parse_tree, ax=None)
+        parse_tree, repaired_score = repair_parse_tree(parse_tree, ax=ax)
         if torch.isinf(repaired_score):
             print("\tRejecting due to failure to find a feasible repair.")
             parse_tree = original_parse_tree_state.rebuild_original_tree()
+        print("\tRepaired score: %f" % repaired_score)
 
-        optimize_parse_tree_hmc_in_place(parse_tree, ax=None)
-        new_score, _ = score_tree(parse_tree)
+        new_score = optimize_parse_tree_hmc_in_place(parse_tree, ax=ax, num_hmc_steps=10)
         # Accept probability based on ratio of old score and current score
         accept_prob = min(1., torch.exp(new_score - score))
         if not dist.Bernoulli(accept_prob).sample():
@@ -936,7 +964,8 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
             # TODO(gizatt) This doesn't deal with the issue of poses getting updated
             # in the loop. Tree-cloning might be good to slip in first.
             parse_tree = original_parse_tree_state.rebuild_original_tree()
-
+        else:
+            print("\tAccepting step to score %f" % new_score)
         score, _ = score_tree(parse_tree)
         ax.clear()
         draw_parse_tree(parse_tree, ax=ax)
@@ -1006,9 +1035,9 @@ if __name__ == "__main__":
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 
         plt.figure()
-        for k in range(9):
+        for k in range(1):
             # And then try to parse it
-            ax = plt.subplot(3, 3, k+1)
+            ax = plt.subplot(1, 1, k+1)
             plt.xlim(-0.2, 1.2)
             plt.ylim(-0.2, 1.2)
 
