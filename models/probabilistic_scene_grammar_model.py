@@ -292,7 +292,7 @@ class PlaceSetting(CovaryingSetNode):
 class Table(IndependentSetNode, RootNode):
 
     class PlaceSettingProductionRule(ProductionRule):
-        def __init__(self, root_pose):
+        def __init__(self, pose):
             ProductionRule.__init__(self, products=[PlaceSetting])
             # Relative offset from root pose is drawn from a diagonal
             # Normal. It's rotated into the root pose frame at sample time.
@@ -302,14 +302,14 @@ class Table(IndependentSetNode, RootNode):
                               torch.tensor([0.01, 0.01, 0.1]),
                               constraint=constraints.positive)
             self.offset_dist = dist.Normal(mean, var)
-            self.root_pose = root_pose
+            self.pose = pose
 
         def __call__(self, parent, site_prefix):
             rel_offset = pyro.sample("%s_place_setting_offset" % site_prefix,
                                      self.offset_dist)
             # Rotate offset
-            root_pose_in_world = chain_pose_transforms(parent.pose, self.root_pose)
-            abs_offset = chain_pose_transforms(root_pose_in_world, rel_offset)
+            pose_in_world = chain_pose_transforms(parent.pose, self.pose)
+            abs_offset = chain_pose_transforms(pose_in_world, rel_offset)
             return [PlaceSetting(pose=abs_offset)]
 
         def score_products(self, parent, products):
@@ -317,8 +317,8 @@ class Table(IndependentSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             abs_offset = products[0].pose
-            root_pose_in_world = chain_pose_transforms(parent.pose, self.root_pose)
-            rel_offset = chain_pose_transforms(invert_pose(root_pose_in_world), abs_offset)
+            pose_in_world = chain_pose_transforms(parent.pose, self.pose)
+            rel_offset = chain_pose_transforms(invert_pose(pose_in_world), abs_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, num_place_setting_locations=4):
@@ -330,12 +330,12 @@ class Table(IndependentSetNode, RootNode):
             # TODO(gizatt) Root pose for each cluster could be a parameter.
             # This turns this into a GMM, sort of?
             r = torch.tensor((k / float(num_place_setting_locations))*np.pi*2.)
-            root_pose = torch.empty(3)
-            root_pose[0] = self.table_radius * torch.cos(r)
-            root_pose[1] = self.table_radius * torch.sin(r)
-            root_pose[2] = r
+            pose = torch.empty(3)
+            pose[0] = self.table_radius * torch.cos(r)
+            pose[1] = self.table_radius * torch.sin(r)
+            pose[2] = r
             production_rules.append(self.PlaceSettingProductionRule(
-                root_pose=root_pose))
+                pose=pose))
         IndependentSetNode.__init__(self, "table_node", production_rules,
                                     torch.ones(num_place_setting_locations)*0.5)
 
@@ -636,12 +636,14 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
 
 def guess_place_setting(parent, child_nodes):
     # Sample a place setting root pose at the average
-    # location of child poses
+    # location of child poses, oriented inwards toward
+    # middle like we know place settings ought to be.
     init_pose = torch.zeros(3)
     for node in child_nodes:
         init_pose = init_pose + node.pose
     init_pose /= len(child_nodes)
-    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 1.0])).sample()
+    init_pose[2] = torch.atan2(init_pose[1], init_pose[0]) + np.pi/2.
+    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 0.1])).sample()
     place_setting_node = PlaceSetting(pose=init_pose)
 
     candidate_rules = []
@@ -776,7 +778,7 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
     # for a few steps.
     continuous_params = []
     v_proposal_dists = []
-    num_hmc_steps = 5
+    num_hmc_steps = 10
     num_dynamics_steps = 10
     epsilon_v = 5E-3
     epsilon_p = 5E-3
@@ -846,7 +848,7 @@ class ParseTreeState():
     def rebuild_original_tree(self):
         # Restore attributes
         for node in self.poses_by_node.keys():
-            self.tree[node].pose = self.poses_by_node[node]
+           node.pose.data = torch.tensor(self.poses_by_node[node])
         return self.tree
 
 
@@ -924,18 +926,18 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
         if torch.isinf(repaired_score):
             print("\tRejecting due to failure to find a feasible repair.")
             parse_tree = original_parse_tree_state.rebuild_original_tree()
-
-        optimize_parse_tree_hmc_in_place(parse_tree, ax=None)
-        new_score, _ = score_tree(parse_tree)
-        # Accept probability based on ratio of old score and current score
-        accept_prob = min(1., torch.exp(new_score - score))
-        if not dist.Bernoulli(accept_prob).sample():
-            print("\tRejected step to score %f" % new_score)
-            # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
-            # has led to disgusting code here...
-            # TODO(gizatt) This doesn't deal with the issue of poses getting updated
-            # in the loop. Tree-cloning might be good to slip in first.
-            parse_tree = original_parse_tree_state.rebuild_original_tree()
+        else:
+            optimize_parse_tree_hmc_in_place(parse_tree, ax=None)
+            new_score, _ = score_tree(parse_tree)
+            # Accept probability based on ratio of old score and current score
+            accept_prob = min(1., torch.exp(new_score - score))
+            if not dist.Bernoulli(accept_prob).sample():
+                print("\tRejected step to score %f" % new_score)
+                # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
+                # has led to disgusting code here...
+                # TODO(gizatt) This doesn't deal with the issue of poses getting updated
+                # in the loop. Tree-cloning might be good to slip in first.
+                parse_tree = original_parse_tree_state.rebuild_original_tree()
 
         score, _ = score_tree(parse_tree)
         ax.clear()
