@@ -249,8 +249,8 @@ class PlaceSetting(CovaryingSetNode):
         def __call__(self, parent, obs_products=None):
             # Observation should be absolute position of the product
             if obs_products is not None:
-                assert(len(products) == 1 and isinstance(products[0], self.object_type))
-                obs_rel_pose = self._recover_rel_pose_from_abs_pose(parent, products[0].pose)
+                assert(len(obs_products) == 1 and isinstance(obs_products[0], self.object_type))
+                obs_rel_pose = self._recover_rel_pose_from_abs_pose(parent, obs_products[0].pose)
             else:
                 obs_rel_pose = None
             rel_pose = pyro.sample("%s_pose" % (self.name),
@@ -348,8 +348,8 @@ class Table(IndependentSetNode, RootNode):
 
         def __call__(self, parent, obs_products=None):
             if obs_products is not None:
-                assert len(products) == 1 and isinstance(products[0], PlaceSetting)
-                obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose) 
+                assert len(obs_products) == 1 and isinstance(obs_products[0], PlaceSetting)
+                obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose) 
             else:
                 obs_rel_offset = None
             rel_offset = pyro.sample("%s_place_setting_offset" % self.name,
@@ -482,60 +482,28 @@ def get_node_parent_or_none(parse_tree, node):
         print("Parents: ", parents)
         raise NotImplementedError("> 1 parent --> bad parse tree")
 
-
-class ProbabilisticSceneGrammarModel():        
-
-    def __init__(self):
-        pass
-
-    def _check_data_type(self, observed_tree):
-        # observed_tree should be a parse tree as a NetworkX DiGraph
-        return isinstance(observed_tree, DiGraph)
-
-    def generate_unconditioned_parse_tree(self):
-        root_node = Table()
-        input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
-        parse_tree = nx.DiGraph()
-        parse_tree.add_node(root_node)
-        num_productions = 0
-        while len(input_nodes_with_parents)>  0:
-            parent, node = input_nodes_with_parents.pop(0)
-            if isinstance(node, TerminalNode):
-                # Nothing more to do with this node
-                pass
-            else:
-                # Expand by picking a production rule
-                production_rules = node.sample_production_rules(parent)
-                for i, rule in enumerate(production_rules):
-                    parse_tree.add_node(rule)
-                    parse_tree.add_edge(node, rule)
-                    new_nodes = rule(node)
-                    for new_node in new_nodes:
-                        parse_tree.add_node(new_node)
-                        parse_tree.add_edge(rule, new_node)
-                        input_nodes_with_parents.append((rule, new_node))
-                num_productions += 1
-        return parse_tree
-
-    def model(self, observed_tree=None):
-        if observed_tree is not None:
-            self._check_data_type(observed_tree)
-            # Traverse the tree and run each forward sample method
-            # in conditioned / fully-observed mode.
-            for node in observed_tree.nodes:
-                parent = observed_tree.predecessors(node)
-                children = observed_tree.successors(node)
-                if isinstance(node, ProductionRule):
-                    node(parent, obs_products=children)
-                elif isinstance(node, Node):
-                    node.sample_production_rules(parent, obs_production_rules=children)
+def generate_unconditioned_parse_tree():
+    root_node = Table()
+    input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
+    parse_tree = nx.DiGraph()
+    parse_tree.add_node(root_node)
+    while len(input_nodes_with_parents)>  0:
+        parent, node = input_nodes_with_parents.pop(0)
+        if isinstance(node, TerminalNode):
+            # Nothing more to do with this node
+            pass
         else:
-            return self.generate_unconditioned_parse_tree()
-        
-    def guide(self, data):
-        self._check_data_type(data)
-
-
+            # Expand by picking a production rule
+            production_rules = node.sample_production_rules(parent)
+            for i, rule in enumerate(production_rules):
+                parse_tree.add_node(rule)
+                parse_tree.add_edge(node, rule)
+                new_nodes = rule(node)
+                for new_node in new_nodes:
+                    parse_tree.add_node(new_node)
+                    parse_tree.add_edge(rule, new_node)
+                    input_nodes_with_parents.append((rule, new_node))
+    return parse_tree
 
 def convert_tree_to_yaml_env(parse_tree):
     terminal_nodes = []
@@ -1024,13 +992,11 @@ if __name__ == "__main__":
     random.seed(seed)
     pyro.enable_validation(True)
 
-    model = ProbabilisticSceneGrammarModel()
-
     plt.figure().set_size_inches(15, 10)
     for k in range(1):
         start = time.time()
         pyro.clear_param_store()
-        trace = poutine.trace(model.model).get_trace()
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
         parse_tree = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
@@ -1077,17 +1043,25 @@ if __name__ == "__main__":
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 
         plt.figure()
-        for k in range(9):
+        for k in range(1):
             # And then try to parse it
             ax = plt.subplot(3, 3, k+1)
             plt.xlim(-0.2, 1.2)
             plt.ylim(-0.2, 1.2)
 
-            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, ax=plt.gca())
+            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=1, ax=plt.gca())
 
             print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
             plt.title("Guessed parse tree with score %f" % score)
             plt.gca().clear()
             draw_parse_tree(guessed_parse_tree)
             plt.pause(1E-3)
+
+        #trace = poutine.trace(model.model(observed_tree=guessed_parse_tree)).get_trace()
+        #print("Trace log prob sum: %f" % trace.log_prob_sum())
+        #print("full trace values: ")
+        #for node_name in trace.nodes.keys():
+        #    if node_name in ["_INPUT", "_RETURN"]:
+        #        continue
+        #    print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
         plt.show()
