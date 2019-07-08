@@ -56,6 +56,35 @@ def generate_unconditioned_parse_tree():
                     input_nodes_with_parents.append((rule, new_node))
     return parse_tree
 
+def rerun_conditioned_parse_tree(
+        observed_tree,
+        score_terminal_products=True,
+        score_nonterminal_products=True):
+    # "Rerun" the observed tree in top-down order.
+            
+    root_node = next(node for node in observed_tree.nodes if isinstance(node, Table))
+    input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
+    while len(input_nodes_with_parents)>  0:
+        parent, node = input_nodes_with_parents.pop(0)
+        if isinstance(node, TerminalNode):
+            # Nothing more to do with this node
+            pass
+        else:
+            production_rules = list(observed_tree.successors(node))
+            # Sample identically
+            if score_nonterminal_products:
+                node.sample_production_rules(parent, obs_production_rules=production_rules)
+            for i, rule in enumerate(production_rules):
+                products = list(observed_tree.successors(rule))
+                terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
+                if score_terminal_products and any(terminal_product_mask):
+                    assert(all(terminal_product_mask))
+                    rule(node, obs_products=products)
+                elif score_nonterminal_products and not any(terminal_product_mask):
+                    rule(node, obs_products=products)
+                for new_node in products:
+                    input_nodes_with_parents.append((rule, new_node))
+
 
 def convert_tree_to_yaml_env(parse_tree):
     terminal_nodes = []
@@ -175,6 +204,20 @@ def score_tree(parse_tree, assert_rooted=True):
 
     return total_ll, scores_by_node
 
+def score_terminal_node_productions(parse_tree):
+    total_score = torch.tensor(0.)
+    for node in parse_tree.nodes:
+        if isinstance(node, ProductionRule):
+            parent = get_node_parent_or_none(parse_tree, node)
+            assert(parent is not None)
+            children = list(parse_tree.successors(node))
+            mask = [isinstance(child, TerminalNode) for child in children]
+            if any(mask):
+                # No mixed productions of Terminal + Non-Terminal, for easier scoring.
+                assert(all(mask))
+                total_score += node.score_products(parent, children)
+    return total_score
+
 def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
     score, scores_by_node = score_tree(parse_tree)
@@ -246,7 +289,7 @@ def guess_place_setting(parent, child_nodes):
     return place_setting_node, candidate_rules, candidate_lls
 
 
-def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
+def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=False):
     # Build that tree into a feasible one by repeatedly sampling
     # subsets of infeasible nodes and selecting among the rules
     # that could have generated them.
@@ -258,7 +301,8 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
     iter_k = 0
     while iter_k < max_num_iters:
         score, scores_by_node = score_tree(parse_tree,  assert_rooted=True)
-        print("At start of iter %d, tree score is %f" % (iter_k, score))
+        if verbose:
+            print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
             draw_parse_tree(parse_tree, ax=ax)
@@ -361,7 +405,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None):
         iter_k += 1
     return score_tree(parse_tree)[0]
 
-def optimize_parse_tree_hmc_in_place(parse_tree, ax=None):
+def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
 
     # Run HMC on the continuous paramaters (poses of the place settings)
     # for a few steps.
@@ -479,7 +523,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
+def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None, verbose=False):
     # Build an initial parse tree.
     parse_tree = nx.DiGraph()
     parse_tree.add_node(Table()) # Root node
@@ -489,7 +533,8 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
     for outer_k in range(outer_iterations):
         original_parse_tree_state = ParseTreeState(parse_tree)
         score, scores_by_node = score_tree(parse_tree)
-        print("Starting iter %d at score %f" % (outer_k, score))
+        if verbose:
+            print("Starting iter %d at score %f" % (outer_k, score))
 
         if not torch.isinf(score):
             # Take random nodes (taking the less likely nodes more
@@ -508,20 +553,23 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
                 normalization_factor = maxval + torch.log(torch.exp(scores_raw - maxval).sum())
                 scores_normed = torch.exp(scores_raw - normalization_factor)
                 ind = dist.Categorical(scores_normed).sample()
-                print("Pruning node ", removable_nodes[ind])
+                if verbose:
+                    print("Pruning node ", removable_nodes[ind])
                 prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-        repaired_score = repair_parse_tree_in_place(parse_tree, ax=None)
+        repaired_score = repair_parse_tree_in_place(parse_tree, ax=None, verbose=verbose)
         if torch.isinf(repaired_score):
-            print("\tRejecting due to failure to find a feasible repair.")
+            if verbose:
+                print("\tRejecting due to failure to find a feasible repair.")
             parse_tree = original_parse_tree_state.rebuild_original_tree()
         else:
-            optimize_parse_tree_hmc_in_place(parse_tree, ax=None)
+            optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=verbose)
             new_score, _ = score_tree(parse_tree)
             # Accept probability based on ratio of old score and current score
             accept_prob = min(1., torch.exp(new_score - score))
             if not dist.Bernoulli(accept_prob).sample():
-                print("\tRejected step to score %f" % new_score)
+                if verbose:
+                    print("\tRejected step to score %f" % new_score)
                 # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
                 # has led to disgusting code here...
                 # TODO(gizatt) This doesn't deal with the issue of poses getting updated
@@ -529,10 +577,12 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None):
                 parse_tree = original_parse_tree_state.rebuild_original_tree()
 
         score, _ = score_tree(parse_tree)
-        ax.clear()
-        draw_parse_tree(parse_tree, ax=ax)
-        print("\tEnding iter %d at score %f" % (outer_k, score))
+        if ax is not None: 
+            ax.clear()
+            draw_parse_tree(parse_tree, ax=ax)
         plt.pause(1E-3)
+        if verbose:
+            print("\tEnding iter %d at score %f" % (outer_k, score))
 
     return parse_tree, score
 
@@ -544,8 +594,12 @@ if __name__ == "__main__":
     random.seed(seed)
     pyro.enable_validation(True)
 
+    noalias_dumper = yaml.dumper.SafeDumper
+    noalias_dumper.ignore_aliases = lambda self, data: True
+            
+
     plt.figure().set_size_inches(15, 10)
-    for k in range(1):
+    for k in range(100):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -572,8 +626,8 @@ if __name__ == "__main__":
         print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        #with open("table_setting_environments_generated.yaml", "a") as file:
-        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file)
+        with open("table_setting_environments_generated.yaml", "a") as file:
+            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
@@ -594,22 +648,23 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 
-        plt.figure()
-        for k in range(3):
-            # And then try to parse it
-            ax = plt.subplot(3, 1, k+1)
-            plt.xlim(-0.2, 1.2)
-            plt.ylim(-0.2, 1.2)
-
-            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, ax=plt.gca())
-
-            print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
-            plt.title("Guessed parse tree with score %f" % score)
-            plt.gca().clear()
-            draw_parse_tree(guessed_parse_tree)
-            plt.pause(1E-3)
-
-        plt.show()
+        #plt.figure()
+        #for k in range(3):
+        #    # And then try to parse it
+        #    ax = plt.subplot(3, 1, k+1)
+        #    plt.xlim(-0.2, 1.2)
+        #    plt.ylim(-0.2, 1.2)
+#
+        #    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, ax=plt.gca())
+#
+        #    print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
+        #    plt.title("Guessed parse tree with score %f" % score)
+        #    plt.gca().clear()
+        #    draw_parse_tree(guessed_parse_tree)
+        #    plt.pause(1E-3)
+#
+        #plt.show()
+        plt.pause(0.1)
         #trace = poutine.trace(model.model(observed_tree=guessed_parse_tree)).get_trace()
         #print("Trace log prob sum: %f" % trace.log_prob_sum())
         #print("full trace values: ")
