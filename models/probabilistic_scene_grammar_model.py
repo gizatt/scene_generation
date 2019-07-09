@@ -1,6 +1,7 @@
 from __future__ import print_function
 from copy import deepcopy
 from functools import partial
+import multiprocessing
 import time
 import random
 import sys
@@ -407,8 +408,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
 
 def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
 
-    # Run HMC on the continuous paramaters (poses of the place settings)
-    # for a few steps.
+    # Run HMC on the poses of the place settings for a few steps.
     continuous_params = []
     v_proposal_dists = []
     num_hmc_steps = 10
@@ -421,6 +421,8 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
             node.pose.requires_grad = True
             continuous_params.append(node.pose)
             v_proposal_dists.append(dist.Normal(torch.zeros(3), torch.ones(3)*proposal_variance))
+    if len(v_proposal_dists) == 0:
+        return
     for hmc_step in range(num_hmc_steps):
         if ax is not None:
             ax.clear()
@@ -523,69 +525,90 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, ax=None, verbose=False):
+def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, num_attempts=1, ax=None, verbose=False):
     # Build an initial parse tree.
     parse_tree = nx.DiGraph()
     parse_tree.add_node(Table()) # Root node
     for terminal_node in terminal_nodes_from_yaml(yaml_env):
         parse_tree.add_node(terminal_node)
 
-    for outer_k in range(outer_iterations):
-        original_parse_tree_state = ParseTreeState(parse_tree)
-        score, scores_by_node = score_tree(parse_tree)
-        if verbose:
-            print("Starting iter %d at score %f" % (outer_k, score))
-
-        if not torch.isinf(score):
-            # Take random nodes (taking the less likely nodes more
-            # frequently) and remove them.
-            for remove_k in range(np.random.geometric(p=0.5)):
-                removable_nodes = [
-                    n for n in parse_tree.nodes if
-                    (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
-                ]
-                if len(removable_nodes) == 0:
-                    break
-                scores_raw = torch.tensor([-scores_by_node[n] for n in removable_nodes])
-                # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
-                # See https://en.wikipedia.org/wiki/LogSumExp
-                maxval = scores_raw.max()
-                normalization_factor = maxval + torch.log(torch.exp(scores_raw - maxval).sum())
-                scores_normed = torch.exp(scores_raw - normalization_factor)
-                ind = dist.Categorical(scores_normed).sample()
-                if verbose:
-                    print("Pruning node ", removable_nodes[ind])
-                prune_node_from_tree(parse_tree, removable_nodes[ind])
-
-        repaired_score = repair_parse_tree_in_place(parse_tree, ax=None, verbose=verbose)
-        if torch.isinf(repaired_score):
+    best_tree = None
+    best_score = -np.inf
+    for attempt in range(num_attempts):
+        for outer_k in range(outer_iterations):
+            original_parse_tree_state = ParseTreeState(parse_tree)
+            score, scores_by_node = score_tree(parse_tree)
             if verbose:
-                print("\tRejecting due to failure to find a feasible repair.")
-            parse_tree = original_parse_tree_state.rebuild_original_tree()
-        else:
-            optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=verbose)
-            new_score, _ = score_tree(parse_tree)
-            # Accept probability based on ratio of old score and current score
-            accept_prob = min(1., torch.exp(new_score - score))
-            if not dist.Bernoulli(accept_prob).sample():
+                print("Starting iter %d at score %f" % (outer_k, score))
+
+            if not torch.isinf(score):
+                # Take random nodes (taking the less likely nodes more
+                # frequently) and remove them.
+                for remove_k in range(np.random.geometric(p=0.5)):
+                    removable_nodes = [
+                        n for n in parse_tree.nodes if
+                        (not isinstance(n, RootNode) and not isinstance(n, TerminalNode))
+                    ]
+                    if len(removable_nodes) == 0:
+                        break
+                    scores_raw = torch.tensor([-scores_by_node[n] for n in removable_nodes])
+                    # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
+                    # See https://en.wikipedia.org/wiki/LogSumExp
+                    maxval = scores_raw.max()
+                    normalization_factor = maxval + torch.log(torch.exp(scores_raw - maxval).sum())
+                    scores_normed = torch.exp(scores_raw - normalization_factor)
+                    ind = dist.Categorical(scores_normed).sample()
+                    if verbose:
+                        print("Pruning node ", removable_nodes[ind])
+                    prune_node_from_tree(parse_tree, removable_nodes[ind])
+
+            repaired_score = repair_parse_tree_in_place(parse_tree, ax=None, verbose=verbose)
+            if torch.isinf(repaired_score):
                 if verbose:
-                    print("\tRejected step to score %f" % new_score)
-                # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
-                # has led to disgusting code here...
-                # TODO(gizatt) This doesn't deal with the issue of poses getting updated
-                # in the loop. Tree-cloning might be good to slip in first.
+                    print("\tRejecting due to failure to find a feasible repair.")
                 parse_tree = original_parse_tree_state.rebuild_original_tree()
+            else:
+                optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=verbose)
+                new_score, _ = score_tree(parse_tree)
+                # Accept probability based on ratio of old score and current score
+                accept_prob = min(1., torch.exp(new_score - score))
+                if not dist.Bernoulli(accept_prob).sample():
+                    if verbose:
+                        print("\tRejected step to score %f" % new_score)
+                    # TODO(gizatt) In-place mutation of trees that can't be deepcopied (due to torch tensor stuff)
+                    # has led to disgusting code here...
+                    # TODO(gizatt) This doesn't deal with the issue of poses getting updated
+                    # in the loop. Tree-cloning might be good to slip in first.
+                    parse_tree = original_parse_tree_state.rebuild_original_tree()
 
-        score, _ = score_tree(parse_tree)
-        if ax is not None: 
-            ax.clear()
-            draw_parse_tree(parse_tree, ax=ax)
-        plt.pause(1E-3)
+            score, _ = score_tree(parse_tree)
+            if ax is not None: 
+                ax.clear()
+                draw_parse_tree(parse_tree, ax=ax)
+            plt.pause(1E-3)
+            if verbose:
+                print("\tEnding iter %d at score %f" % (outer_k, score))
+        if score > best_score:
+            best_tree = parse_tree
+            best_score = score
         if verbose:
-            print("\tEnding iter %d at score %f" % (outer_k, score))
+            print("\tEnding attempt %d at best score %f" % (attempt_k, best_score))
 
-    return parse_tree, score
+    return best_tree, best_score
 
+def worker(env, outer_iterations, num_attempts):
+    tree, score = guess_parse_tree_from_yaml(
+        env, outer_iterations=outer_iterations,
+        num_attempts=num_attempts, verbose=False)
+    print("Finished tree with score %f" % score)
+    return tree
+
+def guess_parse_trees_batch(yaml_envs, outer_iterations, num_attempts):
+    pool = multiprocessing.Pool(10)
+    all_observed_trees = pool.map(
+        partial(worker, outer_iterations=outer_iterations,
+                num_attempts=num_attempts), yaml_envs)
+    return all_observed_trees
 
 if __name__ == "__main__":
     seed = 47
