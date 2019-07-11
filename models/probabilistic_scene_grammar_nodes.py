@@ -250,9 +250,9 @@ class PlaceSetting(CovaryingSetNode):
             self.object_type = object_type
             mean = pyro.param("place_setting_%s_mean" % object_name,
                               torch.tensor(mean_init))
-            var = pyro.param("place_setting_%s_var" % object_name,
+            var =  pyro.param("place_setting_%s_var" % object_name,
                               torch.tensor(var_init),
-                              constraint=constraints.positive)
+                              constraint=constraints.greater_than(0.001))
             self.param_names = ["place_setting_%s_mean" % object_name,
                                 "place_setting_%s_var" % object_name]
             self.offset_dist = dist.Normal(
@@ -270,7 +270,7 @@ class PlaceSetting(CovaryingSetNode):
                                        self.offset_dist, obs=obs_rel_pose)
                 return obs_products
             else:
-                rel_pose = pyro.sample("%s_pose" % (self.name), self.offset_dist)
+                rel_pose = pyro.sample("%s_pose" % (self.name), self.offset_dist).detach()
                 abs_pose = chain_pose_transforms(parent.pose, rel_pose)
                 return [self.object_type(name="%s_%s" % (self.name, self.object_name), pose=abs_pose)]
 
@@ -278,8 +278,17 @@ class PlaceSetting(CovaryingSetNode):
             if len(products) != 1 or not isinstance(products[0], self.object_type):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
-            rel_pose = self._recover_rel_pose_from_abs_pose(parent, products[0].pose)
-            return self.offset_dist.log_prob(rel_pose).sum()
+            rel_pose = self._recover_rel_pose_from_abs_pose(parent, products[0].pose.detach())
+            #if self.object_name == "left_fork":
+                #print("rel pose: ", rel_pose)
+                #print("parent pose: ", parent.pose)
+                #mean = pyro.param("place_setting_%s_mean" % self.object_name)
+                #print("mean: ", mean)
+                #score = ((products[0].pose - mean).sum())
+                #print("Log prob: ", score)
+                #score.backward(retain_graph=True)
+                #print("Grad of mean: ", mean.grad)
+            return self.offset_dist.log_prob(rel_pose)
 
     def __init__(self, name, pose):
         self.pose = pose
@@ -354,12 +363,14 @@ class Table(IndependentSetNode, RootNode):
                 products=[PlaceSetting])
             # Relative offset from root pose is drawn from a diagonal
             # Normal. It's rotated into the root pose frame at sample time.
-            mean = pyro.param("table_place_setting_mean",
-                              torch.tensor([0.0, 0., np.pi/2.]))
-            var = pyro.param("table_place_setting_var",
-                              torch.tensor([0.01, 0.01, 0.1]),
-                              constraint=constraints.positive)
-            self.param_names = ["table_place_setting_mean", "table_place_setting_var"]
+            #mean = pyro.param("table_place_setting_mean",
+            #                  torch.tensor([0.0, 0., np.pi/2.]))
+            #var = pyro.param("table_place_setting_var",
+            #                  torch.tensor([0.01, 0.01, 0.1]),
+            #                  constraint=constraints.positive)
+            #self.param_names = ["table_place_setting_mean", "table_place_setting_var"]
+            mean = torch.tensor([0.0, 0., np.pi/2.])
+            var = torch.tensor([0.01, 0.01, 0.1])
             self.offset_dist = dist.Normal(mean, var).to_event(1)
             self.pose = pose
 
@@ -376,7 +387,7 @@ class Table(IndependentSetNode, RootNode):
                 return obs_products
             else:
                 rel_offset = pyro.sample("%s_place_setting_offset" % self.name,
-                                         self.offset_dist)
+                                         self.offset_dist).detach()
                 # Rotate offset
                 pose_in_world = chain_pose_transforms(parent.pose, self.pose)
                 abs_offset = chain_pose_transforms(pose_in_world, rel_offset)
@@ -391,7 +402,7 @@ class Table(IndependentSetNode, RootNode):
 
     def __init__(self, name="table", num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
-        self.table_radius = pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
+        self.table_radius = 0.45 #pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
         production_rules = []
         for k in range(num_place_setting_locations):
@@ -406,8 +417,8 @@ class Table(IndependentSetNode, RootNode):
                 name="%s_prod_%03d" % (name, k), pose=pose))
         production_probs = pyro.param("%s_independent_set_production_probs" % name,
                                       torch.ones(num_place_setting_locations)*0.5,
-                                      constraint=constraints.greater_than_eq(0.))
-        self.param_names = ["%s_radius" % name,
+                                      constraint=constraints.unit_interval)
+        self.param_names = [#"%s_radius" % name,
                             "%s_independent_set_production_probs" % name]
         IndependentSetNode.__init__(self, name, production_rules, production_probs)
 

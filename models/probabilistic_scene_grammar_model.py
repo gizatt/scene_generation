@@ -180,7 +180,7 @@ def score_tree(parse_tree, assert_rooted=True):
     by comparing a pyro-log-prob-sum of a forward run of the model
     to the value I compute here. Can I better use Pyro's machinery
     to do less work?'''
-    total_ll = torch.tensor(0.)
+    all_scores = []
     scores_by_node = {}
 
     for node in parse_tree.nodes:
@@ -201,9 +201,9 @@ def score_tree(parse_tree, assert_rooted=True):
         else:
             raise ValueError("Invalid node type in tree: ", type(node))
         scores_by_node[node] = node_score
-        total_ll = total_ll + node_score
+        all_scores.append(node_score)
 
-    return total_ll, scores_by_node
+    return torch.stack(all_scores).sum(), scores_by_node
 
 def score_terminal_node_productions(parse_tree):
     total_score = torch.tensor(0.)
@@ -415,7 +415,7 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
     num_dynamics_steps = 10
     epsilon_v = 5E-3
     epsilon_p = 5E-3
-    proposal_variance = 1.0
+    proposal_variance = 0.1
     for node in parse_tree:
         if isinstance(node, PlaceSetting):
             node.pose.requires_grad = True
@@ -526,15 +526,14 @@ def prune_node_from_tree(parse_tree, victim_node):
 
 
 def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, num_attempts=1, ax=None, verbose=False):
-    # Build an initial parse tree.
-    parse_tree = nx.DiGraph()
-    parse_tree.add_node(Table()) # Root node
-    for terminal_node in terminal_nodes_from_yaml(yaml_env):
-        parse_tree.add_node(terminal_node)
-
     best_tree = None
     best_score = -np.inf
     for attempt in range(num_attempts):
+        # Build an initial parse tree.
+        parse_tree = nx.DiGraph()
+        parse_tree.add_node(Table()) # Root node
+        for terminal_node in terminal_nodes_from_yaml(yaml_env):
+            parse_tree.add_node(terminal_node)
         for outer_k in range(outer_iterations):
             original_parse_tree_state = ParseTreeState(parse_tree)
             score, scores_by_node = score_tree(parse_tree)
@@ -611,7 +610,7 @@ def guess_parse_trees_batch(yaml_envs, outer_iterations, num_attempts):
     return all_observed_trees
 
 if __name__ == "__main__":
-    seed = 47
+    seed = 50
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -622,7 +621,7 @@ if __name__ == "__main__":
             
 
     plt.figure().set_size_inches(15, 10)
-    for k in range(100):
+    for k in range(1):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -649,8 +648,8 @@ if __name__ == "__main__":
         print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        with open("table_setting_environments_generated.yaml", "a") as file:
-            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
+        #with open("table_setting_environments_generated.yaml", "a") as file:
+        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
@@ -671,22 +670,23 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 
-        #plt.figure()
-        #for k in range(3):
-        #    # And then try to parse it
-        #    ax = plt.subplot(3, 1, k+1)
-        #    plt.xlim(-0.2, 1.2)
-        #    plt.ylim(-0.2, 1.2)
+        plt.show()
+        plt.figure()
+        for k in range(3):
+            # And then try to parse it
+            ax = plt.subplot(3, 1, k+1)
+            plt.xlim(-0.2, 1.2)
+            plt.ylim(-0.2, 1.2)
 #
-        #    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, ax=plt.gca())
+            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, ax=plt.gca())
 #
-        #    print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
-        #    plt.title("Guessed parse tree with score %f" % score)
-        #    plt.gca().clear()
-        #    draw_parse_tree(guessed_parse_tree)
-        #    plt.pause(1E-3)
+            print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
+            plt.title("Guessed parse tree with score %f" % score)
+            plt.gca().clear()
+            draw_parse_tree(guessed_parse_tree)
+            plt.pause(1E-3)
 #
-        #plt.show()
+        plt.show()
         plt.pause(0.1)
         #trace = poutine.trace(model.model(observed_tree=guessed_parse_tree)).get_trace()
         #print("Trace log prob sum: %f" % trace.log_prob_sum())
