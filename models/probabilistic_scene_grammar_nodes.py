@@ -47,8 +47,8 @@ class ProductionRule(object):
     queryable for what nodes this connects and able to
     provide scoring for whether a candidate production
     is a good idea at all. '''
-    def __init__(self, products, name):
-        self.products = products
+    def __init__(self, product_types, name):
+        self.product_types = product_types
         self.name = name
     def get_param_names(self):
         if not hasattr(self, "param_names"):
@@ -243,9 +243,6 @@ class PlaceSetting(CovaryingSetNode):
 
     class ObjectProductionRule(ProductionRule):
         def __init__(self, name, object_name, object_type, mean_init, var_init):
-            ProductionRule.__init__(self,
-                name=name,
-                products=[object_type])
             self.object_name = object_name
             self.object_type = object_type
             mean = pyro.param("place_setting_%s_mean" % object_name,
@@ -257,6 +254,9 @@ class PlaceSetting(CovaryingSetNode):
                                 "place_setting_%s_var" % object_name]
             self.offset_dist = dist.Normal(
                 loc=mean, scale=var).to_event(1)
+            ProductionRule.__init__(self,
+                name=name,
+                product_types=[object_type])
 
         def _recover_rel_pose_from_abs_pose(self, parent, abs_pose):
             return chain_pose_transforms(invert_pose(parent.pose), abs_pose)
@@ -358,9 +358,6 @@ class Table(IndependentSetNode, RootNode):
 
     class PlaceSettingProductionRule(ProductionRule):
         def __init__(self, name, pose):
-            ProductionRule.__init__(self,
-                name=name,
-                products=[PlaceSetting])
             # Relative offset from root pose is drawn from a diagonal
             # Normal. It's rotated into the root pose frame at sample time.
             #mean = pyro.param("table_place_setting_mean",
@@ -373,7 +370,10 @@ class Table(IndependentSetNode, RootNode):
             var = torch.tensor([0.01, 0.01, 0.1])
             self.offset_dist = dist.Normal(mean, var).to_event(1)
             self.pose = pose
-
+            ProductionRule.__init__(self,
+                name=name,
+                product_types=[PlaceSetting])
+            
         def _recover_rel_offset_from_abs_offset(self, parent, abs_offset):
             pose_in_world = chain_pose_transforms(parent.pose, self.pose)
             return chain_pose_transforms(invert_pose(pose_in_world), abs_offset)

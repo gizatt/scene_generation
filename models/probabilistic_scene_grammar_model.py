@@ -57,6 +57,34 @@ def generate_unconditioned_parse_tree():
                     input_nodes_with_parents.append((rule, new_node))
     return parse_tree
 
+def generate_hyperexpanded_parse_tree():
+    # Make a fully expanded parse tree where
+    # *every possible* non-terminal production rule and product is followed.
+    root_node = Table()
+    input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
+    parse_tree = nx.DiGraph()
+    parse_tree.add_node(root_node)
+    while len(input_nodes_with_parents)>  0:
+        parent, node = input_nodes_with_parents.pop(0)
+        if isinstance(node, TerminalNode):
+            # Nothing more to do with this node
+            pass
+        else:
+            # Activate all production rules.
+            for i, rule in enumerate(node.production_rules):
+                if all([issubclass(prod, TerminalNode) for prod in rule.product_types]):
+                    continue
+                parse_tree.add_node(rule)
+                parse_tree.add_edge(node, rule)
+                new_nodes = rule(node)
+                for new_node in new_nodes:
+                    if isinstance(new_node, TerminalNode):
+                        continue
+                    parse_tree.add_node(new_node)
+                    parse_tree.add_edge(rule, new_node)
+                    input_nodes_with_parents.append((rule, new_node))
+    return parse_tree
+
 def rerun_conditioned_parse_tree(
         observed_tree,
         score_terminal_products=True,
@@ -252,52 +280,13 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
     ax.set_title("Score: %f" % score)
 
 
-#def guess_table(child_nodes):
-#   # Tables are always at the same place
-#   table_node = Table(parent=None)
-#   candidate_rules = []
-#   candidate_lls = []
-#   for rule in table_node.production_rules:
-#       total_ll = rule.score_products(child_nodes) + table_node.score_production_rules([rule])
-#       if not torch.isinf(total_ll):
-#           candidate_rules.append(rule)
-#           candidate_lls.append(total_ll)
-#   return table_node, candidate_rules, candidate_lls
-
-num_unique_place_settings = 0
-def guess_place_setting(parent, child_nodes):
-    global num_unique_place_settings
-    # Sample a place setting root pose at the average
-    # location of child poses, oriented inwards toward
-    # middle like we know place settings ought to be.
-    init_pose = torch.zeros(3)
-    for node in child_nodes:
-        init_pose = init_pose + node.pose
-    init_pose /= len(child_nodes)
-    init_pose[2] = torch.atan2(init_pose[1], init_pose[0]) + np.pi/2.
-    init_pose = dist.Normal(init_pose, torch.tensor([0.1, 0.1, 0.1])).sample()
-    place_setting_node = PlaceSetting(name="guessed_place_setting_%03d" % num_unique_place_settings, pose=init_pose)
-    num_unique_place_settings += 1
-
-    candidate_rules = []
-    candidate_lls = []
-    for rule in place_setting_node.production_rules:
-        total_ll = rule.score_products(place_setting_node, child_nodes) + place_setting_node.score_production_rules(parent, [rule])
-        if not torch.isinf(total_ll):
-            candidate_rules.append(rule)
-            candidate_lls.append(total_ll)
-
-    return place_setting_node, candidate_rules, candidate_lls
-
-
 def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=False):
-    # Build that tree into a feasible one by repeatedly sampling
-    # subsets of infeasible nodes and selecting among the rules
-    # that could have generated them.
-
-    candidate_intermediate_node_generators = [
-        guess_place_setting
-    ]
+    # Collect all possible non-terminal intermediate nodes
+    hyper_parse_tree = generate_hyperexpanded_parse_tree()
+    candidate_intermediate_nodes = []
+    for node in hyper_parse_tree:
+        if isinstance(node, Node) and get_node_parent_or_none(hyper_parse_tree, node) is not None:
+            candidate_intermediate_nodes.append(node)
 
     iter_k = 0
     while iter_k < max_num_iters:
@@ -319,6 +308,8 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
             # as a special case. They can be crammed into the tree the
             # same way -- iterate over all nodes and see how they fit into
             # the available products.
+            # TODO(gizatt) Indeed, I'll *need* to support this for trees with
+            # AND nodes to ever be inferable.
             assert(isinstance(node, Node))
 
         if len(infeasible_nodes) > 0:
@@ -368,13 +359,16 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
                     else:
                         pass
                 # - Make a new intermediate node and rule with these as the products.
-                for node_sampler in candidate_intermediate_node_generators:
-                    new_node, new_rules, scores = node_sampler(None, sampled_nodes)
-                    for rule, score in zip(new_rules, scores):
-                        possible_child_nodes.append(sampled_nodes)
-                        possible_parent_nodes.append((new_node, rule))
-                        possible_parent_nodes_scores.append(score)
-
+                for new_node in candidate_intermediate_nodes:
+                    if isinstance(new_node, AndNode) and len(new_node.production_rules) > 1:
+                        print("WARNING: inference will never succeed, as only one prod rule is added at a time.")
+                    for rule in new_node.production_rules:
+                        score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(parent, [rule])
+                        if not torch.isinf(score):
+                            possible_child_nodes.append(sampled_nodes)
+                            possible_parent_nodes.append((new_node, rule))
+                            possible_parent_nodes_scores.append(score)
+                        
             if len(possible_parent_nodes_scores) == 0:
                 iter_k  += 1
                 continue
@@ -525,7 +519,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, outer_iterations=10, num_attempts=1, ax=None, verbose=False):
+def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=None, verbose=False):
     best_tree = None
     best_score = -np.inf
     for attempt in range(num_attempts):
@@ -678,7 +672,7 @@ if __name__ == "__main__":
             plt.xlim(-0.2, 1.2)
             plt.ylim(-0.2, 1.2)
 #
-            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, ax=plt.gca())
+            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=2, ax=plt.gca())
 #
             print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
             plt.title("Guessed parse tree with score %f" % score)
