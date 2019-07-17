@@ -302,21 +302,21 @@ class PlaceSetting(CovaryingSetNode):
             "plate": Plate,
             "cup": Cup,
             "left_fork": Fork,
-            #"left_knife": Knife,
-            #"left_spoon": Spoon,
-            #"right_fork": Fork,
-            #"right_knife": Knife,
-            #"right_spoon": Spoon,
+            "left_knife": Knife,
+            "left_spoon": Spoon,
+            "right_fork": Fork,
+            "right_knife": Knife,
+            "right_spoon": Spoon,
         }
         param_guesses_by_name = {
             "plate": ([0., 0.16, 0.], [0.01, 0.01, 3.]),
             "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 3.]),
-            #"right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            #"left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            #"right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            #"left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            #"right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
         }
         self.distributions_by_name = {}
         production_rules = []
@@ -334,14 +334,14 @@ class PlaceSetting(CovaryingSetNode):
 
         # Weight the "correct" rules very heavily
         production_weights_hints = {
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
+            (name_to_ind["plate"], name_to_ind["right_fork"]): 2.,
             (name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
-            #(name_to_ind["cup"],): 0.5,
+            (name_to_ind["cup"],): 0.5,
             (name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
         }

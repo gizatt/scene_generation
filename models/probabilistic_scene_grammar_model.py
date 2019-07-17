@@ -265,7 +265,7 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
         if label_name != "":
             label_dict[node] = label_str
     colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
-    if len(colors) == 0:
+    if len(colors) == 0 or np.isinf(min(colors)):
         colors = None
     else:
         colors -= min(colors)
@@ -295,8 +295,11 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
             print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
-            draw_parse_tree(parse_tree, ax=ax)
-            plt.pause(0.01)
+            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
+            draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
+            plt.title("Iter %02d: score %f" % (iter_k, score.item()))
+            plt.pause(1.0)
+            plt.savefig('iter_%02d.png' % iter_k)
         
         # Find the currently-infeasible nodes.
         infeasible_nodes = [key for key in scores_by_node.keys() if torch.isinf(scores_by_node[key])]
@@ -310,7 +313,11 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
             # the available products.
             # TODO(gizatt) Indeed, I'll *need* to support this for trees with
             # AND nodes to ever be inferable.
-            assert(isinstance(node, Node))
+            if not isinstance(node, Node):
+                print("Found infeasible production rule %s: " % node.name, node)
+                print("Full parse tree: ", parse_tree)
+                print("Nodes: ", list(parse_tree.nodes))
+                raise NotImplementedError()
 
         if len(infeasible_nodes) > 0:
             possible_child_nodes = []
@@ -360,10 +367,12 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
                         pass
                 # - Make a new intermediate node and rule with these as the products.
                 for new_node in candidate_intermediate_nodes:
+                    if new_node in parse_tree.nodes:
+                        continue
                     if isinstance(new_node, AndNode) and len(new_node.production_rules) > 1:
                         print("WARNING: inference will never succeed, as only one prod rule is added at a time.")
                     for rule in new_node.production_rules:
-                        score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(parent, [rule])
+                        score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(None, [rule])
                         if not torch.isinf(score):
                             possible_child_nodes.append(sampled_nodes)
                             possible_parent_nodes.append((new_node, rule))
@@ -555,7 +564,7 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=
                         print("Pruning node ", removable_nodes[ind])
                     prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-            repaired_score = repair_parse_tree_in_place(parse_tree, ax=None, verbose=verbose)
+            repaired_score = repair_parse_tree_in_place(parse_tree, ax=ax, verbose=verbose)
             if torch.isinf(repaired_score):
                 if verbose:
                     print("\tRejecting due to failure to find a feasible repair.")
@@ -575,10 +584,11 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=
                     parse_tree = original_parse_tree_state.rebuild_original_tree()
 
             score, _ = score_tree(parse_tree)
-            if ax is not None: 
+            if ax is not None:
                 ax.clear()
-                draw_parse_tree(parse_tree, ax=ax)
-            plt.pause(1E-3)
+                DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
+                draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
+            plt.pause(1.0)
             if verbose:
                 print("\tEnding iter %d at score %f" % (outer_k, score))
         if score > best_score:
@@ -604,7 +614,7 @@ def guess_parse_trees_batch(yaml_envs, outer_iterations, num_attempts):
     return all_observed_trees
 
 if __name__ == "__main__":
-    seed = 50
+    seed = 52
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -612,7 +622,60 @@ if __name__ == "__main__":
 
     noalias_dumper = yaml.dumper.SafeDumper
     noalias_dumper.ignore_aliases = lambda self, data: True
-            
+    
+    # Draw + plot a few generated environments and their trees
+    '''
+    plt.figure().set_size_inches(20, 20)
+    for k in range(4):
+        start = time.time()
+        pyro.clear_param_store()
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
+        parse_tree = trace.nodes["_RETURN"]["value"]
+        end = time.time()
+
+        print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
+        print("Full trace values:" )
+        for node_name in trace.nodes.keys():
+            if node_name in ["_INPUT", "_RETURN"]:
+                continue
+            print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
+
+        # Recover and print the parse tree
+        plt.subplot(2, 2, k+1)
+        plt.gca().clear()
+        plt.xlim(-0.2, 1.2)
+        plt.ylim(-0.2, 1.2)
+        score, score_by_node = score_tree(parse_tree)
+        print("Score by node: ", score_by_node)
+        yaml_env = convert_tree_to_yaml_env(parse_tree)
+        DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+        draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
+        print("Our score: %f" % score)
+        print("Trace score: %f" % trace.log_prob_sum())
+        assert(abs(score - trace.log_prob_sum()) < 0.001)
+    plt.show()
+    sys.exit(0)
+    '''
+
+    start = time.time()
+    pyro.clear_param_store()
+    trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
+    parse_tree = trace.nodes["_RETURN"]["value"]
+    end = time.time()
+
+    plt.figure().set_size_inches(6, 6)
+    plt.xlim(-0.2, 1.2)
+    plt.ylim(-0.2, 1.2)
+    yaml_env = convert_tree_to_yaml_env(parse_tree)
+    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=1, ax=plt.gca())
+    plt.title("Guessed parse tree with score %f" % score)
+    plt.gca().clear()
+    DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+    draw_parse_tree(guessed_parse_tree, label_name=True, label_score=True, alpha=0.75)
+    plt.savefig("iter_fin.png")
+    plt.show()
+
+    sys.exit(0)
 
     plt.figure().set_size_inches(15, 10)
     for k in range(1):
