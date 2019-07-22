@@ -193,7 +193,7 @@ def terminal_nodes_from_yaml(yaml_env):
             params=new_obj["params"]))
     return terminal_nodes
 
-def score_tree(parse_tree, assert_rooted=True):
+def score_tree(parse_tree, assert_rooted=True, include_observed=True):
     ''' Sum the log probabilities over the tree:
     For every node, score its set of its production rules.
     For every production rule, score its products.
@@ -225,7 +225,16 @@ def score_tree(parse_tree, assert_rooted=True):
                 # Score the kids
                 node_score = node.score_production_rules(parent, list(parse_tree.successors(node)))
         elif isinstance(node, ProductionRule):
-            node_score = node.score_products(parent, list(parse_tree.successors(node)))
+            products = list(parse_tree.successors(node))
+            terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
+            if any(terminal_product_mask):
+                assert(all(terminal_product_mask))
+                if include_observed:
+                    node_score = node.score_products(parent, products)
+                else:
+                    node_score = torch.tensor(0.)
+            else:
+                node_score = node.score_products(parent, products)
         else:
             raise ValueError("Invalid node type in tree: ", type(node))
         scores_by_node[node] = node_score
@@ -663,22 +672,11 @@ if __name__ == "__main__":
     parse_tree = trace.nodes["_RETURN"]["value"]
     end = time.time()
 
-    plt.figure().set_size_inches(6, 6)
-    plt.xlim(-0.2, 1.2)
-    plt.ylim(-0.2, 1.2)
-    yaml_env = convert_tree_to_yaml_env(parse_tree)
-    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=1, ax=plt.gca())
-    plt.title("Guessed parse tree with score %f" % score)
-    plt.gca().clear()
-    DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-    draw_parse_tree(guessed_parse_tree, label_name=True, label_score=True, alpha=0.75)
-    plt.savefig("iter_fin.png")
-    plt.show()
-
-    sys.exit(0)
+    # Save out the param store to "nominal"
+    pyro.get_param_store().save("place_setting_nominal_param_store.pyro")
 
     plt.figure().set_size_inches(15, 10)
-    for k in range(1):
+    for k in range(100):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -705,45 +703,45 @@ if __name__ == "__main__":
         print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        #with open("table_setting_environments_generated.yaml", "a") as file:
-        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
+        with open("table_setting_environments_generated.yaml", "a") as file:
+            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
 
-        try:
-            plt.subplot(2, 2, 3)
-            plt.gca().clear()
-            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            plt.title("Generated scene")
-            plt.subplot(2, 2, 4)
-            plt.gca().clear()
-            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-            draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
-            plt.title("Generated scene with parse tree")
-            plt.pause(0.5)
-        except Exception as e:
-            print("Exception ", e)
-        except:
-            print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
-
-        plt.show()
-        plt.figure()
-        for k in range(3):
-            # And then try to parse it
-            ax = plt.subplot(3, 1, k+1)
-            plt.xlim(-0.2, 1.2)
-            plt.ylim(-0.2, 1.2)
+        #try:
+        #    plt.subplot(2, 2, 3)
+        #    plt.gca().clear()
+        #    DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+        #    plt.title("Generated scene")
+        #    plt.subplot(2, 2, 4)
+        #    plt.gca().clear()
+        #    DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+        #    draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
+        #    plt.title("Generated scene with parse tree")
+        #    plt.pause(0.5)
+        #except Exception as e:
+        #    print("Exception ", e)
+        #except:
+        #    print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 #
-            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=2, ax=plt.gca())
-#
-            print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
-            plt.title("Guessed parse tree with score %f" % score)
-            plt.gca().clear()
-            draw_parse_tree(guessed_parse_tree)
-            plt.pause(1E-3)
-#
-        plt.show()
+        #plt.show()
+        #plt.figure()
+        #for k in range(3):
+        #    # And then try to parse it
+        #    ax = plt.subplot(3, 1, k+1)
+        #    plt.xlim(-0.2, 1.2)
+        #    plt.ylim(-0.2, 1.2)
+##
+        #    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=2, ax=plt.gca())
+##
+        #    print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
+        #    plt.title("Guessed parse tree with score %f" % score)
+        #    plt.gca().clear()
+        #    draw_parse_tree(guessed_parse_tree)
+        #    plt.pause(1E-3)
+##
+        #plt.show()
         plt.pause(0.1)
         #trace = poutine.trace(model.model(observed_tree=guessed_parse_tree)).get_trace()
         #print("Trace log prob sum: %f" % trace.log_prob_sum())

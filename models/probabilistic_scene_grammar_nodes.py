@@ -334,6 +334,8 @@ class PlaceSetting(CovaryingSetNode):
 
         # Weight the "correct" rules very heavily
         production_weights_hints = {
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_knife"]): 2.,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_spoon"]): 2.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,

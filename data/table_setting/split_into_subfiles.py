@@ -8,8 +8,8 @@ except ImportError:
     print("WARNING: Defaulting to non-C [slow] YAML loader.")
     from yaml import Loader
 
-f_in_base = "table_setting_environments"
-train_fraction = 0.75
+f_in_base = "table_setting_environments_nominal"
+train_fraction = 0.8
 max_environments_per_subfile = 100
 
 with open(f_in_base + ".yaml", "r") as f:
