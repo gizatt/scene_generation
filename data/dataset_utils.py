@@ -317,7 +317,7 @@ def BuildMbpAndSgFromYamlEnvironment(
         RegisterVisualAndCollisionGeometry(
             mbp, table_body,
             RigidTransform(p=[0.5, 0.5, -0.1]),
-            table_shape, "table", np.array([0.1, 0.1, 0.1, 0.25]),
+            table_shape, "table", np.array([0.8, 0.8, 0.8, 0.01]),
             CoulombFriction(0.9, 0.8))
     else:
         raise ValueError("Unknown base environment type.")
@@ -584,6 +584,23 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
     plt.xlim([-0.2, 1.2])
     plt.ylim([-0.2, 1.2])
 
+def fig2data ( fig ):
+    """
+    @brief Convert a Matplotlib figure to a 4D numpy array with RGBA channels and return it
+    @param fig a matplotlib figure
+    @return a numpy 3D array of RGBA values
+    """
+    # draw the renderer
+    fig.canvas.draw ( )
+ 
+    # Get the RGBA buffer from the figure
+    w,h = fig.canvas.get_width_height()
+    buf = np.fromstring ( fig.canvas.tostring_argb(), dtype=np.uint8 )
+    buf.shape = ( w, h,4 )
+ 
+    # canvas.tostring_argb give pixmap in ARGB mode. Roll the ALPHA channel to have it in RGBA mode
+    buf = np.roll ( buf, 3, axis = 2 )
+    return buf
 
 if __name__ == "__main__":
     dataset = ScenesDataset("planar_bin/planar_bin_static_scenes.yaml")
