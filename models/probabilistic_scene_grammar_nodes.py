@@ -315,6 +315,7 @@ class PlaceSetting(CovaryingSetNode):
             "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             "left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             "right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "forward_spoon": ([0.16 + 0.15, 0.0, np.pi/2.], [0.01, 0.01, 0.01]),
             "left_knife": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             "right_knife": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
         }
@@ -351,12 +352,12 @@ class PlaceSetting(CovaryingSetNode):
         init_weights = CovaryingSetNode.build_init_weights(
             num_production_rules=len(production_rules),
             production_weights_hints=production_weights_hints,
-            remaining_weight=0.)
+            remaining_weight=0.01)
         init_weights = pyro.param("place_setting_production_weights", init_weights, constraint=constraints.simplex)
         self.param_names = ["place_setting_production_weights"]
         CovaryingSetNode.__init__(self, name=name, production_rules=production_rules, init_weights=init_weights)
 
-class Table(IndependentSetNode, RootNode):
+class Table(CovaryingSetNode, RootNode):
 
     class PlaceSettingProductionRule(ProductionRule):
         def __init__(self, name, pose):
@@ -402,7 +403,7 @@ class Table(IndependentSetNode, RootNode):
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
             return self.offset_dist.log_prob(rel_offset).sum()
 
-    def __init__(self, name="table", num_place_setting_locations=4):
+    def __init__(self, name="table", num_place_setting_locations=12):
         self.pose = torch.tensor([0.5, 0.5, 0.])
         self.table_radius = 0.45 #pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
@@ -417,12 +418,16 @@ class Table(IndependentSetNode, RootNode):
             pose[2] = r
             production_rules.append(self.PlaceSettingProductionRule(
                 name="%s_prod_%03d" % (name, k), pose=pose))
-        production_probs = pyro.param("%s_independent_set_production_probs" % name,
-                                      torch.ones(num_place_setting_locations)*0.5,
-                                      constraint=constraints.unit_interval)
-        self.param_names = [#"%s_radius" % name,
-                            "%s_independent_set_production_probs" % name]
-        IndependentSetNode.__init__(self, name, production_rules, production_probs)
+        #production_probs = pyro.param("%s_independent_set_production_probs" % name,
+        #                              torch.ones(num_place_setting_locations)*0.5,
+        #                              constraint=constraints.unit_interval)
+        #self.param_names = [#"%s_radius" % name,
+        #                    "%s_independent_set_production_probs" % name]
+        init_weights = CovaryingSetNode.build_init_weights(
+            num_production_rules=len(production_rules)) # Even weight on any possible combination to start with
+        init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.simplex)
+        self.param_names = ["%s_production_weights" % name]
+        CovaryingSetNode.__init__(self, name=name, production_rules=production_rules, init_weights=init_weights)
 
 class TerminalNode(Node):
     def __init__(self, name):
