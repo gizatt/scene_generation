@@ -305,7 +305,7 @@ class MultiObjectMultiClassModelWithContext():
             )
             
             flow_H = [50, 50]
-            flow_layers = 16
+            flow_layers = 12
 
             base_dist = dist.Normal(torch.zeros(output_size),
                                     torch.ones(output_size)).to_event(1)
@@ -497,13 +497,13 @@ class MultiObjectMultiClassModelWithContext():
                                        obs=observed_params[class_i])
             else:
                 def sample_params():
-                    #for flow in self.class_flows[class_i]:
-                    #    flow.set_z(context)
-                    #tf_dist = self.class_tf_dists[class_i]
-                    param_mean_and_var = self.class_param_controllers[class_i](context)
-                    n = self.num_params_by_class[class_i]
-                    tf_dist = dist.Normal(param_mean_and_var[:, :n],
-                                          torch.nn.Softplus()(param_mean_and_var[:, n:])).to_event(1)
+                    for flow in self.class_flows[class_i]:
+                        flow.set_z(context)
+                    tf_dist = self.class_tf_dists[class_i]
+                    #param_mean_and_var = self.class_param_controllers[class_i](context)
+                    #n = self.num_params_by_class[class_i]
+                    #tf_dist = dist.Normal(param_mean_and_var[:, :n],
+                    #                      torch.nn.Softplus()(param_mean_and_var[:, n:])).to_event(1)
                     return pyro.sample(
                         "params_{}_{}".format(object_i, class_i),
                         tf_dist, obs=observed_params[class_i])
