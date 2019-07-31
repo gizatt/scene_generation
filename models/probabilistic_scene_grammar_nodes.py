@@ -20,6 +20,36 @@ from pyro import poutine
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 
+class GlobalVariableStore():
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        self.store = {}
+    
+    def sample_global_variable(self, name, dist):
+        if name not in self.store.keys():
+            self.store[name] = (pyro.sample(name, dist), dist)
+        return self.store[name][0]
+    
+    def __getitem__(self, key):
+        if key not in self.store.keys():
+            raise ValueError("%s not in global variable store" % key)
+        else:
+            return self.store[key]
+    
+    def get_total_log_prob(self):
+        total_score = torch.tensor(0.)
+        for key in self.store.keys():
+            value, dist = self.store[key]
+            total_score += dist.log_prob(value)
+        return total_score
+
+    def generate_yaml(self):
+        out = {}
+        for key in self.store.keys():
+            out[key] = [float(x) for x in self.store[key][0].tolist()]
+        return out
 
 def chain_pose_transforms(p_w1, p_12):
     ''' p_w1: xytheta Pose 1 in world frame
@@ -54,13 +84,12 @@ class ProductionRule(object):
         if not hasattr(self, "param_names"):
             return []
         return self.param_names
-    def __call__(self, parent):
+    def sample_global_variables(self, global_variable_store):
+        pass
+    def sample_products(self, parent, obs_products=None):
         raise NotImplementedError()
     def score_products(self, parent, products):
         raise NotImplementedError()
-
-class RootNode(object):
-    pass
 
 class Node(object):
     def __init__(self, name):
@@ -70,7 +99,22 @@ class Node(object):
             return []
         return self.param_names
 
-class OrNode(Node):
+class RootNode(Node):
+    pass
+
+class TerminalNode(Node):
+    def __init__(self, name):
+        Node.__init__(self, name=name)
+
+class NonTerminalNode(Node):
+    def sample_global_variables(self, global_variable_store):
+        pass
+    def sample_production_rules(self, parent, obs_production_rules=None):
+        raise NotImplementedError()
+    def score_products(self, parent, production_probs):
+        raise NotImplementedError()
+
+class OrNode(NonTerminalNode):
     def __init__(self, name, production_rules, production_weights):
         if len(production_weights) != len(production_rules):
             raise ValueError("# of production rules and weights must match.")
@@ -79,7 +123,7 @@ class OrNode(Node):
         self.production_rules = production_rules
         self.production_weights = production_weights
         self.production_dist = dist.Categorical(production_weights)
-        Node.__init__(self, name=name)
+        NonTerminalNode.__init__(self, name=name)
 
     def _recover_active_rule(self, production_rules):
         if production_rules[0] not in self.production_rules:
@@ -101,7 +145,7 @@ class OrNode(Node):
         return self.production_dist.log_prob(active_rule).sum()
 
 
-class AndNode(Node):
+class AndNode(NonTerminalNode):
     def __init__(self, name, production_rules):
         if len(production_rules) == 0:
             raise ValueError("Must have nonzero # of production rules.")
@@ -120,7 +164,7 @@ class AndNode(Node):
             return torch.tensor(-np.inf)
 
 
-class CovaryingSetNode(Node):
+class CovaryingSetNode(NonTerminalNode):
     @staticmethod
     def build_init_weights(num_production_rules, production_weights_hints = {},
                            remaining_weight = 1.):
@@ -155,7 +199,7 @@ class CovaryingSetNode(Node):
         self.production_rules = production_rules
         self.exhaustive_set_weights = init_weights
         self.production_dist = dist.Categorical(logits=torch.log(self.exhaustive_set_weights))
-        Node.__init__(self, name=name)
+        NonTerminalNode.__init__(self, name=name)
 
     def _recover_selected_rules(self, production_rules):
         selected_rules = torch.tensor(0)
@@ -192,7 +236,7 @@ class CovaryingSetNode(Node):
         return self.production_dist.log_prob(torch.tensor(selected_rules)).sum()
 
 
-class IndependentSetNode(Node):
+class IndependentSetNode(NonTerminalNode):
     def __init__(self, name, production_rules,
                  production_probs):
         ''' Make a categorical distribution over production rules
@@ -205,7 +249,7 @@ class IndependentSetNode(Node):
         self.production_probs = production_probs
         self.production_dist = dist.Bernoulli(production_probs).to_event(1)
         self.production_rules = production_rules
-        Node.__init__(self, name=name)
+        NonTerminalNode.__init__(self, name=name)
 
     def _recover_selected_rules(self, production_rules):
         selected_rules = torch.zeros(len(self.production_rules))
@@ -242,18 +286,11 @@ class IndependentSetNode(Node):
 class PlaceSetting(CovaryingSetNode):
 
     class ObjectProductionRule(ProductionRule):
-        def __init__(self, name, object_name, object_type, mean_init, var_init):
+        def __init__(self, name, object_name, object_type, mean_prior_params, var_prior_params):
             self.object_name = object_name
             self.object_type = object_type
-            mean = pyro.param("place_setting_%s_mean" % object_name,
-                              torch.tensor(mean_init))
-            var =  pyro.param("place_setting_%s_var" % object_name,
-                              torch.tensor(var_init),
-                              constraint=constraints.greater_than(0.001))
-            self.param_names = ["place_setting_%s_mean" % object_name,
-                                "place_setting_%s_var" % object_name]
-            self.offset_dist = dist.Normal(
-                loc=mean, scale=var).to_event(1)
+            self.mean_prior_params = mean_prior_params
+            self.var_prior_params = var_prior_params
             ProductionRule.__init__(self,
                 name=name,
                 product_types=[object_type])
@@ -261,7 +298,19 @@ class PlaceSetting(CovaryingSetNode):
         def _recover_rel_pose_from_abs_pose(self, parent, abs_pose):
             return chain_pose_transforms(invert_pose(parent.pose), abs_pose)
 
-        def __call__(self, parent, obs_products=None):
+        def sample_global_variables(self, global_variable_store):
+            # Handles class-general setup
+            mean_prior_dist = dist.Normal(loc=self.mean_prior_params[0],
+                                          scale=self.mean_prior_params[1]).to_event(1)
+            var_prior_dist = dist.InverseGamma(concentration=self.var_prior_params[0],
+                                               rate=self.var_prior_params[1]).to_event(1)
+            mean = global_variable_store.sample_global_variable("place_setting_%s_mean" % self.object_name,
+                                              mean_prior_dist)
+            var = global_variable_store.sample_global_variable("place_setting_%s_var" % self.object_name,
+                                             var_prior_dist)
+            self.offset_dist = dist.Normal(loc=mean, scale=var).to_event(1)
+            
+        def sample_products(self, parent, obs_products=None):
             # Observation should be absolute position of the product
             if obs_products is not None:
                 assert(len(obs_products) == 1 and isinstance(obs_products[0], self.object_type))
@@ -279,15 +328,6 @@ class PlaceSetting(CovaryingSetNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_pose = self._recover_rel_pose_from_abs_pose(parent, products[0].pose.detach())
-            #if self.object_name == "left_fork":
-                #print("rel pose: ", rel_pose)
-                #print("parent pose: ", parent.pose)
-                #mean = pyro.param("place_setting_%s_mean" % self.object_name)
-                #print("mean: ", mean)
-                #score = ((products[0].pose - mean).sum())
-                #print("Log prob: ", score)
-                #score.backward(retain_graph=True)
-                #print("Grad of mean: ", mean.grad)
             return self.offset_dist.log_prob(rel_pose)
 
     def __init__(self, name, pose):
@@ -324,13 +364,21 @@ class PlaceSetting(CovaryingSetNode):
         name_to_ind = {}
         for k, object_name in enumerate(self.object_types_by_name.keys()):
             mean_init, var_init = param_guesses_by_name[object_name]
+            # Use an inverse gamma prior for variance. It has mode
+            # beta / (alpha + 1) = var
+            # (beta / var) - 1 = alpha
+            # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
+            # A ratio of ~100 seems like a nice compromise.
+            beta = 100.*torch.tensor(var_init)
+            alpha = (beta / torch.tensor(var_init)) + 1
             production_rules.append(
                 self.ObjectProductionRule(
                     name="%s_prod_%03d" % (name, k),
                     object_name=object_name,
                     object_type=self.object_types_by_name[object_name],
-                    mean_init=mean_init, var_init=var_init))
-            # Build name mapping for convenienc of building the hint dictionary
+                    mean_prior_params=(torch.tensor(mean_init), torch.ones(3)*0.01),
+                    var_prior_params=(alpha, beta)))
+            # Build name mapping for convenience of building the hint dictionary
             name_to_ind[object_name] = k
 
         # Weight the "correct" rules very heavily
@@ -381,7 +429,7 @@ class Table(CovaryingSetNode, RootNode):
             pose_in_world = chain_pose_transforms(parent.pose, self.pose)
             return chain_pose_transforms(invert_pose(pose_in_world), abs_offset)
 
-        def __call__(self, parent, obs_products=None):
+        def sample_products(self, parent, obs_products=None):
             if obs_products is not None:
                 assert len(obs_products) == 1 and isinstance(obs_products[0], PlaceSetting)
                 obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose) 
@@ -428,10 +476,6 @@ class Table(CovaryingSetNode, RootNode):
         init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.simplex)
         self.param_names = ["%s_production_weights" % name]
         CovaryingSetNode.__init__(self, name=name, production_rules=production_rules, init_weights=init_weights)
-
-class TerminalNode(Node):
-    def __init__(self, name):
-        Node.__init__(self, name=name)
 
 class Plate(TerminalNode):
     def __init__(self, pose, params=[0.2], name="plate"):

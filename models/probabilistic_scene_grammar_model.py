@@ -22,22 +22,85 @@ from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
 
-def get_node_parent_or_none(parse_tree, node):
-    parents = list(parse_tree.predecessors(node))
-    if len(parents) == 0:
-        return None
-    elif len(parents) == 1:
-        return parents[0]
-    else:
-        print("Bad parse tree: ", parse_tree)
-        print("Node: ", node)
-        print("Parents: ", parents)
-        raise NotImplementedError("> 1 parent --> bad parse tree")
+
+class ParseTree(nx.DiGraph):
+    def __init__(self):
+        self.global_variable_store = GlobalVariableStore()
+        nx.DiGraph.__init__(self)
+
+    def copy(self):
+        ''' Copy of topology, but reference of gvs. '''
+        new_copy = nx.DiGraph.copy(self)
+        new_copy.global_variable_store = self.global_variable_store
+        return new_copy
+
+    def get_global_variable_store(self):
+        return self.global_variable_store
+
+    def get_total_log_prob(self, assert_rooted=True, include_observed=True):
+        ''' Sum the log probabilities over the tree:
+        For every node, score its set of its production rules.
+        For every production rule, score its products.
+        If the tree is infeasible / ill-posed, will return -inf.
+
+        TODO(gizatt): My tree-building here echos a lot of the
+        machinery from within pyro's execution trace checking,
+        to the degree that I sanity check in the tests down below
+        by comparing a pyro-log-prob-sum of a forward run of the model
+        to the value I compute here. Can I better use Pyro's machinery
+        to do less work?'''
+        all_scores = []
+        scores_by_node = {}
+
+        for node in self.nodes:
+            parent = self.get_node_parent_or_none(node)
+            if isinstance(node, Node):
+                # Sanity-check feasibility
+                if parent is None and assert_rooted and not isinstance(node, RootNode):
+                    node_score = torch.tensor(-np.inf)
+                elif isinstance(node, TerminalNode):
+                    # TODO(gizatt): Eventually, TerminalNodes
+                    # may want to score their generated parameters.
+                    node_score = torch.tensor(0.)
+                else:
+                    # Score the kids
+                    node_score = node.score_production_rules(parent, list(self.successors(node)))
+            elif isinstance(node, ProductionRule):
+                products = list(self.successors(node))
+                terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
+                if any(terminal_product_mask):
+                    assert(all(terminal_product_mask))
+                    if include_observed:
+                        node_score = node.score_products(parent, products)
+                    else:
+                        node_score = torch.tensor(0.)
+                else:
+                    node_score = node.score_products(parent, products)
+            else:
+                raise ValueError("Invalid node type in tree: ", type(node))
+            scores_by_node[node] = node_score
+            all_scores.append(node_score)
+
+        total_score = torch.stack(all_scores).sum() + self.global_variable_store.get_total_log_prob()
+        return total_score, scores_by_node
+
+    def get_node_parent_or_none(self, node):
+        parents = list(self.predecessors(node))
+        if len(parents) == 0:
+            return None
+        elif len(parents) == 1:
+            return parents[0]
+        else:
+            print("Bad parse tree: ", self)
+            print("Node: ", node)
+            print("Parents: ", parents)
+            raise NotImplementedError("> 1 parent --> bad parse tree")
+
 
 def generate_unconditioned_parse_tree():
     root_node = Table()
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
-    parse_tree = nx.DiGraph()
+    parse_tree = ParseTree()
     parse_tree.add_node(root_node)
     while len(input_nodes_with_parents)>  0:
         parent, node = input_nodes_with_parents.pop(0)
@@ -46,11 +109,13 @@ def generate_unconditioned_parse_tree():
             pass
         else:
             # Expand by picking a production rule
+            node.sample_global_variables(parse_tree.get_global_variable_store())
             production_rules = node.sample_production_rules(parent)
             for i, rule in enumerate(production_rules):
                 parse_tree.add_node(rule)
                 parse_tree.add_edge(node, rule)
-                new_nodes = rule(node)
+                rule.sample_global_variables(parse_tree.get_global_variable_store())
+                new_nodes = rule.sample_products(node)
                 for new_node in new_nodes:
                     parse_tree.add_node(new_node)
                     parse_tree.add_edge(rule, new_node)
@@ -62,7 +127,7 @@ def generate_hyperexpanded_parse_tree():
     # *every possible* non-terminal production rule and product is followed.
     root_node = Table()
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
-    parse_tree = nx.DiGraph()
+    parse_tree = ParseTree()
     parse_tree.add_node(root_node)
     while len(input_nodes_with_parents)>  0:
         parent, node = input_nodes_with_parents.pop(0)
@@ -71,12 +136,14 @@ def generate_hyperexpanded_parse_tree():
             pass
         else:
             # Activate all production rules.
+            node.sample_global_variables(parse_tree.get_global_variable_store())
             for i, rule in enumerate(node.production_rules):
                 if all([issubclass(prod, TerminalNode) for prod in rule.product_types]):
                     continue
                 parse_tree.add_node(rule)
                 parse_tree.add_edge(node, rule)
-                new_nodes = rule(node)
+                rule.sample_global_variables(parse_tree.get_global_variable_store())
+                new_nodes = rule.sample_products(node)
                 for new_node in new_nodes:
                     if isinstance(new_node, TerminalNode):
                         continue
@@ -90,7 +157,7 @@ def rerun_conditioned_parse_tree(
         score_terminal_products=True,
         score_nonterminal_products=True):
     # "Rerun" the observed tree in top-down order.
-            
+    raise NotImplementedError("Needs to be rewritten")
     root_node = next(node for node in observed_tree.nodes if isinstance(node, Table))
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     while len(input_nodes_with_parents)>  0:
@@ -108,12 +175,11 @@ def rerun_conditioned_parse_tree(
                 terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
                 if score_terminal_products and any(terminal_product_mask):
                     assert(all(terminal_product_mask))
-                    rule(node, obs_products=products)
+                    rule.sample_products(node, obs_products=products)
                 elif score_nonterminal_products and not any(terminal_product_mask):
-                    rule(node, obs_products=products)
+                    rule.sample_products(node, obs_products=products)
                 for new_node in products:
                     input_nodes_with_parents.append((rule, new_node))
-
 
 def convert_tree_to_yaml_env(parse_tree):
     terminal_nodes = []
@@ -123,6 +189,7 @@ def convert_tree_to_yaml_env(parse_tree):
     env = {"n_objects": len(terminal_nodes)}
     for k, node in enumerate(terminal_nodes):
         env["obj_%04d" % k] = node.generate_yaml()
+    env["global_variable_store"] = parse_tree.get_global_variable_store().generate_yaml()
     return env
 
 
@@ -136,30 +203,6 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def build_networkx_parse_tree(all_terminal_nodes):
-    ''' Represent the parse tree as a graph over two node
-    types: Nodes, and ProductionRules. '''
-    G = nx.DiGraph()
-    def add_node_and_parents_to_graph(node):
-        # Recursive construction
-        if node not in G:
-            G.add_node(node)
-            rule = node.parent
-            if rule is None:
-                return
-            if rule not in G:
-                # New rule!
-                G.add_node(rule)
-                parent_node = rule.parent
-                # All production rules must have parents
-                if parent_node is None:
-                    raise ValueError("Tree had a production rule with no parent!")
-                add_node_and_parents_to_graph(parent_node)
-                G.add_edge(parent_node, rule)
-            G.add_edge(rule, node)
-    for node in all_terminal_nodes:
-        add_node_and_parents_to_graph(node)
-    return G
 
 def remove_production_rules_from_parse_tree(parse_tree):
     ''' For drawing '''
@@ -169,7 +212,7 @@ def remove_production_rules_from_parse_tree(parse_tree):
             new_tree.add_node(node)
     for node in parse_tree:
         if isinstance(node, ProductionRule):
-            parent = get_node_parent_or_none(parse_tree, node)
+            parent = parse_tree.get_node_parent_or_none(node)
             assert(parent is not None)
             for child in list(parse_tree.successors(node)):
                 new_tree.add_edge(parent, child)
@@ -193,60 +236,11 @@ def terminal_nodes_from_yaml(yaml_env):
             params=new_obj["params"]))
     return terminal_nodes
 
-def score_tree(parse_tree, assert_rooted=True, include_observed=True):
-    ''' Sum the log probabilities over the tree:
-    For every node, score its set of its production rules.
-    For every production rule, score its products.
-    If the tree is infeasible / ill-posed, return -inf.
-
-    Modifies the tree in-place, setting the "log_prob"
-    attribute of each node.
-
-    TODO(gizatt): My tree-building here echos a lot of the
-    machinery from within pyro's execution trace checking,
-    to the degree that I sanity check in the tests down below
-    by comparing a pyro-log-prob-sum of a forward run of the model
-    to the value I compute here. Can I better use Pyro's machinery
-    to do less work?'''
-    all_scores = []
-    scores_by_node = {}
-
-    for node in parse_tree.nodes:
-        parent = get_node_parent_or_none(parse_tree, node)
-        if isinstance(node, Node):
-            # Sanity-check feasibility
-            if parent is None and assert_rooted and not isinstance(node, RootNode):
-                node_score = torch.tensor(-np.inf)
-            elif isinstance(node, TerminalNode):
-                # TODO(gizatt): Eventually, TerminalNodes
-                # may want to score their generated parameters.
-                node_score = torch.tensor(0.)
-            else:
-                # Score the kids
-                node_score = node.score_production_rules(parent, list(parse_tree.successors(node)))
-        elif isinstance(node, ProductionRule):
-            products = list(parse_tree.successors(node))
-            terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
-            if any(terminal_product_mask):
-                assert(all(terminal_product_mask))
-                if include_observed:
-                    node_score = node.score_products(parent, products)
-                else:
-                    node_score = torch.tensor(0.)
-            else:
-                node_score = node.score_products(parent, products)
-        else:
-            raise ValueError("Invalid node type in tree: ", type(node))
-        scores_by_node[node] = node_score
-        all_scores.append(node_score)
-
-    return torch.stack(all_scores).sum(), scores_by_node
-
 def score_terminal_node_productions(parse_tree):
     total_score = torch.tensor(0.)
     for node in parse_tree.nodes:
         if isinstance(node, ProductionRule):
-            parent = get_node_parent_or_none(parse_tree, node)
+            parent = parse_tree.get_node_parent_or_none(node)
             assert(parent is not None)
             children = list(parse_tree.successors(node))
             mask = [isinstance(child, TerminalNode) for child in children]
@@ -258,7 +252,7 @@ def score_terminal_node_productions(parse_tree):
 
 def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
-    score, scores_by_node = score_tree(parse_tree)
+    score, scores_by_node = parse_tree.get_total_log_prob()
     pos_dict = {
         node: node.pose[:2].detach().numpy() for node in pruned_tree
     }
@@ -289,17 +283,11 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
     ax.set_title("Score: %f" % score)
 
 
-def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=False):
-    # Collect all possible non-terminal intermediate nodes
-    hyper_parse_tree = generate_hyperexpanded_parse_tree()
-    candidate_intermediate_nodes = []
-    for node in hyper_parse_tree:
-        if isinstance(node, Node) and get_node_parent_or_none(hyper_parse_tree, node) is not None:
-            candidate_intermediate_nodes.append(node)
-
+def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
+                               max_num_iters=100, ax=None, verbose=False):
     iter_k = 0
     while iter_k < max_num_iters:
-        score, scores_by_node = score_tree(parse_tree,  assert_rooted=True)
+        score, scores_by_node = parse_tree.get_total_log_prob(assert_rooted=True)
         if verbose:
             print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
@@ -342,7 +330,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
                 #  - Append this to products of an existing rule.
                 #  - Append a production rule to an already existing non-terminal node.
                 for node in parse_tree.nodes():
-                    parent = get_node_parent_or_none(parse_tree, node)
+                    parent = parse_tree.get_node_parent_or_none(node)
                     if isinstance(node, ProductionRule):
                         # Try adding this to the products of this rule
                         score = node.score_products(parent, list(parse_tree.successors(node)) + sampled_nodes)
@@ -381,6 +369,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
                     if isinstance(new_node, AndNode) and len(new_node.production_rules) > 1:
                         print("WARNING: inference will never succeed, as only one prod rule is added at a time.")
                     for rule in new_node.production_rules:
+                        rule.sample_global_variables(parse_tree.get_global_variable_store())
                         score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(None, [rule])
                         if not torch.isinf(score):
                             possible_child_nodes.append(sampled_nodes)
@@ -416,7 +405,7 @@ def repair_parse_tree_in_place(parse_tree, max_num_iters=100, ax=None, verbose=F
             # Whole tree is feasible!
             break
         iter_k += 1
-    return score_tree(parse_tree)[0]
+    return parse_tree.get_total_log_prob()[0]
 
 def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
 
@@ -440,7 +429,7 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
             ax.clear()
             draw_parse_tree(parse_tree)
             plt.pause(0.1)
-        initial_score, _ = score_tree(parse_tree)
+        initial_score, _ = parse_tree.get_total_log_prob()
         initial_score.backward(retain_graph=True)
         initial_param_vals = [p.detach().numpy().copy() for p in continuous_params]
         current_vs = [v_dist.sample() for v_dist in v_proposal_dists]
@@ -458,7 +447,7 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
             for p in continuous_params:
                 p.grad.zero_()
 
-            current_score, _ = score_tree(parse_tree)
+            current_score, _ = parse_tree.get_total_log_prob()
             current_score.backward(retain_graph=True)
 
             # Step momentum normally, except at final step.
@@ -509,12 +498,12 @@ def prune_node_from_tree(parse_tree, victim_node):
     # and the parent node as well if this makes it
     # infeasible.
     if isinstance(victim_node, ProductionRule):
-        parent = get_node_parent_or_none(parse_tree, victim_node)
+        parent = parse_tree.get_node_parent_or_none(victim_node)
         assert(parent)  # All Rules should always have parents
         parse_tree.remove_node(victim_node)
         # Clean up the parent Node if this made it invalid
         remaining_siblings = list(parse_tree.successors(parent))
-        parent_parent = get_node_parent_or_none(parse_tree, parent)
+        parent_parent = parse_tree.get_node_parent_or_none(parent)
         if (torch.isinf(
                 parent.score_production_rules(parent_parent, remaining_siblings))):
             # This will fall down into the next case, which
@@ -522,7 +511,7 @@ def prune_node_from_tree(parse_tree, victim_node):
             victim_node = parent
 
     if isinstance(victim_node, Node):
-        parent = get_node_parent_or_none(parse_tree, victim_node)
+        parent = parse_tree.get_node_parent_or_none(victim_node)
         # Remove all child rules
         child_rules = list(parse_tree.successors(victim_node))
         for child_rule in child_rules:
@@ -531,7 +520,7 @@ def prune_node_from_tree(parse_tree, victim_node):
         # Clean up the parent rule if this made it invalid
         if parent is not None:
             remaining_siblings = list(parse_tree.successors(parent))
-            parent_parent = get_node_parent_or_none(parse_tree, parent)
+            parent_parent = parse_tree.get_node_parent_or_none(parent)
             if (len(remaining_siblings) == 0 or
                 np.isinf(parent.score_products(parent_parent, remaining_siblings))):
                 parse_tree.remove_node(parent)
@@ -540,15 +529,24 @@ def prune_node_from_tree(parse_tree, victim_node):
 def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=None, verbose=False):
     best_tree = None
     best_score = -np.inf
+
     for attempt in range(num_attempts):
         # Build an initial parse tree.
-        parse_tree = nx.DiGraph()
+        # Collect all possible non-terminal intermediate nodes
+        hyper_parse_tree = generate_hyperexpanded_parse_tree()
+        candidate_intermediate_nodes = []
+        for node in hyper_parse_tree:
+            if isinstance(node, Node) and hyper_parse_tree.get_node_parent_or_none(node) is not None:
+                candidate_intermediate_nodes.append(node)
+
+        parse_tree = ParseTree()
+        parse_tree.global_variable_store = hyper_parse_tree.global_variable_store
         parse_tree.add_node(Table()) # Root node
         for terminal_node in terminal_nodes_from_yaml(yaml_env):
             parse_tree.add_node(terminal_node)
         for outer_k in range(outer_iterations):
             original_parse_tree_state = ParseTreeState(parse_tree)
-            score, scores_by_node = score_tree(parse_tree)
+            score, scores_by_node = parse_tree.get_total_log_prob()
             if verbose:
                 print("Starting iter %d at score %f" % (outer_k, score))
 
@@ -573,14 +571,16 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=
                         print("Pruning node ", removable_nodes[ind])
                     prune_node_from_tree(parse_tree, removable_nodes[ind])
 
-            repaired_score = repair_parse_tree_in_place(parse_tree, ax=ax, verbose=verbose)
+            repaired_score = repair_parse_tree_in_place(
+                parse_tree, candidate_intermediate_nodes,
+                ax=ax, verbose=verbose)
             if torch.isinf(repaired_score):
                 if verbose:
                     print("\tRejecting due to failure to find a feasible repair.")
                 parse_tree = original_parse_tree_state.rebuild_original_tree()
             else:
                 optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=verbose)
-                new_score, _ = score_tree(parse_tree)
+                new_score, _ = parse_tree.get_total_log_prob()
                 # Accept probability based on ratio of old score and current score
                 accept_prob = min(1., torch.exp(new_score - score))
                 if not dist.Bernoulli(accept_prob).sample():
@@ -592,7 +592,7 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=
                     # in the loop. Tree-cloning might be good to slip in first.
                     parse_tree = original_parse_tree_state.rebuild_original_tree()
 
-            score, _ = score_tree(parse_tree)
+            score, _ = parse_tree.get_total_log_prob()
             if ax is not None:
                 ax.clear()
                 DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
@@ -676,7 +676,7 @@ if __name__ == "__main__":
     pyro.get_param_store().save("place_setting_nominal_param_store.pyro")
 
     plt.figure().set_size_inches(15, 10)
-    for k in range(100):
+    for k in range(1):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -696,7 +696,7 @@ if __name__ == "__main__":
         draw_parse_tree(parse_tree)
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
-        score, score_by_node = score_tree(parse_tree)
+        score, score_by_node = parse_tree.get_total_log_prob()
         print("Score by node: ", score_by_node)
         yaml_env = convert_tree_to_yaml_env(parse_tree)
         print("Our score: %f" % score)
@@ -725,7 +725,8 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 #
-        plt.show()
+        #plt.show()
+        plt.pause(1E-3)
         plt.figure()
         for k in range(3):
             # And then try to parse it
