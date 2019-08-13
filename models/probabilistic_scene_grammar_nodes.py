@@ -29,18 +29,23 @@ class GlobalVariableStore():
     
     def sample_global_variable(self, name, dist):
         if name not in self.store.keys():
-            self.store[name] = (pyro.sample(name, dist), dist)
+            self.store[name] = [pyro.sample(name, dist), dist]
         return self.store[name][0]
     
+    def keys(self):
+        return self.store.keys()
+
     def __getitem__(self, key):
         if key not in self.store.keys():
             raise ValueError("%s not in global variable store" % key)
         else:
             return self.store[key]
     
-    def get_total_log_prob(self):
+    def get_total_log_prob(self, names=None):
+        if names is None:
+            names = self.store.keys()
         total_score = torch.tensor(0.)
-        for key in self.store.keys():
+        for key in set(names):
             value, dist = self.store[key]
             total_score += dist.log_prob(value)
         return total_score
@@ -84,6 +89,10 @@ class ProductionRule(object):
         if not hasattr(self, "param_names"):
             return []
         return self.param_names
+    def get_global_variable_names(self):
+        if not hasattr(self, "global_variable_names"):
+            return []
+        return self.global_variable_names
     def sample_global_variables(self, global_variable_store):
         pass
     def sample_products(self, parent, obs_products=None):
@@ -98,6 +107,10 @@ class Node(object):
         if not hasattr(self, "param_names"):
             return []
         return self.param_names
+    def get_global_variable_names(self):
+        if not hasattr(self, "global_variable_names"):
+            return []
+        return self.global_variable_names
 
 class RootNode(Node):
     pass
@@ -291,6 +304,8 @@ class PlaceSetting(CovaryingSetNode):
             self.object_type = object_type
             self.mean_prior_params = mean_prior_params
             self.var_prior_params = var_prior_params
+            self.global_variable_names = ["place_setting_%s_mean" % self.object_name,
+                                         "place_setting_%s_var" % self.object_name]
             ProductionRule.__init__(self,
                 name=name,
                 product_types=[object_type])

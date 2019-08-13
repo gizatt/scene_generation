@@ -52,8 +52,10 @@ class ParseTree(nx.DiGraph):
         all_scores = []
         scores_by_node = {}
 
+        active_global_var_names = []
         for node in self.nodes:
             parent = self.get_node_parent_or_none(node)
+            active_global_var_names += node.get_global_variable_names()
             if isinstance(node, Node):
                 # Sanity-check feasibility
                 if parent is None and assert_rooted and not isinstance(node, RootNode):
@@ -81,7 +83,9 @@ class ParseTree(nx.DiGraph):
             scores_by_node[node] = node_score
             all_scores.append(node_score)
 
-        total_score = torch.stack(all_scores).sum() + self.global_variable_store.get_total_log_prob()
+        total_score = (torch.stack(all_scores).sum() +
+                       self.global_variable_store.get_total_log_prob(
+                        active_global_var_names))
         return total_score, scores_by_node
 
     def get_node_parent_or_none(self, node):
@@ -138,11 +142,13 @@ def generate_hyperexpanded_parse_tree():
             # Activate all production rules.
             node.sample_global_variables(parse_tree.get_global_variable_store())
             for i, rule in enumerate(node.production_rules):
+                # Always at least get the global vars for this rule established.
+                rule.sample_global_variables(parse_tree.get_global_variable_store())
+                # But don't actually expand into terminal nodes -- there are too many.
                 if all([issubclass(prod, TerminalNode) for prod in rule.product_types]):
                     continue
                 parse_tree.add_node(rule)
                 parse_tree.add_edge(node, rule)
-                rule.sample_global_variables(parse_tree.get_global_variable_store())
                 new_nodes = rule.sample_products(node)
                 for new_node in new_nodes:
                     if isinstance(new_node, TerminalNode):
@@ -526,7 +532,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=None, verbose=False):
+def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num_attempts=1, ax=None, verbose=False):
     best_tree = None
     best_score = -np.inf
 
@@ -534,6 +540,8 @@ def guess_parse_tree_from_yaml(yaml_env, outer_iterations=5, num_attempts=1, ax=
         # Build an initial parse tree.
         # Collect all possible non-terminal intermediate nodes
         hyper_parse_tree = generate_hyperexpanded_parse_tree()
+        if guide_gvs is not None:
+            hyper_parse_tree.global_variable_store = guide_gvs
         candidate_intermediate_nodes = []
         for node in hyper_parse_tree:
             if isinstance(node, Node) and hyper_parse_tree.get_node_parent_or_none(node) is not None:

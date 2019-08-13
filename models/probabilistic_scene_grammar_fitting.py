@@ -45,20 +45,25 @@ def rotate_yaml_env(env, r):
         init_pose[:2] = rotmat.dot(init_pose[:2] - rotation_origin) + rotation_origin
         obj_yaml["pose"] = init_pose.tolist()
 
-def score_subset_of_dataset(dataset, n):
+def score_subset_of_dataset(dataset, n, guide_gvs):
+    # Computes an SVI ELBO estimate of n samples from the dataset,
+    # with a Delta-distribution mean-field variational distribution over
+    # the global latent variables, and an implicit sampled distribution
+    # over the local latent variables.
     losses = []
-    active_param_names = set()
+    active_param_names = set([name + "_est" for name in guide_gvs.keys()])
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
         rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
         
-        observed_tree, joint_score = guess_parse_tree_from_yaml(env, outer_iterations=1, num_attempts=2)
+        observed_tree, joint_score = guess_parse_tree_from_yaml(env, guide_gvs=guide_gvs, outer_iterations=1, num_attempts=2)
+
         # Joint score is P(T, V_obs)
         # Latent score is P(T | V_obs)
         latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
         f = joint_score - latents_score
-        total_score = - (latents_score * (f.detach() - baseline) + f)
+        total_score = (latents_score * (f.detach() - baseline) + f)
         print("Obs tree with joint score %f, latents score %f, total score %f" % (joint_score, latents_score, total_score))
         losses.append(total_score)
         active_param_names = set().union(active_param_names,
@@ -67,7 +72,7 @@ def score_subset_of_dataset(dataset, n):
     return loss, active_param_names
 
 if __name__ == "__main__":
-    seed = 47
+    seed = 48
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -78,10 +83,10 @@ if __name__ == "__main__":
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
     #plt.figure().set_size_inches(20, 20)
     #draw_parse_tree(hyper_parse_tree, label_name=True, label_score=False)
-    #plt.pause(1E-3)
+    #plt.show()
 
-    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_train")
-    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_test")
+    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_nominal_train")
+    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_nominal_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
@@ -102,6 +107,14 @@ if __name__ == "__main__":
     score_history = []
     score_test_history = []
 
+    # Initialize the guide GVS as mean field
+    guide_gvs = hyper_parse_tree.get_global_variable_store()
+    # Note -- if any terminal nodes have global variables associated with
+    # them, they won't be in the guide.
+    for var_name in guide_gvs.keys():
+        guide_gvs[var_name][0] = pyro.param(var_name + "_est",
+                                            guide_gvs[var_name][0],
+                                            constraint=guide_gvs[var_name][1].support)
     # do gradient steps
     print_param_store()
     best_loss_yet = np.infty
@@ -110,7 +123,7 @@ if __name__ == "__main__":
 
     for step in range(500):
         # Pick a few random environment and parse them
-        loss, active_param_names = score_subset_of_dataset(train_dataset, 5)
+        loss, active_param_names = score_subset_of_dataset(train_dataset, n=5, guide_gvs=guide_gvs)
         writer.add_scalar('loss', loss.item(), step)
 
         params = set(pyro.get_param_store()._params[name] for name in active_param_names)
@@ -126,7 +139,7 @@ if __name__ == "__main__":
         
         if (step % 5 == 0):
             # Evaluate on a few test data points
-            loss_test, _ = score_subset_of_dataset(test_dataset, 5)
+            loss_test, _ = score_subset_of_dataset(test_dataset, n=5, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
             writer.add_scalar('loss_test', loss_test.item(), step)
             print("Loss_test: ", loss_test)
@@ -153,7 +166,8 @@ if __name__ == "__main__":
         for param_name in all_param_state.keys():
             write_np_array(writer, param_name, all_param_state[param_name], step)
         param_val_history.append(all_param_state)
-        print("Place setting plate mean mean: ", pyro.param("place_setting_plate_mean_mean"))
-        print("Place setting plate var: ", pyro.param("place_setting_plate_mean_var"))
+        print("active param names: ", active_param_names)
+        print("Place setting plate mean est: ", pyro.param("place_setting_plate_mean_est"))
+        print("Place setting plate var est: ", pyro.param("place_setting_plate_var_est"))
     print("Final loss: ", loss)
     print_param_store()
