@@ -101,10 +101,12 @@ class ParseTree(nx.DiGraph):
             raise NotImplementedError("> 1 parent --> bad parse tree")
 
 
-def generate_unconditioned_parse_tree():
+def generate_unconditioned_parse_tree(initial_gvs=None):
     root_node = Table()
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
+    if initial_gvs is not None:
+        parse_tree.global_variable_store = initial_gvs
     parse_tree.add_node(root_node)
     while len(input_nodes_with_parents)>  0:
         parent, node = input_nodes_with_parents.pop(0)
@@ -674,6 +676,15 @@ if __name__ == "__main__":
     sys.exit(0)
     '''
 
+    hyper_parse_tree = generate_hyperexpanded_parse_tree()
+    guide_gvs = hyper_parse_tree.get_global_variable_store()
+    for var_name in guide_gvs.keys():
+        guide_gvs[var_name][0] = pyro.param(var_name + "_est",
+                                            guide_gvs[var_name][0],
+                                            constraint=guide_gvs[var_name][1].support)
+    #print("Left fork var est: ", guide_gvs["place_setting_plate_var"][0])
+    #guide_gvs["place_setting_plate_var"][0] *= 50
+
     start = time.time()
     pyro.clear_param_store()
     trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -687,7 +698,7 @@ if __name__ == "__main__":
     for k in range(1):
         start = time.time()
         pyro.clear_param_store()
-        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(guide_gvs)
         parse_tree = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
@@ -709,7 +720,7 @@ if __name__ == "__main__":
         yaml_env = convert_tree_to_yaml_env(parse_tree)
         print("Our score: %f" % score)
         print("Trace score: %f" % trace.log_prob_sum())
-        assert(abs(score - trace.log_prob_sum()) < 0.001)
+        #assert(abs(score - trace.log_prob_sum()) < 0.001)
 
         #with open("table_setting_environments_generated.yaml", "a") as file:
         #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
@@ -733,7 +744,8 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 #
-        #plt.show()
+        plt.show()
+        sys.exit(0)
         plt.pause(1E-3)
         plt.figure()
         for k in range(3):

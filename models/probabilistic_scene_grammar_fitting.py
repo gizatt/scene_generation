@@ -14,6 +14,7 @@ import pyro
 import pyro.distributions as dist
 from pyro.optim import Adam
 from pyro.infer import SVI, Trace_ELBO
+import torch.multiprocessing as mp
 from tensorboardX import SummaryWriter
 from torchviz import make_dot
 
@@ -51,23 +52,25 @@ def score_subset_of_dataset(dataset, n, guide_gvs):
     # the global latent variables, and an implicit sampled distribution
     # over the local latent variables.
     losses = []
-    active_param_names = set([name + "_est" for name in guide_gvs.keys()])
+    active_param_names = set()
+    baseline = 0
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
         rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
         
-        observed_tree, joint_score = guess_parse_tree_from_yaml(env, guide_gvs=guide_gvs, outer_iterations=1, num_attempts=2)
+        observed_tree, joint_score = guess_parse_tree_from_yaml(env, guide_gvs=guide_gvs, outer_iterations=2, num_attempts=3)
 
         # Joint score is P(T, V_obs)
         # Latent score is P(T | V_obs)
         latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
         f = joint_score - latents_score
-        total_score = (latents_score * (f.detach() - baseline) + f)
+        total_score = -joint_score # (latents_score * (f.detach() - baseline) + f)
         print("Obs tree with joint score %f, latents score %f, total score %f" % (joint_score, latents_score, total_score))
         losses.append(total_score)
         active_param_names = set().union(active_param_names,
-            *[node.get_param_names() for node in observed_tree.nodes])
+            *[node.get_param_names() for node in observed_tree.nodes],
+            *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
     loss = torch.stack(losses).mean()
     return loss, active_param_names
 
@@ -153,7 +156,7 @@ if __name__ == "__main__":
             plt.figure().set_size_inches(20, 20)
             for k in range(4):
                 plt.subplot(2, 2, k+1)
-                parse_tree = generate_unconditioned_parse_tree()
+                parse_tree = generate_unconditioned_parse_tree(initial_gvs=guide_gvs)
                 yaml_env = convert_tree_to_yaml_env(parse_tree)
                 try:
                     DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
@@ -162,7 +165,7 @@ if __name__ == "__main__":
                 draw_parse_tree(parse_tree, label_name=True, label_score=True)
             writer.add_figure("generated_envs", plt.gcf(), step, close=True)
 
-        all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in active_param_names}
+        all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in pyro.get_param_store().keys()}
         for param_name in all_param_state.keys():
             write_np_array(writer, param_name, all_param_state[param_name], step)
         param_val_history.append(all_param_state)
