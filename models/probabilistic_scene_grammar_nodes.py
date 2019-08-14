@@ -246,7 +246,7 @@ class CovaryingSetNode(NonTerminalNode):
 
     def score_production_rules(self, parent, production_rules):
         selected_rules = self._recover_selected_rules(production_rules)
-        return self.production_dist.log_prob(torch.tensor(selected_rules)).sum()
+        return self.production_dist.log_prob(selected_rules).sum()
 
 
 class IndependentSetNode(NonTerminalNode):

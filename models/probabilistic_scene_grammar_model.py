@@ -607,14 +607,14 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num
                 ax.clear()
                 DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
                 draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
-            plt.pause(0.1)
+                plt.pause(0.1)
             if verbose:
                 print("\tEnding iter %d at score %f" % (outer_k, score))
         if score > best_score:
             best_tree = parse_tree
             best_score = score
         if verbose:
-            print("\tEnding attempt %d at best score %f" % (attempt_k, best_score))
+            print("\tEnding attempt %d at best score %f" % (attempt, best_score))
 
     return best_tree, best_score
 
