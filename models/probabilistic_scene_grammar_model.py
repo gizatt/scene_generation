@@ -633,10 +633,10 @@ def guess_parse_trees_batch(yaml_envs, outer_iterations, num_attempts):
     return all_observed_trees
 
 if __name__ == "__main__":
-    seed = 52
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    #seed = 52
+    #torch.manual_seed(seed)
+    #np.random.seed(seed)
+    #random.seed(seed)
     pyro.enable_validation(True)
 
     noalias_dumper = yaml.dumper.SafeDumper
@@ -695,7 +695,7 @@ if __name__ == "__main__":
     pyro.get_param_store().save("place_setting_nominal_param_store.pyro")
 
     plt.figure().set_size_inches(15, 10)
-    for k in range(1):
+    for k in range(200):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(guide_gvs)
@@ -722,12 +722,12 @@ if __name__ == "__main__":
         print("Trace score: %f" % trace.log_prob_sum())
         #assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        #with open("table_setting_environments_generated.yaml", "a") as file:
-        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
+        with open("table_setting_environments_generated_simple.yaml", "a") as file:
+            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
-
+        continue
         try:
             plt.subplot(2, 2, 3)
             plt.gca().clear()
@@ -744,25 +744,25 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 #
-        plt.show()
-        sys.exit(0)
+        #plt.show()
+        #sys.exit(0)
         plt.pause(1E-3)
-        plt.figure()
-        for k in range(3):
-            # And then try to parse it
-            ax = plt.subplot(3, 1, k+1)
-            plt.xlim(-0.2, 1.2)
-            plt.ylim(-0.2, 1.2)
-##
-            guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=2, ax=plt.gca())
-##
-            print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
-            plt.title("Guessed parse tree with score %f" % score)
-            plt.gca().clear()
-            draw_parse_tree(guessed_parse_tree)
-            plt.pause(1E-3)
-##
-        plt.show()
+        #plt.figure()
+        #for k in range(3):
+        #    # And then try to parse it
+        #    ax = plt.subplot(3, 1, k+1)
+        #    plt.xlim(-0.2, 1.2)
+        #    plt.ylim(-0.2, 1.2)
+###
+        #    guessed_parse_tree, score = guess_parse_tree_from_yaml(yaml_env, outer_iterations=2, ax=plt.gca())
+###
+        #    print(guessed_parse_tree.nodes, guessed_parse_tree.edges)
+        #    plt.title("Guessed parse tree with score %f" % score)
+        #    plt.gca().clear()
+        #    draw_parse_tree(guessed_parse_tree)
+        #    plt.pause(1E-3)
+###
+        #plt.show()
         #plt.pause(0.1)
         #trace = poutine.trace(model.model(observed_tree=guessed_parse_tree)).get_trace()
         #print("Trace log prob sum: %f" % trace.log_prob_sum())

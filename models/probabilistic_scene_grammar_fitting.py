@@ -15,6 +15,7 @@ import pyro.distributions as dist
 from pyro.optim import Adam
 from pyro.infer import SVI, Trace_ELBO
 import torch.multiprocessing as mp
+from multiprocessing.managers import SyncManager
 from tensorboardX import SummaryWriter
 from torchviz import make_dot
 
@@ -47,26 +48,47 @@ def rotate_yaml_env(env, r):
         obj_yaml["pose"] = init_pose.tolist()
 
 def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
-    baseline = 0
     observed_tree, joint_score = guess_parse_tree_from_yaml(
         env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
     # Joint score is P(T, V_obs)
     # Latent score is P(T | V_obs)
     latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
     f = joint_score - latents_score
-    total_score = -joint_score # (latents_score * (f.detach() - baseline) + f)
-    print("Obs tree with joint score %f, latents score %f, total score %f" % (joint_score, latents_score, total_score))
+    baseline = -100.
+    #total_score = (latents_score * (f.detach() - baseline) + f)
+    total_score = -joint_score
+    print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
     active_param_names = set().union(
         *[node.get_param_names() for node in observed_tree.nodes],
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
-    return total_score, active_param_names
+    return total_score, joint_score, latents_score, active_param_names
 
-def core_sample_async(env, guide_gvs, eval_backward, output_queue, done):
-    total_score, active_param_names = score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=2)
+def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=3):
+    post_parsing_barrier, grads_reset_event, done_event = synchro_prims
+    observed_tree, joint_score = guess_parse_tree_from_yaml(
+        env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
+    # Joint score is P(T, V_obs)
+    # Latent score is P(T | V_obs)
+    post_parsing_barrier.wait()
+    if thread_id == 0:
+        # Thread 0 resets the gradients to 0
+        for name in pyro.get_param_store().keys():
+            pyro.get_param_store()._params[name].grad.data.zero_()
+        grads_reset_event.set()
+    else:
+        grads_reset_event.wait()
+
+    latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
+    f = joint_score - latents_score
+    baseline = -100.
+    #total_score = (latents_score * (f.detach() - baseline) + f)
+    total_score = -joint_score
+    print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
+
     if eval_backward:
         total_score.backward(retain_graph=True)
     output_queue.put(total_score.detach())
-    done.wait()
+    done_event.wait()
     
 def score_subset_of_dataset_sync(dataset, n, guide_gvs):
     # Computes an SVI ELBO estimate of n samples from the dataset,
@@ -79,8 +101,8 @@ def score_subset_of_dataset_sync(dataset, n, guide_gvs):
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
-        rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
-        total_score, active_param_names_local = score_sample_sync(env, guide_gvs)
+        #rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
+        total_score, _, _, active_param_names_local = score_sample_sync(env, guide_gvs)
         losses.append(total_score)
         active_param_names = set().union(
             active_param_names,
@@ -94,36 +116,58 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
-        rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
+        #rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
         envs.append(env)
 
     do_backprop = optimizer is not None
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     
-    if do_backprop:
-        for p in all_params_to_optimize:
-            p.grad.data.zero_()
-    processes = []
-    losses = []
-    output_queue = mp.SimpleQueue()
-    done = mp.Event()
-    for env in envs:
-        p = mp.Process(target=core_sample_async, args=(env, guide_gvs, do_backprop, output_queue, done))
-        p.start()
-        processes.append(p)
-    for k in range(n):
-        losses.append(output_queue.get())
-    done.set()
-    for p in processes:
-        p.join()
-    loss = torch.stack(losses).mean()
-    print("Loss: ", loss)
-    if do_backprop:
-        # Apply averaging to gradients
-        for p in all_params_to_optimize:
-            p.grad.data /= float(n)
-        optimizer(all_params_to_optimize)
-    return loss
+    if False:
+        sync_manager = SyncManager()
+        sync_manager.start()
+        post_parsing_barrier = sync_manager.Barrier(n)
+        grads_reset_event = mp.Event()
+        processes = []
+        losses = []
+        output_queue = mp.SimpleQueue()
+        done_event = mp.Event()
+        synchro_prims = [post_parsing_barrier, grads_reset_event, done_event]
+        for i, env in enumerate(envs):
+            p = mp.Process(
+                target=score_sample_async, args=(
+                    i, env, guide_gvs, do_backprop, output_queue, synchro_prims))
+            p.start()
+            processes.append(p)
+        for k in range(n):
+            losses.append(output_queue.get())
+        done_event.set()
+        for p in processes:
+            p.join()
+        loss = torch.stack(losses).mean()
+        print("Loss async: ", loss)
+        if do_backprop:
+            # Apply averaging to gradients
+            for p in all_params_to_optimize:
+                p.grad.data /= float(n)
+            optimizer(all_params_to_optimize)
+        return loss
+    else:
+        loss, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
+        #for param in all_params_to_optimize:
+        ##    param.grad *= -1.0
+        print("Loss sync: ", loss)
+        if do_backprop:
+            for p in all_params_to_optimize:
+                p.grad.data.zero_()
+            print("PRE EVAL: ")
+            for name in pyro.get_param_store().keys():
+                print(name, " grad: ", pyro.get_param_store()._params[name].grad)
+            loss.backward(retain_graph=True)
+            print("POST EVAL: ")
+            for name in pyro.get_param_store().keys():
+                print(name, " grad: ", pyro.get_param_store()._params[name].grad)
+            optimizer(all_params_to_optimize)
+        return loss
 
 if __name__ == "__main__":
     seed = 48
@@ -141,8 +185,8 @@ if __name__ == "__main__":
     #draw_parse_tree(hyper_parse_tree, label_name=True, label_score=False)
     #plt.show()
 
-    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_nominal_train")
-    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_nominal_test")
+    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_train")
+    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
