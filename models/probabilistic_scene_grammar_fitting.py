@@ -122,7 +122,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     do_backprop = optimizer is not None
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     
-    if False:
+    if True:
         sync_manager = SyncManager()
         sync_manager.start()
         post_parsing_barrier = sync_manager.Barrier(n)
@@ -210,9 +210,9 @@ if __name__ == "__main__":
     # Note -- if any terminal nodes have global variables associated with
     # them, they won't be in the guide.
     for var_name in guide_gvs.keys():
-        guide_gvs[var_name][0] = pyro.param(var_name + "_est",
-                                            guide_gvs[var_name][0],
-                                            constraint=guide_gvs[var_name][1].support)
+        guide_gvs[var_name] = pyro.param(var_name + "_est",
+                                         guide_gvs[var_name][0],
+                                         constraint=guide_gvs[var_name][1].support)
     # do gradient steps
     print_param_store()
     best_loss_yet = np.infty
@@ -235,6 +235,11 @@ if __name__ == "__main__":
     snapshots = {}
 
     for step in range(500):
+        # Synchronize gvs and param store. In the case of constrained parameters,
+        # the constrained value returned by pyro.param() is distinct from the
+        # unconstrianed value we optimize, so we need to regenerate the constrained value.
+        for var_name in guide_gvs.keys():
+            guide_gvs[var_name][0] = pyro.param(var_name + "_est")
         loss = calc_score_and_backprob_async(train_dataset, n=2, guide_gvs=guide_gvs, optimizer=optimizer)
         #loss = svi.step(observed_tree)
         score_history.append(loss)

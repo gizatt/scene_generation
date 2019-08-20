@@ -364,10 +364,10 @@ class PlaceSetting(CovaryingSetNode):
             #"right_spoon": Spoon,
         }
         param_guesses_by_name = {
-            "plate": ([0., 0.16, 0.], [0.01, 0.01, 3.]),
-            "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.01, 3.]),
-            "right_fork": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
-            "left_fork": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
+            "plate": ([0., 0.16, 0.], [0.05, 0.05, 3.]),
+            "cup": ([0., 0.16 + 0.15, 0.], [0.05, 0.05, 3.]),
+            "right_fork": ([0.15, 0.16, 0.], [0.05, 0.05, 0.5]),
+            "left_fork": ([-0.15, 0.16, 0.], [0.05, 0.05, 0.5]),
             #"left_spoon": ([-0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"right_spoon": ([0.15, 0.16, 0.], [0.01, 0.01, 0.01]),
             #"forward_spoon": ([0.16 + 0.15, 0.0, np.pi/2.], [0.01, 0.01, 0.01]),
@@ -379,19 +379,20 @@ class PlaceSetting(CovaryingSetNode):
         name_to_ind = {}
         for k, object_name in enumerate(self.object_types_by_name.keys()):
             mean_init, var_init = param_guesses_by_name[object_name]
-            # Use an inverse gamma prior for variance. It has mode
-            # beta / (alpha + 1) = var
-            # (beta / var) - 1 = alpha
+            # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
+            # beta / (alpha - 1) = var
+            # (beta / var) + 1 = alpha
             # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
-            # A ratio of ~100 seems like a nice compromise.
-            beta = 100.*torch.tensor(var_init)
-            alpha = (beta / torch.tensor(var_init)) + 1
+            var_prior_width_fact = 1
+            assert(var_prior_width_fact > 0.)
+            beta = var_prior_width_fact*torch.tensor(var_init)
+            alpha = var_prior_width_fact*torch.ones(len(var_init)) + 1
             production_rules.append(
                 self.ObjectProductionRule(
                     name="%s_prod_%03d" % (name, k),
                     object_name=object_name,
                     object_type=self.object_types_by_name[object_name],
-                    mean_prior_params=(torch.tensor(mean_init), torch.ones(3)*0.01),
+                    mean_prior_params=(torch.tensor(mean_init), torch.ones(3)*0.05),
                     var_prior_params=(alpha, beta)))
             # Build name mapping for convenience of building the hint dictionary
             name_to_ind[object_name] = k
@@ -407,7 +408,7 @@ class PlaceSetting(CovaryingSetNode):
             #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
             (name_to_ind["plate"], name_to_ind["right_fork"]): 1.,
             (name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
-            #(name_to_ind["cup"],): 0.5,
+            (name_to_ind["cup"],): 0.5,
             #(name_to_ind["plate"], name_to_ind["cup"]): 1.,
             (name_to_ind["plate"],): 1.,
         }
