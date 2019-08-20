@@ -8,7 +8,7 @@ except ImportError:
     print("WARNING: Defaulting to non-C [slow] YAML loader.")
     from yaml import Loader
 
-f_in_base = "table_setting_environments_human"
+f_in_base = "table_setting_environments_simple"
 train_fraction = 0.75
 max_environments_per_subfile = 100
 
@@ -17,8 +17,8 @@ with open(f_in_base + ".yaml", "r") as f:
 num_envs = len(raw_yaml_environments)
 print("Input: %d environments" % num_envs)
 
-all_keys = raw_yaml_environments.keys()
-inds = range(num_envs)
+all_keys = list(raw_yaml_environments.keys())
+inds = list(range(num_envs))
 random.shuffle(inds)
 
 end_train_ind = int(train_fraction * num_envs)

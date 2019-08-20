@@ -1,0 +1,1691 @@
+env_1565900041669:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.798678457736969, 0.5023313164710999, 0.19673311710357666]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7849302291870117, 0.3753012418746948, 1.5102922916412354]
+env_1565900041732:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.805069088935852, 0.5684297680854797, -0.5553193092346191]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8423374891281128, 0.7030844688415527, 1.4529759883880615]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5103575587272644, 0.7809977531433105, -0.46964144706726074]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6649166345596313, 0.820388913154602, 3.207634687423706]
+env_1565900041796:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.789137601852417, 0.536740243434906, 4.090752124786377]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7759806513786316, 0.3752508759498596, 1.500468373298645]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.49406683444976807, 0.7911544442176819, 2.331327438354492]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6559773683547974, 0.7736328840255737, 3.1347365379333496]
+env_1565900041873:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900042008:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7817001342773438, 0.5299037098884583, 1.4040182828903198]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7886130213737488, 0.35132938623428345, 1.6469042301177979]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.17427533864974976, 0.4806467294692993, 0.6546428203582764]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.188332200050354, 0.30968669056892395, 4.569276332855225]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5316928029060364, 0.20578540861606598, -1.1482863426208496]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6587185859680176, 0.20701864361763, 6.175504684448242]
+env_1565900042195:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.1845032125711441, 0.4903232157230377, 6.905311584472656]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.17056317627429962, 0.33983030915260315, 4.546435356140137]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5243270993232727, 0.19965757429599762, 5.238802909851074]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6602371335029602, 0.20684608817100525, 6.247098445892334]
+env_1565900042836:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5170202255249023, 0.7965207099914551, 6.703733444213867]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.3851770758628845, 0.7740233540534973, 3.3364500999450684]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5340343117713928, 0.21764904260635376, 5.082258224487305]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.36857789754867554, 0.21341653168201447, 6.1710124015808105]
+env_1565900042919:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900043335:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21211493015289307, 0.4891699552536011, 7.29862117767334]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.17374524474143982, 0.6448867917060852, 4.859043598175049]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5203320384025574, 0.2167907953262329, 4.122136116027832]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6460952162742615, 0.21691268682479858, 6.246427059173584]
+env_1565900043470:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 5
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7750837802886963, 0.4929991662502289, -1.7073030471801758]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4730464816093445, 0.778270959854126, 2.3694987297058105]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.3500250279903412, 0.800245463848114, 3.0154922008514404]
+  obj_0003:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.23682722449302673, 0.4778803288936615, 6.635725975036621]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.23306405544281006, 0.3259136378765106, 4.651358127593994]
+env_1565900044096:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.780631422996521, 0.49905985593795776, 2.1245944499969482]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7847870588302612, 0.6400932669639587, 1.5661075115203857]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5127927660942078, 0.2204098105430603, 4.581270694732666]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.35037994384765625, 0.18886502087116241, 6.3367719650268555]
+env_1565900045556:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.468963623046875, 0.8039042353630066, 2.845207929611206]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.5888140201568604, 0.7765787839889526, 2.9877829551696777]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.23812025785446167, 0.49344751238822937, 5.60465669631958]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.19887028634548187, 0.6069449782371521, 4.740215301513672]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4897298812866211, 0.21591368317604065, 4.747950077056885]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6646184921264648, 0.2329903244972229, 6.355783462524414]
+env_1565900045707:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900045793:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 7
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.8076639175415039, 0.5356031656265259, 0.5706460475921631]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8019123077392578, 0.36985665559768677, 1.5642344951629639]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.46803373098373413, 0.7822513580322266, 2.3233208656311035]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.31827911734580994, 0.8140641450881958, 3.0129928588867188]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.187055766582489, 0.5069734454154968, 4.588199138641357]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.21113625168800354, 0.3748527765274048, 4.93404483795166]
+  obj_0006:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5205705165863037, 0.22244757413864136, 1.7873587608337402]
+env_1565900045959:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7977105975151062, 0.4740141034126282, -1.5024385452270508]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8515970706939697, 0.33801138401031494, 1.681556224822998]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4984189569950104, 0.7825973033905029, 1.751330852508545]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.35191282629966736, 0.7626708745956421, 3.215980052947998]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4846956133842468, 0.2172437310218811, 7.294366359710693]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.3397866487503052, 0.19179828464984894, 6.406909942626953]
+env_1565900046014:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.19828487932682037, 0.44762054085731506, 3.8755693435668945]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.22265216708183289, 0.6013659834861755, 4.570879936218262]
+env_1565900046067:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7945646047592163, 0.4890347421169281, 4.578423500061035]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7986208200454712, 0.36392736434936523, 1.5579876899719238]
+env_1565900046194:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.48786479234695435, 0.22173741459846497, 6.540410995483398]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.37188953161239624, 0.19049392640590668, 6.292477607727051]
+env_1565900047187:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 8
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7975188493728638, 0.48611482977867126, 2.4428534507751465]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7806099057197571, 0.6370103359222412, 1.6666007041931152]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4550115168094635, 0.8186355829238892, 7.618805408477783]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.30345624685287476, 0.8143242597579956, 3.082695960998535]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.2236153930425644, 0.5053060054779053, 3.502260446548462]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.20183300971984863, 0.3308904469013214, 4.71776008605957]
+  obj_0006:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5308870077133179, 0.23116502165794373, 3.7917866706848145]
+  obj_0007:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.36486387252807617, 0.21809262037277222, 6.253029823303223]
+env_1565900047421:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5229508280754089, 0.8122026920318604, 0.819904088973999]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.364981085062027, 0.76809161901474, 3.283003807067871]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.523846447467804, 0.21733999252319336, 3.2071735858917236]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.37555715441703796, 0.1908595860004425, 6.32168436050415]
+env_1565900047503:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.795884907245636, 0.48914140462875366, 2.3134727478027344]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4737755060195923, 0.7695079445838928, 1.9671120643615723]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6396724581718445, 0.7966529726982117, 3.082301139831543]
+  obj_0003:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.22122693061828613, 0.5004819631576538, 2.1108431816101074]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.23790182173252106, 0.35447078943252563, 4.821242809295654]
+  obj_0005:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4786801040172577, 0.22085270285606384, 6.090879917144775]
+env_1565900047611:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7663105726242065, 0.4839213788509369, 4.306753158569336]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8059420585632324, 0.34491539001464844, 1.6597340106964111]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21950766444206238, 0.4486902952194214, 9.494972229003906]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.22616583108901978, 0.5822716951370239, 4.581672668457031]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5093439221382141, 0.2122141271829605, 8.74995231628418]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6681672930717468, 0.19572597742080688, 6.237332820892334]
+env_1565900047671:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5046573281288147, 0.7986268401145935, 4.178117752075195]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4743591248989105, 0.22694922983646393, 8.245377540588379]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6409605145454407, 0.24724167585372925, 6.445880889892578]
+env_1565900047901:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4784482717514038, 0.7712453007698059, 8.83287239074707]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.22008411586284637, 0.5051561594009399, 3.439279317855835]
+env_1565900047932:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900048233:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900048806:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.491547554731369, 0.7862477898597717, -1.595522403717041]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.365578293800354, 0.7521258592605591, 3.2402865886688232]
+env_1565900049014:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 5
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7960781455039978, 0.4948016405105591, 1.5504934787750244]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4725024402141571, 0.7721613645553589, 1.3261630535125732]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6263786554336548, 0.770156741142273, 3.0423409938812256]
+  obj_0003:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4773021340370178, 0.20023927092552185, 6.824400901794434]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6469177603721619, 0.2076086699962616, 6.3609137535095215]
+env_1565900049258:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 1
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21087072789669037, 0.48881420493125916, 0.8505210876464844]
+env_1565900049314:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7849686145782471, 0.5038242936134338, 3.7820329666137695]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7867704629898071, 0.3745173513889313, 1.6049529314041138]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5464335680007935, 0.7943986654281616, 4.793103218078613]
+env_1565900049483:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 0
+env_1565900049848:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4846956431865692, 0.7890251278877258, 1.4451085329055786]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5380566120147705, 0.2206978052854538, 5.729009628295898]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6652692556381226, 0.19633857905864716, 6.212835311889648]
+env_1565900050058:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 5
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7907828688621521, 0.48444339632987976, 2.689741611480713]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21763582527637482, 0.5177146196365356, 7.861521244049072]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.24779848754405975, 0.3625733256340027, 4.764138698577881]
+  obj_0003:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5288452506065369, 0.2188890129327774, 7.912482261657715]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6673216223716736, 0.19705699384212494, 6.2417192459106445]
+env_1565900050488:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 1
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7867922782897949, 0.49001187086105347, 3.600464344024658]
+env_1565900050722:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.782341718673706, 0.48630350828170776, 3.9037537574768066]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4664873778820038, 0.7738121747970581, 5.8792009353637695]
+env_1565900051053:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.4814450740814209, 0.7838086485862732, 4.887205123901367]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6128836870193481, 0.7826656103134155, 3.1049132347106934]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21979540586471558, 0.5132377743721008, 1.7101776599884033]
+env_1565900051442:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 1
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7926420569419861, 0.5327630043029785, -0.7522776126861572]
+env_1565900051610:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7873505353927612, 0.500425398349762, 0.8630210161209106]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8065972924232483, 0.39267697930336, 1.611515760421753]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.2116042524576187, 0.44203981757164, 8.621710777282715]
+env_1565900051756:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 5
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7959563732147217, 0.5003310441970825, 4.257360458374023]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.19243881106376648, 0.5168465971946716, 6.936671257019043]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.1869678795337677, 0.6540809869766235, 4.719109535217285]
+  obj_0003:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.45998671650886536, 0.23282524943351746, 6.840987205505371]
+  obj_0004:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.32208332419395447, 0.19095361232757568, 6.427844047546387]
+env_1565900051895:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 8
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7811307907104492, 0.5352765917778015, 4.5200395584106445]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7568453550338745, 0.6811249852180481, 1.436010479927063]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5221989750862122, 0.7913120985031128, -0.34509730339050293]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6619672179222107, 0.8337339758872986, 3.2841944694519043]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.22676286101341248, 0.4821058511734009, 5.039257049560547]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.19500215351581573, 0.3520292043685913, 4.57381010055542]
+  obj_0006:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5029408931732178, 0.21329665184020996, 5.25014591217041]
+  obj_0007:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.6522360444068909, 0.24328191578388214, 6.356307506561279]
+env_1565900052074:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.8052605390548706, 0.48733192682266235, 1.2114273309707642]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.1921544373035431, 0.4600343108177185, 7.104086399078369]
+env_1565900052119:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 1
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.49960747361183167, 0.7946168184280396, 3.926335096359253]
+env_1565900052318:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 6
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7847909927368164, 0.5203799605369568, -0.10067892074584961]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7844532132148743, 0.6516289114952087, 1.588247537612915]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.49039870500564575, 0.7889387607574463, 4.984134674072266]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.656108558177948, 0.8098219633102417, 3.1469123363494873]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.49181073904037476, 0.1964619755744934, 8.606551170349121]
+  obj_0005:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.35624057054519653, 0.16015635430812836, 6.361227989196777]
+env_1565900052372:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.21422812342643738, 0.4878252446651459, 8.04987907409668]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.19594407081604004, 0.3389091193675995, 4.66296911239624]
+env_1565900052424:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.8033381700515747, 0.5090852975845337, 9.300681114196777]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.8156222105026245, 0.33061662316322327, 1.6734387874603271]
+env_1565900052544:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 5
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7872866988182068, 0.509777307510376, -1.8022067546844482]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7989048957824707, 0.35575833916664124, 1.6636316776275635]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5088276863098145, 0.7935572266578674, -1.4102563858032227]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.657011866569519, 0.8203850984573364, 3.257455825805664]
+  obj_0004:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5002974271774292, 0.21368101239204407, 7.299841403961182]
+env_1565900052754:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 2
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.8075618147850037, 0.5136659145355225, 1.4918253421783447]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7993819117546082, 0.35828685760498047, 1.572911024093628]
+env_1565900052898:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 4
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7850354909896851, 0.5407902598381042, 0.7444721460342407]
+  obj_0001:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.7835196256637573, 0.6496938467025757, 1.58614182472229]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.20473803579807281, 0.481332391500473, 3.447969913482666]
+  obj_0003:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.21395841240882874, 0.33572670817375183, 4.725010871887207]
+env_1565900052992:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7788618803024292, 0.49489256739616394, 0.6967260241508484]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5011705160140991, 0.7933279275894165, 4.554820537567139]
+  obj_0002:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.23840411007404327, 0.4723995327949524, 4.811497211456299]
+env_1565900053052:
+  global_variable_store:
+    place_setting_cup_mean: [-0.004090458154678345, 0.31188884377479553, 0.001969375181943178]
+    place_setting_cup_var: [0.055692121386528015, 0.011586006730794907, 2.9948158264160156]
+    place_setting_left_fork_mean: [-0.14030393958091736, 0.1470847725868225, 0.009174478240311146]
+    place_setting_left_fork_var: [0.009967398829758167, 0.009957969188690186, 0.00985121913254261]
+    place_setting_plate_mean: [0.00867400411516428, 0.1632097363471985, -0.0010688903275877237]
+    place_setting_plate_var: [0.010282150469720364, 0.009804959408938885, 2.385507583618164]
+    place_setting_right_fork_mean: [0.15755218267440796, 0.16099649667739868, -0.0022488923277705908]
+    place_setting_right_fork_var: [0.0115989800542593, 0.011321303434669971, 0.010416567325592041]
+  n_objects: 3
+  obj_0000:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.7808555960655212, 0.4919275939464569, 1.7654703855514526]
+  obj_0001:
+    class: plate
+    color: null
+    img_path: table_setting_assets/plate_red.png
+    params: [0.2]
+    params_names: [radius]
+    pose: [0.5003954768180847, 0.7942884564399719, 0.5283880233764648]
+  obj_0002:
+    class: fork
+    color: null
+    img_path: table_setting_assets/fork.png
+    params: [0.02, 0.14]
+    params_names: [width, height]
+    pose: [0.3458990752696991, 0.8180075883865356, 3.1549694538116455]
