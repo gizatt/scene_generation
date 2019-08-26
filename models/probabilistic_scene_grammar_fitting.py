@@ -190,6 +190,17 @@ if __name__ == "__main__":
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
+    plt.figure().set_size_inches(15, 10)
+    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
+    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
+    print("Parsed %d trees" % len(parse_trees))
+    print(parse_trees[0].nodes)
+    for k in range(4):
+        plt.subplot(2, 2, k+1)
+        DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
+        draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
+    plt.show()
+    sys.exit(0)
 
     log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")

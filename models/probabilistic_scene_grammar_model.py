@@ -17,6 +17,8 @@ import torch.distributions.constraints as constraints
 import pyro
 import pyro.distributions as dist
 from pyro import poutine
+import torch.multiprocessing as mp
+from multiprocessing.managers import SyncManager
 
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
@@ -100,6 +102,47 @@ class ParseTree(nx.DiGraph):
             print("Parents: ", parents)
             raise NotImplementedError("> 1 parent --> bad parse tree")
 
+    def detach(self):
+        queue = [self] #list(vars(self).items())
+        def is_in_list(query_obj, query_list):
+            return any([list_obj is query_obj for list_obj in query_list])
+        i = 0
+        done = []
+        while len(queue) > 0:
+            i += 1
+            if i > 1000000:
+                raise NotImplementedError("Likely recursion detected")
+            obj = queue.pop()
+
+            if is_in_list(obj, done):
+                continue
+            else:
+                done.append(obj)
+            #print("Iter to type ", type(obj), ": ", obj)
+            if isinstance(obj, list) or isinstance(obj, tuple):
+                for k, child in enumerate(obj):
+                    if isinstance(child, torch.Tensor) and child.requires_grad and child.is_leaf:
+                        #print("Detaching tensor ", child, " from obj ", obj)
+                        if isinstance(child, tuple):
+                            raise NotImplementedError("Can't modify tuple in place :(")
+                        obj[k] = child.detach()
+                    else:
+                        queue.append(child)
+            elif hasattr(obj, "__dict__"):
+                for key in vars(obj).keys():
+                    child = getattr(obj, key)
+                    if isinstance(child, torch.Tensor):
+                        #print("Detaching tensor ", child, " from obj ", obj)
+                        setattr(obj, key, child.detach())
+                    else:
+                        queue.append(child)
+            elif isinstance(obj, dict):
+                for child in obj.items():
+                    queue.append(child)
+            else:
+                pass
+                #if not callable(obj):
+                    #print("Warning, detach is skipping object ", obj, " of type ", type(obj))
 
 def generate_unconditioned_parse_tree(initial_gvs=None):
     root_node = Table()
@@ -473,7 +516,8 @@ def optimize_parse_tree_hmc_in_place(parse_tree, ax=None, verbose=False):
         # Accept or reject
         thresh = torch.exp((initial_score - proposed_score) +
                            (initial_potential - proposed_potential))
-        if dist.Bernoulli(1. - min(thresh, 1.)).sample():
+        if (not np.isnan(thresh.detach().numpy()) and
+                dist.Bernoulli(1. - max(min(thresh, 1.), 0.)).sample()):
             # Poses are already updated in-place
             pass
         else:
@@ -618,19 +662,41 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num
 
     return best_tree, best_score
 
-def worker(env, outer_iterations, num_attempts):
+def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims):
+    done_event,  = synchro_prims
     tree, score = guess_parse_tree_from_yaml(
-        env, outer_iterations=outer_iterations,
+        env, guide_gvs=guide_gvs, 
+        outer_iterations=outer_iterations,
         num_attempts=num_attempts, verbose=False)
     print("Finished tree with score %f" % score)
-    return tree
+    # Detach all values in the tree so it can be communicated IPC
+    tree.detach()
+    for key in pyro.get_param_store().keys():
+        pyro.get_param_store()._params[key].requires_grad = False
+        pyro.get_param_store()._params[key].grad = None
+    output_queue.put((i, tree))
+    done_event.wait()
 
-def guess_parse_trees_batch(yaml_envs, outer_iterations, num_attempts):
-    pool = multiprocessing.Pool(10)
-    all_observed_trees = pool.map(
-        partial(worker, outer_iterations=outer_iterations,
-                num_attempts=num_attempts), yaml_envs)
-    return all_observed_trees
+def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=3):
+    processes = []
+    output_queue = mp.SimpleQueue()
+    done_event = mp.Event()
+    synchro_prims = [done_event]
+    n = len(envs)
+    parse_trees = [None]*n
+    for i, env in enumerate(envs):
+        p = mp.Process(
+            target=worker, args=(
+                i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims))
+        p.start()
+        processes.append(p)
+    for k in range(n):
+        i, parse_tree = output_queue.get()
+        parse_trees[i] = parse_tree
+    done_event.set()
+    for p in processes:
+        p.join()
+    return parse_trees
 
 if __name__ == "__main__":
     #seed = 52
@@ -722,12 +788,11 @@ if __name__ == "__main__":
         print("Trace score: %f" % trace.log_prob_sum())
         #assert(abs(score - trace.log_prob_sum()) < 0.001)
 
-        with open("table_setting_environments_generated_simple.yaml", "a") as file:
-            yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
+        #with open("table_setting_environments_generated_simple.yaml", "a") as file:
+        #    yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
 
         #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting",
         #                                           make_static=False)[0]
-        continue
         try:
             plt.subplot(2, 2, 3)
             plt.gca().clear()
@@ -744,7 +809,7 @@ if __name__ == "__main__":
         except:
             print(bcolors.FAIL, "Caught ????, probably sim fault due to weird geometry.", bcolors.ENDC)
 #
-        #plt.show()
+        plt.show()
         #sys.exit(0)
         plt.pause(1E-3)
         #plt.figure()
