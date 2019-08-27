@@ -80,9 +80,9 @@ def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, s
 
     latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
     f = joint_score - latents_score
-    baseline = -100.
-    #total_score = (latents_score * (f.detach() - baseline) + f)
-    total_score = -joint_score
+    baseline = 0.
+    total_score = -(latents_score * (f.detach() - baseline) + f)
+    #total_score = -joint_score
     print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
 
     if eval_backward:
@@ -122,7 +122,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     do_backprop = optimizer is not None
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     
-    if True:
+    if True:   # ASYNC
         sync_manager = SyncManager()
         sync_manager.start()
         post_parsing_barrier = sync_manager.Barrier(n)
@@ -151,7 +151,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
                 p.grad.data /= float(n)
             optimizer(all_params_to_optimize)
         return loss
-    else:
+    else:    # EQUIVALENT SINGLE-THREAD
         loss, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
         #for param in all_params_to_optimize:
         ##    param.grad *= -1.0
@@ -170,39 +170,38 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         return loss
 
 if __name__ == "__main__":
-    seed = 48
-    use_writer = False
+
+    seed = int(time.time()) % (2**32-1)
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
     torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
     pyro.clear_param_store()
-    
 
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
-    #plt.figure().set_size_inches(20, 20)
-    #draw_parse_tree(hyper_parse_tree, label_name=True, label_score=False)
-    #plt.show()
+    guide_gvs = hyper_parse_tree.get_global_variable_store()
 
     train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_train")
     test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
-    plt.figure().set_size_inches(15, 10)
-    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
-    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
-    print("Parsed %d trees" % len(parse_trees))
-    print(parse_trees[0].nodes)
-    for k in range(4):
-        plt.subplot(2, 2, k+1)
-        DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
-        draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
-    plt.show()
-    sys.exit(0)
+    
+    #plt.figure().set_size_inches(15, 10)
+    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
+    ##parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
+    #print("Parsed %d trees" % len(parse_trees))
+    #print(parse_trees[0].nodes)
+    #for k in range(4):
+    #    plt.subplot(2, 2, k+1)
+    #    DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
+    #    draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
+    #plt.show()
+    #sys.exit(0)
+    use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/" + datetime.datetime.now().strftime(
+    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/simple/elbo_neg_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:
@@ -211,26 +210,23 @@ if __name__ == "__main__":
             for yi, y in enumerate(x):
                 writer.add_scalar(name + "/%d" % yi, y, i)
 
-        
     param_val_history = []
     score_history = []
     score_test_history = []
 
     # Initialize the guide GVS as mean field
-    guide_gvs = hyper_parse_tree.get_global_variable_store()
     # Note -- if any terminal nodes have global variables associated with
     # them, they won't be in the guide.
     for var_name in guide_gvs.keys():
-        guide_gvs[var_name] = pyro.param(var_name + "_est",
-                                         guide_gvs[var_name][0],
-                                         constraint=guide_gvs[var_name][1].support)
+        guide_gvs[var_name][0] = pyro.param(var_name + "_est",
+                                            guide_gvs[var_name][0],
+                                            constraint=guide_gvs[var_name][1].support)
     # do gradient steps
     print_param_store()
     best_loss_yet = np.infty
 
-
     # setup the optimizer
-    adam_params = {"lr": 0.025, "betas": (0.8, 0.95)}
+    adam_params = {"lr": 0.001, "betas": (0.8, 0.95)}
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     # Ensure everything in pyro param store has zero grads
     for p in all_params_to_optimize:
@@ -239,32 +235,40 @@ if __name__ == "__main__":
         p.share_memory_()
         p.grad.share_memory_()
 
-    optimizer = Adam(adam_params)
+    def per_param_callable(module_name, param_name):
+        if "var" in param_name or "weights" in param_name:
+            return {"lr": 0.01, "betas": (0.8, 0.95)}
+
+        else:
+            return {"lr": 0.001, "betas": (0.8, 0.95)}
+    optimizer = Adam(per_param_callable)
+    baseline = 0.
     baseline = 0.
 
 
     snapshots = {}
-
+    total_step = 0
     for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
         # unconstrianed value we optimize, so we need to regenerate the constrained value.
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est")
-        loss = calc_score_and_backprob_async(train_dataset, n=2, guide_gvs=guide_gvs, optimizer=optimizer)
+
+        loss = calc_score_and_backprob_async(train_dataset, n=10, guide_gvs=guide_gvs, optimizer=optimizer)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
-        
-        if (step % 5 == 0):
+
+        if (total_step % 10 == 0):
             # Evaluate on a few test data points
-            loss_test = calc_score_and_backprob_async(test_dataset, n=1, guide_gvs=guide_gvs)
+            loss_test = calc_score_and_backprob_async(test_dataset, n=5, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
             print("Loss_test: ", loss_test)
 
             if loss_test < best_loss_yet:
                 best_loss_yet = loss
                 pyro.get_param_store().save("best_on_test_save.pyro")
-                
+
             # Also generate a few example environments
             # Generate a ground truth test environment
             plt.figure().set_size_inches(20, 20)
@@ -278,17 +282,18 @@ if __name__ == "__main__":
                     print("Unhandled exception in drawing yaml env")
                 draw_parse_tree(parse_tree, label_name=True, label_score=True)
             if use_writer:
-                writer.add_scalar('loss_test', loss_test.item(), step)
-                writer.add_figure("generated_envs", plt.gcf(), step, close=True)
+                writer.add_scalar('loss_test', loss_test.item(), total_step)
+                writer.add_figure("generated_envs", plt.gcf(), total_step, close=True)
 
         all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in pyro.get_param_store().keys()}
         if use_writer:
-            writer.add_scalar('loss', loss.item(), step)
+            writer.add_scalar('loss', loss.item(), total_step)
             for param_name in all_param_state.keys():
-                write_np_array(writer, param_name, all_param_state[param_name], step)
+                write_np_array(writer, param_name, all_param_state[param_name], total_step)
         param_val_history.append(all_param_state)
         #print("active param names: ", active_param_names)
         print("Place setting plate mean est: ", pyro.param("place_setting_plate_mean_est"))
         print("Place setting plate var est: ", pyro.param("place_setting_plate_var_est"))
+        total_step += 1
     print("Final loss: ", loss)
     print_param_store()
