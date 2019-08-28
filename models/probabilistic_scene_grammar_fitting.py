@@ -1,4 +1,5 @@
 from __future__ import print_function
+from collections import namedtuple
 from copy import deepcopy
 import datetime
 import math
@@ -23,6 +24,7 @@ import scene_generation.data.dataset_utils as dataset_utils
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
+ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score')
 
 def print_param_store(grads=False):
     for param_name in pyro.get_param_store().keys():
@@ -54,14 +56,17 @@ def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
     # Latent score is P(T | V_obs)
     latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
     f = joint_score - latents_score
-    baseline = -100.
-    #total_score = (latents_score * (f.detach() - baseline) + f)
-    total_score = -joint_score
+    baseline = 0.
+    total_score = -(latents_score * (f.detach() - baseline) + f)
+    score_info = ScoreInfo(joint_score=joint_score,
+                           latents_score=latents_score,
+                           f=f,
+                           total_score=total_score)
     print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
     active_param_names = set().union(
         *[node.get_param_names() for node in observed_tree.nodes],
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
-    return total_score, joint_score, latents_score, active_param_names
+    return score_info, active_param_names
 
 def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=3):
     post_parsing_barrier, grads_reset_event, done_event = synchro_prims
@@ -82,12 +87,15 @@ def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, s
     f = joint_score - latents_score
     baseline = 0.
     total_score = -(latents_score * (f.detach() - baseline) + f)
-    #total_score = -joint_score
     print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
 
     if eval_backward:
         total_score.backward(retain_graph=True)
-    output_queue.put(total_score.detach())
+    score_info = ScoreInfo(joint_score=joint_score.detach(),
+                           latents_score=latents_score.detach(),
+                           f=f.detach(),
+                           total_score=total_score.detach())
+    output_queue.put((total_score.detach(), score_info))
     done_event.wait()
     
 def score_subset_of_dataset_sync(dataset, n, guide_gvs):
@@ -96,19 +104,21 @@ def score_subset_of_dataset_sync(dataset, n, guide_gvs):
     # the global latent variables, and an implicit sampled distribution
     # over the local latent variables.
     losses = []
+    all_score_infos = []
     active_param_names = set()
     baseline = 0
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
         #rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
-        total_score, _, _, active_param_names_local = score_sample_sync(env, guide_gvs)
-        losses.append(total_score)
+        score_info, active_param_names_local = score_sample_sync(env, guide_gvs)
+        losses.append(score_info.total_score)
+        all_score_infos.append(score_info)
         active_param_names = set().union(
             active_param_names,
             active_param_names_local)
     loss = torch.stack(losses).mean()
-    return loss, active_param_names
+    return loss, all_score_infos, active_param_names
 
 def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     # Select out minibatch
@@ -129,6 +139,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         grads_reset_event = mp.Event()
         processes = []
         losses = []
+        all_score_infos = []
         output_queue = mp.SimpleQueue()
         done_event = mp.Event()
         synchro_prims = [post_parsing_barrier, grads_reset_event, done_event]
@@ -139,7 +150,9 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
             p.start()
             processes.append(p)
         for k in range(n):
-            losses.append(output_queue.get())
+            loss, score_info = output_queue.get()
+            losses.append(loss)
+            all_score_infos.append(score_info)
         done_event.set()
         for p in processes:
             p.join()
@@ -150,9 +163,9 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
             for p in all_params_to_optimize:
                 p.grad.data /= float(n)
             optimizer(all_params_to_optimize)
-        return loss
+        return loss, all_score_infos
     else:    # EQUIVALENT SINGLE-THREAD
-        loss, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
+        loss, all_score_infos, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
         #for param in all_params_to_optimize:
         ##    param.grad *= -1.0
         print("Loss sync: ", loss)
@@ -167,7 +180,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
             for name in pyro.get_param_store().keys():
                 print(name, " grad: ", pyro.get_param_store()._params[name].grad)
             optimizer(all_params_to_optimize)
-        return loss
+        return loss, all_score_infos
 
 if __name__ == "__main__":
 
@@ -199,9 +212,10 @@ if __name__ == "__main__":
     #    draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
     #plt.show()
     #sys.exit(0)
+
     use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/simple/elbo_neg_" + datetime.datetime.now().strftime(
+    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/simple/trash_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:
@@ -245,6 +259,14 @@ if __name__ == "__main__":
     baseline = 0.
     baseline = 0.
 
+    def write_score_info(i, prefix, writer, loss, all_score_infos):
+        f = torch.stack([score_info.f for score_info in all_score_infos]).mean()
+        latents_score = torch.stack([score_info.latents_score for score_info in all_score_infos]).mean()
+        joint_score = torch.stack([score_info.joint_score for score_info in all_score_infos]).mean()
+        writer.add_scalar(prefix + "loss", loss.item(), i)
+        writer.add_scalar(prefix + "f", f, i)
+        writer.add_scalar(prefix + "latents_score", latents_score, i)
+        writer.add_scalar(prefix + "joint_score", joint_score, i)
 
     snapshots = {}
     total_step = 0
@@ -255,13 +277,13 @@ if __name__ == "__main__":
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est")
 
-        loss = calc_score_and_backprob_async(train_dataset, n=10, guide_gvs=guide_gvs, optimizer=optimizer)
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=1, guide_gvs=guide_gvs, optimizer=optimizer)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
 
         if (total_step % 10 == 0):
             # Evaluate on a few test data points
-            loss_test = calc_score_and_backprob_async(test_dataset, n=5, guide_gvs=guide_gvs)
+            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
             print("Loss_test: ", loss_test)
 
@@ -269,25 +291,39 @@ if __name__ == "__main__":
                 best_loss_yet = loss
                 pyro.get_param_store().save("best_on_test_save.pyro")
 
-            # Also generate a few example environments
-            # Generate a ground truth test environment
-            plt.figure().set_size_inches(20, 20)
-            for k in range(4):
-                plt.subplot(2, 2, k+1)
-                parse_tree = generate_unconditioned_parse_tree(initial_gvs=guide_gvs)
-                yaml_env = convert_tree_to_yaml_env(parse_tree)
-                try:
-                    DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
-                except:
-                    print("Unhandled exception in drawing yaml env")
-                draw_parse_tree(parse_tree, label_name=True, label_score=True)
             if use_writer:
-                writer.add_scalar('loss_test', loss_test.item(), total_step)
+                write_score_info(total_step, "test_", writer, loss_test, all_score_infos_test)
+
+                # Also generate a few example environments
+                # Generate a ground truth test environment
+                plt.figure().set_size_inches(20, 20)
+                for k in range(4):
+                    plt.subplot(2, 2, k+1)
+                    parse_tree = generate_unconditioned_parse_tree(initial_gvs=guide_gvs)
+                    yaml_env = convert_tree_to_yaml_env(parse_tree)
+                    try:
+                        DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+                    except:
+                        print("Unhandled exception in drawing yaml env")
+                    draw_parse_tree(parse_tree, label_name=True, label_score=True, alpha=0.75)
                 writer.add_figure("generated_envs", plt.gcf(), total_step, close=True)
+
+                # Also parse some test environments
+                test_envs = [random.choice(test_dataset) for k in range(4)]
+                test_parses = guess_parse_trees_batch_async(test_envs, guide_gvs=guide_gvs)
+                plt.figure().set_size_inches(20, 20)
+                for k in range(4):
+                    plt.subplot(2, 2, k+1)
+                    try:
+                        DrawYamlEnvironmentPlanar(test_envs[k], base_environment_type="table_setting", ax=plt.gca())
+                    except:
+                        print("Unhandled exception in drawing yaml env")
+                    draw_parse_tree(test_parses[k], label_name=True, label_score=True, alpha=0.75)
+                writer.add_figure("parsed_test_envs", plt.gcf(), total_step, close=True)
 
         all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in pyro.get_param_store().keys()}
         if use_writer:
-            writer.add_scalar('loss', loss.item(), total_step)
+            write_score_info(total_step, "train_", writer, loss, all_score_infos)
             for param_name in all_param_state.keys():
                 write_np_array(writer, param_name, all_param_state[param_name], total_step)
         param_val_history.append(all_param_state)

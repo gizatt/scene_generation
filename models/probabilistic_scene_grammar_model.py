@@ -6,6 +6,7 @@ import time
 import random
 import sys
 import yaml
+import weakref
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -24,6 +25,45 @@ from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
 
+from collections import Mapping, Set, Sequence
+
+non_recurse_types = (str, int, bool, float, type)
+def rebuild_object_recursively_with_detach(obj, verbose=False):
+    if verbose:
+        print("Iter to type ", type(obj), ": ", obj)
+    if isinstance(obj, torch.Tensor):
+        obj = obj.detach()
+    # But still recurse into it, in case it has child attributes
+    if isinstance(obj, non_recurse_types):
+        return obj
+    elif isinstance(obj, dict):
+        new_dict = dict()
+        for child_key, child_value in obj.items():
+            new_key = rebuild_object_recursively_with_detach(child_key, verbose=verbose)
+            new_value = rebuild_object_recursively_with_detach(child_value, verbose=verbose)
+            new_dict[new_key] = new_value
+        return new_dict
+    elif isinstance(obj, list) or isinstance(obj, tuple):
+        out_iterable = []
+        for child in obj:
+            out_iterable.append(rebuild_object_recursively_with_detach(child, verbose=verbose))
+        return type(obj)(out_iterable)
+    elif hasattr(obj, "__dict__"):
+        for key in vars(obj).keys():
+            child = getattr(obj, key)
+            rebuilt_child = rebuild_object_recursively_with_detach(child, verbose=verbose)
+            if child is not rebuilt_child:
+                # Doing this as seldomly as possible makes it less likely that
+                # we try to reassign and un-assignable attribute.
+                setattr(obj, key, rebuilt_child)
+        return obj
+    elif isinstance(obj, weakref.ref) and obj() is not None:
+        return weakref.ref(rebuild_object_recursively_with_detach(obj(), verbose=verbose))
+    else:
+        if verbose:
+            print("Warning, detach is skipping object ", obj, " of type ", type(obj))
+        return obj
+    raise NotImplementedError("SHOULD NOT GET HERE")
 
 class ParseTree(nx.DiGraph):
     def __init__(self):
@@ -102,47 +142,6 @@ class ParseTree(nx.DiGraph):
             print("Parents: ", parents)
             raise NotImplementedError("> 1 parent --> bad parse tree")
 
-    def detach(self):
-        queue = [self] #list(vars(self).items())
-        def is_in_list(query_obj, query_list):
-            return any([list_obj is query_obj for list_obj in query_list])
-        i = 0
-        done = []
-        while len(queue) > 0:
-            i += 1
-            if i > 1000000:
-                raise NotImplementedError("Likely recursion detected")
-            obj = queue.pop()
-
-            if is_in_list(obj, done):
-                continue
-            else:
-                done.append(obj)
-            #print("Iter to type ", type(obj), ": ", obj)
-            if isinstance(obj, list) or isinstance(obj, tuple):
-                for k, child in enumerate(obj):
-                    if isinstance(child, torch.Tensor) and child.requires_grad and child.is_leaf:
-                        #print("Detaching tensor ", child, " from obj ", obj)
-                        if isinstance(child, tuple):
-                            raise NotImplementedError("Can't modify tuple in place :(")
-                        obj[k] = child.detach()
-                    else:
-                        queue.append(child)
-            elif hasattr(obj, "__dict__"):
-                for key in vars(obj).keys():
-                    child = getattr(obj, key)
-                    if isinstance(child, torch.Tensor):
-                        #print("Detaching tensor ", child, " from obj ", obj)
-                        setattr(obj, key, child.detach())
-                    else:
-                        queue.append(child)
-            elif isinstance(obj, dict):
-                for child in obj.items():
-                    queue.append(child)
-            else:
-                pass
-                #if not callable(obj):
-                    #print("Warning, detach is skipping object ", obj, " of type ", type(obj))
 
 def generate_unconditioned_parse_tree(initial_gvs=None):
     root_node = Table()
@@ -670,7 +669,7 @@ def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, sync
         num_attempts=num_attempts, verbose=False)
     print("Finished tree with score %f" % score)
     # Detach all values in the tree so it can be communicated IPC
-    tree.detach()
+    tree = rebuild_object_recursively_with_detach(tree)
     for key in pyro.get_param_store().keys():
         pyro.get_param_store()._params[key].requires_grad = False
         pyro.get_param_store()._params[key].grad = None
