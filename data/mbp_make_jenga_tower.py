@@ -15,9 +15,9 @@ from pydrake.geometry import (
     Box,
     HalfSpace,
     SceneGraph,
-    Sphere
+    Sphere,
 )
-from pydrake.math import (RollPitchYaw)
+from pydrake.math import (RollPitchYaw, RigidTransform)
 from pydrake.multibody.tree import (
     PrismaticJoint,
     SpatialInertia,
@@ -55,12 +55,12 @@ if __name__ == "__main__":
                 mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
                 G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
             mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
-                           Isometry3(rotation=np.eye(3), translation=[0, 0, -5]))
+                           RigidTransform(Isometry3(rotation=np.eye(3), translation=[0, 0, -5])))
             mbp.RegisterVisualGeometry(
-                ground_body, Isometry3(), ground_shape, "ground_vis",
+                ground_body, RigidTransform.Identity(), ground_shape, "ground_vis",
                 np.array([0.5, 0.5, 0.5, 1.]))
             mbp.RegisterCollisionGeometry(
-                ground_body, Isometry3(), ground_shape, "ground_col",
+                ground_body, RigidTransform.Identity(), ground_shape, "ground_col",
                 CoulombFriction(0.9, 0.8))
 
             n_levels = np.random.randint(2, 6)
@@ -80,10 +80,10 @@ if __name__ == "__main__":
                                        block_width*level_width-block_margin,
                                        block_height-block_margin)
                         mbp.RegisterVisualGeometry(
-                            body, Isometry3(), body_box, "body_{}_vis".format(k),
+                            body, RigidTransform.Identity(), body_box, "body_{}_vis".format(k),
                             np.array([np.random.uniform(0.75, 0.95), np.random.uniform(0.45, 0.55), np.random.uniform(0.1, 0.2), 1.]))
                         mbp.RegisterCollisionGeometry(
-                            body, Isometry3(), body_box, "body_{}_box".format(k),
+                            body, RigidTransform.Identity(), body_box, "body_{}_box".format(k),
                             CoulombFriction(0.9, 0.8))
                         if (k % 2) == 0:
                             poses.append(
@@ -170,7 +170,7 @@ if __name__ == "__main__":
             q0_final = mbp.GetPositions(mbp_context).copy()
 
             diff = np.linalg.norm(q0_final - q0_initial)
-            print "DIFF: ", diff
+            print("DIFF: ", diff)
             output_dict = {"n_objects": len(poses)}
             for k in range(len(poses)):
                 offset = k*7
@@ -181,17 +181,19 @@ if __name__ == "__main__":
                     "block_height": block_height,
                     "pose": pose.tolist()
                 }
-            if diff < 0.2:
-                # Stable config
-                with open("jenga_stable_arrangements.yaml", "a") as file:
-                    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                               output_dict},
-                              file)
-            else:
-                # Unstable config
-                with open("jenga_unstable_arrangements.yaml", "a") as file:
-                    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                               output_dict},
-                              file)
+            #if diff < 0.2:
+            #    # Stable config
+            #    with open("jenga_stable_arrangements.yaml", "a") as file:
+            #        yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+            #                   output_dict},
+            #                  file)
+            #else:
+            #    # Unstable config
+            #    with open("jenga_unstable_arrangements.yaml", "a") as file:
+            #        yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+            #                   output_dict},
+            #                  file)
         except Exception as e:
-            print "Unhandled exception ", e
+            print("Unhandled exception ", e)
+        except:
+            print("Unhandled unknown exception. Probably sim error")

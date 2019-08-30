@@ -17,7 +17,7 @@ from pydrake.geometry import (
     SceneGraph,
     Sphere
 )
-from pydrake.math import (RollPitchYaw)
+from pydrake.math import (RollPitchYaw, RigidTransform)
 from pydrake.multibody.tree import (
     SpatialInertia,
     UniformGravityFieldElement,
@@ -32,6 +32,7 @@ from pydrake.multibody.plant import (
 from pydrake.forwarddiff import gradient
 from pydrake.multibody.parsing import Parser
 from pydrake.multibody.inverse_kinematics import InverseKinematics
+import pydrake.solvers.mathematicalprogram as mp
 from pydrake.solvers.mathematicalprogram import (SolverOptions)
 from pydrake.solvers.ipopt import (IpoptSolver)
 from pydrake.solvers.nlopt import (NloptSolver)
@@ -57,22 +58,22 @@ if __name__ == "__main__":
                 mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
                 G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
             mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
-                           Isometry3(rotation=np.eye(3), translation=[0, 0, -1]))
+                           RigidTransform(Isometry3(rotation=np.eye(3), translation=[0, 0, -1])))
             mbp.RegisterVisualGeometry(
-                ground_body, Isometry3(), ground_shape, "ground_vis",
+                ground_body, RigidTransform.Identity(), ground_shape, "ground_vis",
                 np.array([0.5, 0.5, 0.5, 1.]))
             mbp.RegisterCollisionGeometry(
-                ground_body, Isometry3(), ground_shape, "ground_col",
+                ground_body, RigidTransform.Identity(), ground_shape, "ground_col",
                 CoulombFriction(0.9, 0.8))
 
             parser = Parser(mbp, scene_graph)
 
             candidate_model_files = [
-                "/home/gizatt/drake/manipulation/models/mug/mug.urdf",
-                "/home/gizatt/drake/manipulation/models/mug_big/mug_big.urdf",
-                "/home/gizatt/drake/manipulation/models/dish_models/bowl_6p25in_decomp/bowl_6p25in_decomp.urdf",
-                "/home/gizatt/drake/manipulation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
-                "/home/gizatt/drake/manipulation/models/dish_models/plate_8p5in_decomp/plate_8p5in_decomp.urdf",
+                "/home/gizatt/drake/manipulation/models/mug_clean/mug.urdf",
+                #"/home/gizatt/drake/manipulation/models/mug_big/mug_big.urdf",
+                #"/home/gizatt/drake/manipulation/models/dish_models/bowl_6p25in_decomp/bowl_6p25in_decomp.urdf",
+                #"/home/gizatt/drake/manipulation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
+                #"/home/gizatt/drake/manipulation/models/dish_models/plate_8p5in_decomp/plate_8p5in_decomp.urdf",
             ]
 
             n_objects = np.random.randint(3, 7)
@@ -121,7 +122,7 @@ if __name__ == "__main__":
 
             ik = InverseKinematics(mbp, mbp_context)
             q_dec = ik.q()
-            prog = ik.prog()
+            prog = ik.get_mutable_prog()
 
             def squaredNorm(x):
                 return np.array([x[0] ** 2 + x[1] ** 2 + x[2] ** 2 + x[3] ** 2])
@@ -174,31 +175,36 @@ if __name__ == "__main__":
             #prog.SetSolverOption(sid, "Major step limit", 2)
 
             print("Solver opts: ", prog.GetSolverOptions(solver.solver_type()))
-            print solver.Solve(prog)
-            print "Solved in %f seconds" % (time.time() - start_time)
-            #print IpoptSolver().Solve(prog)
-            print prog.GetSolverId().name()
-            q0_proj = prog.GetSolution(q_dec)
+            print(type(prog))
+            result = mp.Solve(prog)
+            print("Solve info: ", result)
+            print("Solved in %f seconds" % (time.time() - start_time))
+            #print(IpoptSolver().Solve(prog))
+            print(result.get_solver_id().name())
+            q0_proj = result.GetSolution(q_dec)
 #            print "Final: ", q0_proj
             mbp.SetPositions(mbp_context, q0_proj)
             q0_initial = q0_proj.copy()
-            simulator.StepTo(0.0001)
+            simulator.StepTo(10.0)
             q0_final = mbp.GetPositions(mbp_context).copy()
 
-            output_dict = {"n_objects": len(poses)}
-            for k in range(len(poses)):
-                offset = k*7
-                pose = q0[(offset):(offset+7)]
-                output_dict["obj_%04d" % k] = {
-                    "class": classes[k],
-                    "pose": pose.tolist()
-                }
-            with open("tabletop_arrangements.yaml", "a") as file:
-                yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                           output_dict},
-                          file)
-
+            #output_dict = {"n_objects": len(poses)}
+            #for k in range(len(poses)):
+            #    offset = k*7
+            #    pose = q0[(offset):(offset+7)]
+            #    output_dict["obj_%04d" % k] = {
+            #        "class": classes[k],
+            #        "pose": pose.tolist()
+            #    }
+            #with open("tabletop_arrangements.yaml", "a") as file:
+            #    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+            #               output_dict},
+            #              file)
+#
             time.sleep(1.0)
 
         except Exception as e:
-            print "Unhandled exception ", e
+            print("Unhandled exception ", e)
+
+        except:
+            print("Unhandled unnamed exception, probably sim error")
