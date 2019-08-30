@@ -85,6 +85,37 @@ def export_urdf(mesh,
         iyz=I[1][2],
         izz=I[2][2])
 
+    # Add the original piece as visual geomeetry
+    piece_name = '{}_visual'.format(name)
+    piece_filename = '{}.obj'.format(piece_name)
+    piece_filepath = os.path.join(fullpath, piece_filename)
+    trimesh.exchange.export.export_mesh(mesh, piece_filepath)
+    geom_name = '{}'.format(piece_filename)
+    # Visual Information
+    visual = et.SubElement(link, 'visual')
+    et.SubElement(visual, 'origin', xyz="0 0 0", rpy="0 0 0")
+    geometry = et.SubElement(visual, 'geometry')
+    et.SubElement(geometry, 'mesh', filename=geom_name,
+                  scale="{:.4E} {:.4E} {:.4E}".format(scale,
+                                                      scale,
+                                                      scale))
+    material = et.SubElement(visual, 'material', name='')
+    if color == "random":
+        this_color = trimesh.visual.random_color()
+        mesh.visual.face_colors[:] = this_color
+    else:
+        this_color = color
+        if len(this_color) == 3:
+            this_color.append(1.)
+        mesh.visual.face_colors[:] = np.array(this_color)*255
+    et.SubElement(material,
+                  'color',
+                  rgba="{:.2E} {:.2E} {:.2E} {:.2E}".format(
+                    this_color[0],
+                    this_color[1],
+                    this_color[2],
+                    this_color[3]))    
+
     # Loop through all pieces, adding each as visual + collision geometry
     for i, piece in enumerate(convex_pieces):
 
@@ -97,31 +128,30 @@ def export_urdf(mesh,
         geom_name = '{}'.format(piece_filename)
 
         # Visual Information
-        visual = et.SubElement(link, 'visual')
-        et.SubElement(visual, 'origin', xyz="0 0 0", rpy="0 0 0")
-        geometry = et.SubElement(visual, 'geometry')
-        et.SubElement(geometry, 'mesh', filename=geom_name,
-                      scale="{:.4E} {:.4E} {:.4E}".format(scale,
-                                                          scale,
-                                                          scale),
-                      convex="True")
-        material = et.SubElement(visual, 'material', name='')
-        if color == "random":
-            this_color = trimesh.visual.random_color()
-            piece.visual.face_colors[:] = this_color
-        else:
-            this_color = color
-            if len(this_color) == 3:
-                this_color.append(1.)
-            piece.visual.face_colors[:] = np.array(this_color)*255
-        et.SubElement(material,
-                      'color',
-                      rgba="{:.2E} {:.2E} {:.2E} {:.2E}".format(
-                        this_color[0],
-                        this_color[1],
-                        this_color[2],
-                        this_color[3]))
-
+        #visual = et.SubElement(link, 'visual')
+        #et.SubElement(visual, 'origin', xyz="0 0 0", rpy="0 0 0")
+        #geometry = et.SubElement(visual, 'geometry')
+        #et.SubElement(geometry, 'mesh', filename=geom_name,
+        #              scale="{:.4E} {:.4E} {:.4E}".format(scale,
+        #                                                  scale,
+        #                                                  scale))
+        #material = et.SubElement(visual, 'material', name='')
+        #if color == "random":
+        #    this_color = trimesh.visual.random_color()
+        #    piece.visual.face_colors[:] = this_color
+        #else:
+        #    this_color = color
+        #    if len(this_color) == 3:
+        #        this_color.append(1.)
+        #    piece.visual.face_colors[:] = np.array(this_color)*255
+        #et.SubElement(material,
+        #              'color',
+        #              rgba="{:.2E} {:.2E} {:.2E} {:.2E}".format(
+        #                this_color[0],
+        #                this_color[1],
+        #                this_color[2],
+        #                this_color[3]))
+#
         # Collision Information
         collision = et.SubElement(link, 'collision')
         et.SubElement(collision, 'origin', xyz="0 0 0", rpy="0 0 0")
@@ -162,15 +192,15 @@ def export_urdf(mesh,
 
 def do_generate_mug():
     # Mug base is a cylinder
-    root_radius = 0.12
+    root_radius = 0.05
     root_thickness = 0.01
-    root_height = 0.12
+    root_height = 0.1
     root_sections = 20
 
     handle_radius = 0.005
     handle_start_height = 0.01
-    handle_end_height = 0.1
-    handle_wingspan = 0.1
+    handle_end_height = 0.09
+    handle_wingspan = 0.04
 
     total_density = 1000 # kg / m^3
 
@@ -211,7 +241,7 @@ def do_generate_mug():
     # Res 1E5 is default and works great.
     # 1E6 was a little cleaned but took 10x as long. (Glad it's only linear.)
     mesh_decomp = export_urdf(
-        mesh, "mug_bigger", robot_name="mug_bigger",
+        mesh, "mug", robot_name="mug",
         color="random", maxNumVerticesPerCH=64, pca=1,
         resolution=1E5)
     scene = trimesh.scene.scene.Scene()
