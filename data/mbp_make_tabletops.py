@@ -38,9 +38,39 @@ from pydrake.solvers.ipopt import (IpoptSolver)
 from pydrake.solvers.nlopt import (NloptSolver)
 from pydrake.solvers.snopt import (SnoptSolver)
 from pydrake.systems.analysis import Simulator
-from pydrake.systems.framework import AbstractValue, DiagramBuilder
+from pydrake.systems.framework import AbstractValue, DiagramBuilder, LeafSystem, PortDataType
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.systems.rendering import PoseBundle
+from pydrake.systems.sensors import RgbdSensor, Image, PixelType, PixelFormat
+from pydrake.geometry.render import DepthCameraProperties, MakeRenderEngineVtk, RenderEngineVtkParams
+
+import matplotlib.pyplot as plt
+
+
+class RgbAndLabelImageVisualizer(LeafSystem):
+    def __init__(self,
+                 draw_timestep=0.033333):
+        LeafSystem.__init__(self)
+        self.set_name('image viz')
+        self.timestep = draw_timestep
+        self._DeclarePeriodicPublish(draw_timestep, 0.0)
+        
+        self.rgb_image_input_port = \
+            self._DeclareAbstractInputPort("rgb_image_input_port",
+                                   AbstractValue.Make(Image[PixelType.kRgba8U](640, 480, 3)))
+        self.label_image_input_port = \
+            self._DeclareAbstractInputPort("label_image_input_port",
+                                   AbstractValue.Make(Image[PixelType.kLabel16I](640, 480, 1)))
+        self.fig = plt.figure()
+        self.ax = plt.gca()
+        plt.draw()
+
+    def _DoPublish(self, context, event):
+        rgb_image = self.EvalAbstractInput(context, 0).get_value()
+        label_image = self.EvalAbstractInput(context, 1).get_value()
+        print(rgb_image)
+        plt.pause(0.1)
+
 
 if __name__ == "__main__":
     np.random.seed(42)
@@ -50,7 +80,8 @@ if __name__ == "__main__":
             builder = DiagramBuilder()
             mbp, scene_graph = AddMultibodyPlantSceneGraph(
                 builder, MultibodyPlant(time_step=0.001))
-
+            renderer_params = RenderEngineVtkParams()
+            scene_graph.AddRenderer("renderer", MakeRenderEngineVtk(renderer_params))
             # Add ground
             world_body = mbp.world_body()
             ground_shape = Box(2., 2., 2.)
@@ -101,6 +132,24 @@ if __name__ == "__main__":
             builder.Connect(scene_graph.get_pose_bundle_output_port(),
                             visualizer.get_input_port(0))
 
+            # Add camera
+            depth_camera_properties = DepthCameraProperties(
+                width=640, height=480, fov_y=np.pi/2, renderer_name="renderer", z_near=0.1, z_far=2.0)
+            parent_frame_id = scene_graph.world_frame_id()
+            # TODO: read the drake docs about RgbdSensor and figure out what to set this transform to
+            # to get the camera upright and facing towards the origin.
+            camera_tf = RigidTransform(p=[1., 0., 0.5], rpy=RollPitchYaw([np.pi/2., 0., 0.]))
+            camera = builder.AddSystem(RgbdSensor(parent_frame_id, camera_tf, depth_camera_properties, show_window=True))
+            camera.DeclarePeriodicPublish(0.1, 0.)
+            builder.Connect(scene_graph.get_query_output_port(),
+                            camera.query_object_input_port())
+
+            camera_viz = builder.AddSystem(RgbAndLabelImageVisualizer(draw_timestep=0.1))
+            builder.Connect(camera.color_image_output_port(),
+                            camera_viz.get_input_port(0))
+            builder.Connect(camera.label_image_output_port(),
+                            camera_viz.get_input_port(1))
+
             diagram = builder.Build()
 
             diagram_context = diagram.CreateDefaultContext()
@@ -114,6 +163,8 @@ if __name__ == "__main__":
                 offset = k*7
                 q0[(offset):(offset+4)] = poses[k][0]
                 q0[(offset+4):(offset+7)] = poses[k][1]
+
+
 
             simulator = Simulator(diagram, diagram_context)
             simulator.set_target_realtime_rate(1.0)
