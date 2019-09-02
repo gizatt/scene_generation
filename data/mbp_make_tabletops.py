@@ -140,7 +140,6 @@ if __name__ == "__main__":
             # to get the camera upright and facing towards the origin.
             camera_tf = RigidTransform(p=[1., 0., 0.5], rpy=RollPitchYaw([np.pi/2., 0., 0.]))
             camera = builder.AddSystem(RgbdSensor(parent_frame_id, camera_tf, depth_camera_properties, show_window=True))
-            camera.DeclarePeriodicPublish(0.1, 0.)
             builder.Connect(scene_graph.get_query_output_port(),
                             camera.query_object_input_port())
 
