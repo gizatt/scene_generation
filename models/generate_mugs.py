@@ -195,9 +195,9 @@ def do_generate_mug():
     root_radius = 0.05
     root_thickness = 0.01
     root_height = 0.1
-    root_sections = 20
+    root_sections = 100
 
-    handle_radius = 0.005
+    handle_radius = 0.01
     handle_start_height = 0.01
     handle_end_height = 0.09
     handle_wingspan = 0.04
@@ -235,7 +235,7 @@ def do_generate_mug():
         root_mesh])
     mesh.density = total_density
     # preview mesh in an opengl window if you installed pyglet with pip
-    #mesh.show()
+    mesh.show()
 
     # For opts see `testVHACD --help`
     # Res 1E5 is default and works great.
