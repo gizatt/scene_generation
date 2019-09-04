@@ -22,6 +22,7 @@ from torchviz import make_dot
 
 import scene_generation.data.dataset_utils as dataset_utils
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_table_setting import *
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
 ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score')
@@ -69,35 +70,43 @@ def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
     return score_info, active_param_names
 
 def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=3):
-    post_parsing_barrier, grads_reset_event, done_event = synchro_prims
-    observed_tree, joint_score = guess_parse_tree_from_yaml(
-        env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
-    # Joint score is P(T, V_obs)
-    # Latent score is P(T | V_obs)
-    post_parsing_barrier.wait()
-    if thread_id == 0:
-        # Thread 0 resets the gradients to 0
-        for name in pyro.get_param_store().keys():
-            pyro.get_param_store()._params[name].grad.data.zero_()
-        grads_reset_event.set()
-    else:
-        grads_reset_event.wait()
+    try:
+        post_parsing_barrier, grads_reset_event, done_event = synchro_prims
+        observed_tree, joint_score = guess_parse_tree_from_yaml(
+            env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
+        # Joint score is P(T, V_obs)
+        # Latent score is P(T | V_obs)
+        post_parsing_barrier.wait()
+        if thread_id == 0:
+            # Thread 0 resets the gradients to 0
+            for name in pyro.get_param_store().keys():
+                pyro.get_param_store()._params[name].grad.data.zero_()
+            grads_reset_event.set()
+        else:
+            grads_reset_event.wait()
 
-    latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
-    f = joint_score - latents_score
-    baseline = 0.
-    total_score = -(latents_score * (f.detach() - baseline) + f)
-    print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
+        latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
+        f = joint_score - latents_score
+        baseline = 0.
+        total_score = -(latents_score * (f.detach() - baseline) + f)
+        print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
 
-    if eval_backward:
-        total_score.backward(retain_graph=True)
-    score_info = ScoreInfo(joint_score=joint_score.detach(),
-                           latents_score=latents_score.detach(),
-                           f=f.detach(),
-                           total_score=total_score.detach())
-    output_queue.put((total_score.detach(), score_info))
-    done_event.wait()
-    
+        if eval_backward:
+            total_score.backward(retain_graph=True)
+        score_info = ScoreInfo(joint_score=joint_score.detach(),
+                               latents_score=latents_score.detach(),
+                               f=f.detach(),
+                               total_score=total_score.detach())
+        output_queue.put((total_score.detach(), score_info))
+        done_event.wait()
+    except Exception as e:
+        print("Async score thread had exception: ", e)
+        post_parsing_barrier.wait()
+        if thread_id == 0:
+            grads_reset_event.set()
+        output_queue.put((None, None))
+        done_event.wait()
+
 def score_subset_of_dataset_sync(dataset, n, guide_gvs):
     # Computes an SVI ELBO estimate of n samples from the dataset,
     # with a Delta-distribution mean-field variational distribution over
@@ -151,8 +160,10 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
             processes.append(p)
         for k in range(n):
             loss, score_info = output_queue.get()
-            losses.append(loss)
-            all_score_infos.append(score_info)
+            if loss is not None:
+                losses.append(loss)
+                all_score_infos.append(score_info)
+        n = len(losses)
         done_event.set()
         for p in processes:
             p.join()
@@ -195,27 +206,30 @@ if __name__ == "__main__":
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
     guide_gvs = hyper_parse_tree.get_global_variable_store()
 
-    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_train")
-    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_simple_test")
+    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_train")
+    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
     
-    #plt.figure().set_size_inches(15, 10)
-    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
-    ##parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
-    #print("Parsed %d trees" % len(parse_trees))
-    #print(parse_trees[0].nodes)
-    #for k in range(4):
-    #    plt.subplot(2, 2, k+1)
-    #    DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
-    #    draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
-    #plt.show()
-    #sys.exit(0)
+    plt.figure().set_size_inches(15, 10)
+    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
+    parse_trees = guess_parse_trees_batch_async(test_dataset[:2], guide_gvs=hyper_parse_tree.get_global_variable_store())
+    print("Parsed %d trees" % len(parse_trees))
+    print("*****************\n0: ", parse_trees[0].nodes)
+    print("*****************\n1: ", parse_trees[1].nodes)
+    #print("*****************\n2: ", parse_trees[2].nodes)
+    #print("*****************\n3: ", parse_trees[3].nodes)
+    for k in range(2):
+        plt.subplot(2, 1, k+1)
+        DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
+        draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
+    plt.show()
+    sys.exit(0)
 
     use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/simple/trash_" + datetime.datetime.now().strftime(
+    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/human/elbo" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:

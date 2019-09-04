@@ -60,7 +60,7 @@ def export_urdf(mesh,
         convex_pieces = [mesh.convex_hull]
 
     # open an XML tree
-    root = et.Element('robot', name=robot_name)
+    root = et.Element('robot', name=robot_name, nsmap={'drake': 'drake.mit.edu'})
 
     # Make this primary link
     link_name = "{}_body_link".format(robot_name)
@@ -156,11 +156,11 @@ def export_urdf(mesh,
         collision = et.SubElement(link, 'collision')
         et.SubElement(collision, 'origin', xyz="0 0 0", rpy="0 0 0")
         geometry = et.SubElement(collision, 'geometry')
-        et.SubElement(geometry, 'mesh', filename=geom_name,
-                      scale="{:.4E} {:.4E} {:.4E}".format(scale,
-                                                          scale,
-                                                          scale),
-                      convex="True")
+        mesh = et.SubElement(geometry, 'mesh', filename=geom_name,
+                            scale="{:.4E} {:.4E} {:.4E}".format(scale,
+                                                                scale,
+                                                                scale))
+        et.SubElement(mesh, '{drake.mit.edu}declare_convex')
 
     # Write URDF file
     tree = et.ElementTree(root)
@@ -192,8 +192,8 @@ def export_urdf(mesh,
 
 def do_generate_mug():
     # Mug base is a cylinder
-    root_radius = 0.05
-    root_thickness = 0.01
+    root_radius = 0.04
+    root_thickness = 0.005
     root_height = 0.1
     root_sections = 100
 

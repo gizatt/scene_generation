@@ -24,6 +24,7 @@ from multiprocessing.managers import SyncManager
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_table_setting import *
 
 from collections import Mapping, Set, Sequence
 
@@ -143,8 +144,7 @@ class ParseTree(nx.DiGraph):
             raise NotImplementedError("> 1 parent --> bad parse tree")
 
 
-def generate_unconditioned_parse_tree(initial_gvs=None):
-    root_node = Table()
+def generate_unconditioned_parse_tree(initial_gvs=None, root_node=Table()):
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
     if initial_gvs is not None:
@@ -170,10 +170,9 @@ def generate_unconditioned_parse_tree(initial_gvs=None):
                     input_nodes_with_parents.append((rule, new_node))
     return parse_tree
 
-def generate_hyperexpanded_parse_tree():
+def generate_hyperexpanded_parse_tree(root_node = Table()):
     # Make a fully expanded parse tree where
     # *every possible* non-terminal production rule and product is followed.
-    root_node = Table()
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
     parse_tree.add_node(root_node)
@@ -201,35 +200,6 @@ def generate_hyperexpanded_parse_tree():
                     parse_tree.add_edge(rule, new_node)
                     input_nodes_with_parents.append((rule, new_node))
     return parse_tree
-
-def rerun_conditioned_parse_tree(
-        observed_tree,
-        score_terminal_products=True,
-        score_nonterminal_products=True):
-    # "Rerun" the observed tree in top-down order.
-    raise NotImplementedError("Needs to be rewritten")
-    root_node = next(node for node in observed_tree.nodes if isinstance(node, Table))
-    input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
-    while len(input_nodes_with_parents)>  0:
-        parent, node = input_nodes_with_parents.pop(0)
-        if isinstance(node, TerminalNode):
-            # Nothing more to do with this node
-            pass
-        else:
-            production_rules = list(observed_tree.successors(node))
-            # Sample identically
-            if score_nonterminal_products:
-                node.sample_production_rules(parent, obs_production_rules=production_rules)
-            for i, rule in enumerate(production_rules):
-                products = list(observed_tree.successors(rule))
-                terminal_product_mask = [isinstance(p, TerminalNode) for p in products]
-                if score_terminal_products and any(terminal_product_mask):
-                    assert(all(terminal_product_mask))
-                    rule.sample_products(node, obs_products=products)
-                elif score_nonterminal_products and not any(terminal_product_mask):
-                    rule.sample_products(node, obs_products=products)
-                for new_node in products:
-                    input_nodes_with_parents.append((rule, new_node))
 
 def convert_tree_to_yaml_env(parse_tree):
     terminal_nodes = []
@@ -577,7 +547,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num_attempts=1, ax=None, verbose=False):
+def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num_attempts=1, ax=None, verbose=False, root_node_type=Table):
     best_tree = None
     best_score = -np.inf
 
@@ -594,7 +564,7 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num
 
         parse_tree = ParseTree()
         parse_tree.global_variable_store = hyper_parse_tree.global_variable_store
-        parse_tree.add_node(Table()) # Root node
+        parse_tree.add_node(root_node_type()) # Root node
         for terminal_node in terminal_nodes_from_yaml(yaml_env):
             parse_tree.add_node(terminal_node)
         for outer_k in range(outer_iterations):
@@ -662,19 +632,24 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num
     return best_tree, best_score
 
 def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims):
-    done_event,  = synchro_prims
-    tree, score = guess_parse_tree_from_yaml(
-        env, guide_gvs=guide_gvs, 
-        outer_iterations=outer_iterations,
-        num_attempts=num_attempts, verbose=False)
-    print("Finished tree with score %f" % score)
-    # Detach all values in the tree so it can be communicated IPC
-    tree = rebuild_object_recursively_with_detach(tree)
-    for key in pyro.get_param_store().keys():
-        pyro.get_param_store()._params[key].requires_grad = False
-        pyro.get_param_store()._params[key].grad = None
-    output_queue.put((i, tree))
-    done_event.wait()
+    try:
+        done_event,  = synchro_prims
+        tree, score = guess_parse_tree_from_yaml(
+            env, guide_gvs=guide_gvs, 
+            outer_iterations=outer_iterations,
+            num_attempts=num_attempts, verbose=False)
+        print("Finished tree with score %f" % score)
+        # Detach all values in the tree so it can be communicated IPC
+        tree = rebuild_object_recursively_with_detach(tree)
+        for key in pyro.get_param_store().keys():
+            pyro.get_param_store()._params[key].requires_grad = False
+            pyro.get_param_store()._params[key].grad = None
+        output_queue.put((i, tree))
+        done_event.wait()
+    except Exception as e:
+        print("Parse tree guessing thread had exception: ", e)
+        output_queue.put((i, None))
+        done_event.wait()
 
 def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=3):
     processes = []
