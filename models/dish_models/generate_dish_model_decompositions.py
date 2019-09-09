@@ -59,6 +59,36 @@ if do_all or sys.argv[1] == "bowl_6p25in":
         color=[0.5, 0.5, 0.9], \
         **{"maxhulls": 16, "maxNumVerticesPerCH": 40})
 
+if do_all or sys.argv[1] == "bus_tub_01":
+    do_convex_decomposition_to_urdf("bus_tub_01/bus_tub_01.obj", \
+       1.0, \
+       "bus_tub_01_decomp", \
+       do_visualization = do_viz, \
+       scale=0.01, \
+       color=[0.5, 0.5, 0.5], \
+       **{"maxhulls": 16, "maxNumVerticesPerCH": 40})
+
+
+if do_all or sys.argv[1] == "mug_1":
+    do_convex_decomposition_to_urdf("meshes/visual/mug_1.obj", \
+       0.2, \
+       "mug_1_decomp", \
+       do_visualization = do_viz, \
+       scale=0.0254, \
+       color=[0.5, 0.5, 0.5], \
+       **{"maxhulls": 16, "maxNumVerticesPerCH": 40})
+
+
+if do_all or sys.argv[1] == "mug_2":
+    do_convex_decomposition_to_urdf("meshes/visual/mug_2.obj", \
+       0.2, \
+       "mug_2_decomp", \
+       do_visualization = do_viz, \
+       scale=0.0254, \
+       color=[0.8, 0.8, 0.8], \
+       **{"maxhulls": 16, "maxNumVerticesPerCH": 40})
+
+
 #if do_all or sys.argv[1] == "dish_rack":
 #   do_convex_decomposition_to_urdf("meshes/visual/dish_rack.obj", \
 #       0.140, \

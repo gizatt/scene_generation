@@ -1,0 +1,114 @@
+<robot xmlns:drake="drake.mit.edu" name="bus_tub_01_decomp">
+  <link name="bus_tub_01_decomp_body_link">
+    <inertial>
+      <origin xyz="4.88E-18 4.98E-02 5.06E-08" rpy="0 0 0"/>
+      <mass value="1.00E+00"/>
+      <inertia ixx="1.5714E-02" ixy="2.5637E-18" ixz="2.9288E-18" iyy="3.5565E-02" iyz="1.6490E-09" izz="2.3676E-02"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_visual.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00"/>
+      </geometry>
+      <material name="">
+        <color rgba="5.00E-01 5.00E-01 5.00E-01 1.00E+00"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_0.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_1.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_2.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_3.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_4.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_5.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_6.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_7.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_8.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_9.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_10.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="bus_tub_01_decomp_convex_piece_11.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+          <drake:declare_convex/>
+        </mesh>
+      </geometry>
+    </collision>
+  </link>
+</robot>

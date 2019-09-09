@@ -1,23 +1,23 @@
-<robot xmlns:drake="drake.mit.edu" name="plate_11in_decomp">
-  <link name="plate_11in_decomp_body_link">
+<robot xmlns:drake="drake.mit.edu" name="mug_1_decomp">
+  <link name="mug_1_decomp_body_link">
     <inertial>
-      <origin xyz="-2.80E-05 -1.04E-02 -1.34E-06" rpy="0 0 0"/>
-      <mass value="2.82E-01"/>
-      <inertia ixx="1.3738E-03" ixy="6.2120E-06" ixz="-1.2792E-08" iyy="2.7213E-03" iyz="-3.5786E-09" izz="1.3739E-03"/>
+      <origin xyz="4.60E-02 2.82E-02 -5.78E-03" rpy="0 0 0"/>
+      <mass value="2.00E-01"/>
+      <inertia ixx="2.3650E-04" ixy="4.0704E-11" ixz="4.4827E-11" iyy="2.3583E-04" iyz="-1.7742E-05" izz="1.7829E-04"/>
     </inertial>
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_visual.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00"/>
+        <mesh filename="mug_1_decomp_visual.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00"/>
       </geometry>
       <material name="">
-        <color rgba="5.00E-01 9.00E-01 5.00E-01 1.00E+00"/>
+        <color rgba="5.00E-01 5.00E-01 5.00E-01 1.00E+00"/>
       </material>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_0.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_0.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -25,7 +25,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_1.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_1.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -33,7 +33,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_2.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_2.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -41,7 +41,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_3.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_3.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -49,7 +49,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_4.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_4.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -57,7 +57,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_5.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_5.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -65,7 +65,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_6.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_6.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -73,7 +73,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_7.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_7.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -81,7 +81,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_8.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_8.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -89,7 +89,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_9.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_9.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -97,7 +97,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_10.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_10.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -105,7 +105,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_11.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_11.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -113,7 +113,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_12.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_12.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -121,7 +121,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_13.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_13.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -129,7 +129,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_14.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_14.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>
@@ -137,7 +137,7 @@
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="plate_11in_decomp_convex_piece_15.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
+        <mesh filename="mug_1_decomp_convex_piece_15.obj" scale="1.0000E+00 1.0000E+00 1.0000E+00">
           <drake:declare_convex/>
         </mesh>
       </geometry>

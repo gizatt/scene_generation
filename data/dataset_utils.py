@@ -16,12 +16,13 @@ except ImportError:
     from yaml import Loader
 
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis
-from pydrake.math import RigidTransform
+from pydrake.math import (RollPitchYaw, RotationMatrix, RigidTransform)
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
 from pydrake.multibody.inverse_kinematics import InverseKinematics
+from pydrake.multibody.parsing import Parser
 from pydrake.systems.analysis import Simulator
 from pydrake.geometry import (
     Box,
@@ -272,10 +273,13 @@ def BuildMbpAndSgFromYamlEnvironment(
         yaml_environment,
         base_environment_type,
         timestep=0.01):
+    # TODO(gizatt): Split this into one function per environment type rather than
+    # interleaving them all. Jesus.
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep))
     world_body = mbp.world_body()
+    parser = Parser(mbp, scene_graph)
 
     if base_environment_type == "planar_bin":
         # Add ground
@@ -304,9 +308,8 @@ def BuildMbpAndSgFromYamlEnvironment(
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
         mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
     elif base_environment_type == "planar_tabletop":
-        world_body = mbp.world_body()
+        pass
     elif base_environment_type == "table_setting":
-        world_body = mbp.world_body()
         # Add table
         table_shape = Cylinder(radius=0.9/2, length=0.2)
         table_body = mbp.AddRigidBody("ground", SpatialInertia(
@@ -319,6 +322,25 @@ def BuildMbpAndSgFromYamlEnvironment(
             RigidTransform(p=[0.5, 0.5, -0.1]),
             table_shape, "table", np.array([0.8, 0.8, 0.8, 0.01]),
             CoulombFriction(0.9, 0.8))
+    elif base_environment_type == "dish_bin":
+        ground_shape = Box(2., 2., 2.)
+        ground_body = mbp.AddRigidBody("ground", SpatialInertia(
+            mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
+            G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
+        mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
+                       RigidTransform(p=[0, 0, -1]))
+        mbp.RegisterVisualGeometry(
+            ground_body, RigidTransform.Identity(), ground_shape, "ground_vis",
+            np.array([0.5, 0.5, 0.5, 1.]))
+        mbp.RegisterCollisionGeometry(
+            ground_body, RigidTransform.Identity(), ground_shape, "ground_col",
+            CoulombFriction(0.9, 0.8))
+        # Add the dish bin itself
+        dish_bin_model = "/home/gizatt/projects/scene_generation/models/dish_models/bus_tub_01_decomp/bus_tub_01_decomp.urdf"
+        parser.AddModelFromFile(dish_bin_model)
+        mbp.WeldFrames(world_body.body_frame(), mbp.GetBodyByName("bus_tub_01_decomp_body_link").body_frame(),
+                       RigidTransform(p=[0.0, 0., 0.], rpy=RollPitchYaw(np.pi/2., 0., 0.)))
+        mbp.AddForceElement(UniformGravityFieldElement())
     else:
         raise ValueError("Unknown base environment type.")
 
@@ -396,37 +418,51 @@ def BuildMbpAndSgFromYamlEnvironment(
                 raise NotImplementedError(
                     "Can't handle planar object of type %s yet." %
                     obj_yaml["class"])
-        else:
-            raise NotImplementedError("Haven't done 6DOF floating bases yet.")
 
-        color = [1., 0., 0., 1]
-        if "color" in obj_yaml.keys():
-            if obj_yaml["class"] == "table":
-                color = np.ones(4)*0.1
-            elif obj_yaml["class"] == "fork":
-                color = [1., 0.5, 0.5, 1.]
-            elif obj_yaml["class"] == "knife":
-                color = [0.5, 1., 0.5, 1.]
-            elif obj_yaml["class"] == "spoon":
-                color = [0.5, 0.5, 1., 1.]
-            elif obj_yaml["color"] is not None:
-                color = obj_yaml["color"]
-            
-        RegisterVisualAndCollisionGeometry(
-            mbp, body, RigidTransform(p=p_offset), body_shape, "body_{}".format(k),
-            color, CoulombFriction(0.9, 0.8))
+            color = [1., 0., 0., 1]
+            if "color" in obj_yaml.keys():
+                if obj_yaml["class"] == "table":
+                    color = np.ones(4)*0.1
+                elif obj_yaml["class"] == "fork":
+                    color = [1., 0.5, 0.5, 1.]
+                elif obj_yaml["class"] == "knife":
+                    color = [0.5, 1., 0.5, 1.]
+                elif obj_yaml["class"] == "spoon":
+                    color = [0.5, 0.5, 1., 1.]
+                elif obj_yaml["color"] is not None:
+                    color = obj_yaml["color"]
+            RegisterVisualAndCollisionGeometry(
+                mbp, body, RigidTransform(p=p_offset), body_shape, "body_{}".format(k),
+                color, CoulombFriction(0.9, 0.8))
+
+        else:
+            assert(base_environment_type is "dish_bin")
+            candidate_model_files = {
+                "mug_1": "/home/gizatt/projects/scene_generation/models/dish_models/mug_1_decomp/mug_1_decomp.urdf",
+                "plate_11in": "/home/gizatt/drake/manipulation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
+            }
+            assert(obj_yaml["class"] in candidate_model_files.keys())
+            model_id = parser.AddModelFromFile(candidate_model_files[obj_yaml["class"]], model_name="model_{}".format(k))
 
     mbp.Finalize()
 
     # TODO(gizatt) Eventually, we'll be able to do this default
     # setup stuff before Finalize()... yuck...
-    for k in range(yaml_environment["n_objects"]):
-        obj_yaml = yaml_environment["obj_%04d" % k]
-        if len(obj_yaml["pose"]) == 3:
+    if base_environment_type is "dish_bin":
+        q0 = []
+        for k in range(yaml_environment["n_objects"]):
+            pose = yaml_environment["obj_%04d" % k]["pose"]
+            assert(len(pose) == 7) 
+            q0 += pose
+        q0 = np.array(q0)
+    else:
+        for k in range(yaml_environment["n_objects"]):
+            obj_yaml = yaml_environment["obj_%04d" % k]
+            assert(obj_yaml["pose"] == 3)
             mbp.GetMutableJointByName("body_{}_theta".format(k)).set_default_angle(obj_yaml["pose"][2])
             mbp.GetMutableJointByName("body_{}_x".format(k)).set_default_translation(obj_yaml["pose"][0])
             mbp.GetMutableJointByName("body_{}_z".format(k)).set_default_translation(obj_yaml["pose"][1])
-    q0 = mbp.GetPositions(mbp.CreateDefaultContext())
+        q0 = mbp.GetPositions(mbp.CreateDefaultContext())
 
     return builder, mbp, scene_graph, q0
 
