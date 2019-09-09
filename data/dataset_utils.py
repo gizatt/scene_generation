@@ -439,7 +439,7 @@ def BuildMbpAndSgFromYamlEnvironment(
             assert(base_environment_type is "dish_bin")
             candidate_model_files = {
                 "mug_1": "/home/gizatt/projects/scene_generation/models/dish_models/mug_1_decomp/mug_1_decomp.urdf",
-                "plate_11in": "/home/gizatt/drake/manipulation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
+                "plate_11in": "/home/gizatt/projects/scene_generation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
             }
             assert(obj_yaml["class"] in candidate_model_files.keys())
             model_id = parser.AddModelFromFile(candidate_model_files[obj_yaml["class"]], model_name="model_{}".format(k))

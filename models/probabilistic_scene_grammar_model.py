@@ -24,7 +24,7 @@ from multiprocessing.managers import SyncManager
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
-from scene_generation.models.probabilistic_scene_grammar_nodes_table_setting import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting import *
 
 from collections import Mapping, Set, Sequence
 

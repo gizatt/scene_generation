@@ -19,8 +19,9 @@ import pyro.distributions as dist
 from pyro import poutine
 
 from scene_generation.data.dataset_utils import (
-    DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
+    DrawYamlEnvironment, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
+from scene_generation.models.probabilistic_scene_grammar_model import *
 
 # Simple form, for now:
 # DishBin can independently produce each (up to maximum #) of the dishes or mugs.
@@ -69,38 +70,62 @@ def tf_matrix_to_pose(tf):
         out[5] = 0.
     return out
 
+def invert_tf(tf):
+    out = torch.eye(4, 4)
+    # R <- R.'
+    # T <- -R.' T
+    out[:3, :3] = torch.t(tf[:3, :3])
+    out[:3, 3] = torch.mm(-1. * out[:3, :3], tf[:3, 3].unsqueeze(-1)).squeeze()
+    return out
+
 class DishBin(IndependentSetNode, RootNode):
-    class MugProductionRule(ProductionRule):
-        def __init__(self, name, pose):
-            self.pose = pose # rpy xyz
+    class ObjectProductionRule(ProductionRule):
+        def __init__(self, name, pose, product_type, offset_dist):
+            self.pose = pose # xyz rpy
+            self.product_type = product_type
+            self.product_name = product_type.__name__
+            self.offset_dist = offset_dist
             ProductionRule.__init__(self,
                 name=name,
-                product_types=[Mug_1])
+                product_types=[product_type])
             
         def _recover_rel_offset_from_abs_offset(self, parent, abs_offset):
-            pose_in_world = chain_pose_transforms(parent.pose, self.pose)
-            return chain_pose_transforms(invert_pose(pose_in_world), abs_offset)
+            my_pose_tf = pose_to_tf_matrix(self.pose)
+            parent_pose_tf = pose_to_tf_matrix(parent.pose)
+            my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
+            rel_tf = torch.mm(invert_tf(my_pose_tf), pose_to_tf_matrix(abs_offset))
+            return tf_matrix_to_pose(rel_tf)
 
         def sample_products(self, parent, obs_products=None):
             if obs_products is not None:
                 assert len(obs_products) == 1 and isinstance(obs_products[0], PlaceSetting)
                 obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose) 
-                rel_offset = pyro.sample("%s_place_setting_offset" % self.name,
+                rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.product_name),
                                          self.offset_dist, obs=obs_rel_offset)
                 return obs_products
             else:
-                rel_offset = pyro.sample("%s_place_setting_offset" % self.name,
+                rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.product_name),
                                          self.offset_dist).detach()
-                # Rotate offset
-                pose_in_world = chain_pose_transforms(parent.pose, self.pose)
-                abs_offset = chain_pose_transforms(pose_in_world, rel_offset)
-                return [PlaceSetting(name=self.name + "_place_setting", pose=abs_offset)]
+                # Chain relative offset on top of current pose in world
+                print("Sampled rel offset ", rel_offset)
+                my_pose_tf = pose_to_tf_matrix(self.pose)
+                print("My pose tf: ", my_pose_tf)
+                parent_pose_tf = pose_to_tf_matrix(parent.pose)
+                print("Parent pose tf: ", parent_pose_tf)
+                my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
+                print("My pose in world: ", my_pose_in_world_tf)
+                offset_tf = pose_to_tf_matrix(rel_offset)
+                print("Offset tf: ", offset_tf)
+                abs_offset = tf_matrix_to_pose(torch.mm(my_pose_in_world_tf, offset_tf))
+                print("Abs offset sampled: ", abs_offset)
+                return [self.product_type(name=self.name + "_" + self.product_name, pose=abs_offset)]
 
         def score_products(self, parent, products):
-            if len(products) != 1 or not isinstance(products[0], PlaceSetting):
+            if len(products) != 1 or not isinstance(products[0], self.product_type):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
+            print("In scoring for %s, I recovered rel offset of " % self.name, rel_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, name="dish_bin"):
@@ -109,33 +134,49 @@ class DishBin(IndependentSetNode, RootNode):
         # Set-valued: total of 4 mugs and 4 plates can occur
         production_rules = []
         for k in range(4):
-            production_rules.append(self.MugProductionRule(
-                name="%s_prod_mug_%03d" % (name, k), pose=self.pose))
-            production_rules.append(self.PlateProductionRule(
-                name="%s_prod_plate_%03d" % (name, k), pose=self.pose))
+            mug_mean = pyro.param("prod_mug_mean", torch.tensor([0.0, 0.0, 0.1, 0., 0., 0.]))
+            mug_var = pyro.param("prod_mug_var", torch.tensor([0.05, 0.05, 0.05, 2.0, 2.0, 2.0]), constraint=constraints.positive)
+            production_rules.append(self.ObjectProductionRule(
+                name="%s_prod_mug_1_%03d" % (name, k), pose=self.pose, product_type=Mug_1,
+                offset_dist=dist.Normal(mug_mean, mug_var)))
+
+            plate_mean = pyro.param("prod_plate_mean", torch.tensor([0.0, 0.0, 0.1, 0., 0., 0.]))
+            plate_var = pyro.param("prod_plate_var", torch.tensor([0.05, 0.05, 0.05, 2.0, 2.0, 2.0]), constraint=constraints.positive)
+            production_rules.append(self.ObjectProductionRule(
+                name="%s_prod_plate_11in_%03d" % (name, k), pose=self.pose, product_type=Plate_11in,
+                offset_dist=dist.Normal(plate_mean, plate_var)))
         production_probs = pyro.param("%s_independent_set_production_probs" % name,
                                       torch.ones(8)*0.5,
                                       constraint=constraints.unit_interval)
-        self.param_names = ["%s_independent_set_production_probs" % name]
+        self.param_names = ["%s_independent_set_production_probs" % name, "prod_mug_mean", "prod_mug_var"]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
+
+def convert_xyzrpy_to_quatxyz(pose):
+    pose = np.array(pose)
+    out = np.zeros(7)
+    out[-3:] = pose[:3]
+    out[:4] = RollPitchYaw(pose[3:]).ToQuaternion().wxyz()
+    return out
 
 class Plate_11in(TerminalNode):
     def __init__(self, pose, params=[], name="plate_11in"):
-        Plate_11in.__init__(self, name)
+        TerminalNode.__init__(self, name)
         self.pose = pose
         self.params = params
     
     def generate_yaml(self):
+        # Convert xyz rpy pose to qw qx qy qz x y z pose
+
         return {
             "class": "plate_11in",
             "params": self.params,
             "params_names": [],
-            "pose": self.pose.tolist()
+            "pose": convert_xyzrpy_to_quatxyz(self.pose).tolist()
         }
 
 class Mug_1(TerminalNode):
     def __init__(self, pose, params=[], name="mug_1"):
-        Mug_1.__init__(self, name)
+        TerminalNode.__init__(self, name)
         self.pose = pose
         self.params = params
     
@@ -144,21 +185,38 @@ class Mug_1(TerminalNode):
             "class": "mug_1",
             "params": self.params,
             "params_names": [],
-            "pose": self.pose.tolist()
+            "pose": convert_xyzrpy_to_quatxyz(self.pose).tolist()
         }
 
 
 if __name__ == "__main__":
-    # Test out the tf methods
-    test_pose = np.array([0., 0., 0., 0.523, 0.235, 0.712])
-    test_pose_tensor = torch.tensor(test_pose, requires_grad=True)
+    #seed = 52
+    #torch.manual_seed(seed)
+    #np.random.seed(seed)
+    #random.seed(seed)
+    pyro.enable_validation(True)
 
-    print("Input pose: ", test_pose_tensor)
-    tf = pose_to_tf_matrix(test_pose_tensor)
-    tf_drake = RigidTransform(p=test_pose[:3], rpy=RollPitchYaw(test_pose[3:]))
-    print("Tf: ", tf)
-    print("Tf from drake: ", tf_drake.matrix())
-    test_pose_tensor_out = tf_matrix_to_pose(tf)
-    print("Output pose: ", test_pose_tensor_out)
-    torch.sum(test_pose_tensor_out[5]).backward()
-    print("Orig tensor grad: ", test_pose_tensor.grad)
+    for k in range(10):
+        # Draw + plot a few generated environments and their trees
+        start = time.time()
+        pyro.clear_param_store()
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(root_node=DishBin())
+        parse_tree = trace.nodes["_RETURN"]["value"]
+        end = time.time()
+
+        print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
+        print("Full trace values:" )
+        for node_name in trace.nodes.keys():
+            if node_name in ["_INPUT", "_RETURN"]:
+                continue
+            print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
+
+        score, score_by_node = parse_tree.get_total_log_prob()
+        print("Score by node: ", score_by_node)
+        yaml_env = convert_tree_to_yaml_env(parse_tree)
+        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin")
+        #draw_parse_tree_meshcat(parse_tree)
+        print("Our score: %f" % score)
+        print("Trace score: %f" % trace.log_prob_sum())
+        assert(abs(score - trace.log_prob_sum()) < 0.001)
+        time.sleep(1)
