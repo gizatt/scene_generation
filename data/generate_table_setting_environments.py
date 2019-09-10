@@ -35,19 +35,19 @@ if __name__ == "__main__":
     nominal_values = {
         'place_setting_plate_mean': torch.tensor([0.0, 0.12, 0.0]),
         'place_setting_plate_var': torch.tensor([0.02, 0.02, 3.]),
-        'place_setting_cup_mean': torch.tensor([0.0, 0.12 + 0.15, 0.0]),
-        'place_setting_cup_var': torch.tensor([0.05, 0.02, 3.]),
-        'place_setting_left_fork_mean': torch.tensor([-0.12, 0.12, 0.]),
+        'place_setting_cup_mean': torch.tensor([0.0, 0.12 + 0.12, 0.0]),
+        'place_setting_cup_var': torch.tensor([0.03, 0.01, 3.]),
+        'place_setting_left_fork_mean': torch.tensor([-0.15, 0.12, 0.]),
         'place_setting_left_fork_var': torch.tensor([0.02, 0.02, 0.02]),
-        'place_setting_left_knife_mean': torch.tensor([-0.12, 0.12, 0.]),
+        'place_setting_left_knife_mean': torch.tensor([-0.15, 0.12, 0.]),
         'place_setting_left_knife_var': torch.tensor([0.02, 0.02, 0.02]),
-        'place_setting_left_spoon_mean': torch.tensor([-0.12, 0.12, 0.]),
+        'place_setting_left_spoon_mean': torch.tensor([-0.15, 0.12, 0.]),
         'place_setting_left_spoon_var': torch.tensor([0.02, 0.02, 0.02]),
-        'place_setting_right_fork_mean': torch.tensor([0.12, 0.12, 0.]),
+        'place_setting_right_fork_mean': torch.tensor([0.15, 0.12, 0.]),
         'place_setting_right_fork_var': torch.tensor([0.02, 0.02, 0.02]),
-        'place_setting_right_knife_mean': torch.tensor([0.12, 0.12, 0.]),
+        'place_setting_right_knife_mean': torch.tensor([0.15, 0.12, 0.]),
         'place_setting_right_knife_var': torch.tensor([0.02, 0.02, 0.02]),
-        'place_setting_right_spoon_mean': torch.tensor([0.12, 0.12, 0.]),
+        'place_setting_right_spoon_mean': torch.tensor([0.15, 0.12, 0.]),
         'place_setting_right_spoon_var': torch.tensor([0.02, 0.02, 0.02]),
     }
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         # Resample it to feasibility
         #parse_tree = resample_parse_tree_to_feasibility(parse_tree, base_environment_type="table_setting")
         yaml_env = convert_tree_to_yaml_env(parse_tree)
-        #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting", make_nonpenetrating=True, make_static=False)[-1]
+        yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting", make_nonpenetrating=True, make_static=False)[-1]
         DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
         node_class_to_color_dict = {"Table":[0., 1., 0.], "PlaceSetting":[0., 0., 1.]}
         draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25,
