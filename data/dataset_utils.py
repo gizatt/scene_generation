@@ -7,6 +7,7 @@ from copy import deepcopy
 import pydrake
 import torch
 import numpy as np
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
 from torch.utils.data import Dataset, DataLoader
@@ -640,14 +641,17 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
     plt.ylim([-0.2, 1.2])
 
     # Draw the table
-    table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
-    table_extent = [-0.45, 0.45, -0.45, 0.45]
-    im = ax.imshow(Image.open(table_sprite), extent=table_extent)
-    transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
-    im.set_transform(transform + ax.transData)
+    table_radius = 0.9/2.
+    table_center = [0.5, 0.5]
+    ax.add_artist(patches.Circle(table_center, table_radius, edgecolor='k', facecolor=[0.5, 0.5, 0.5, 0.2]))
+    #table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
+    #table_extent = [-0.45, 0.45, -0.45, 0.45]
+    #im = ax.imshow(Image.open(table_sprite), extent=table_extent)
+    #transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
+    #im.set_transform(transform + ax.transData)
 
     sprites_by_class = {
-        "plate": "/home/gizatt/projects/scene_generation/data/table_setting_assets/plate_bird.png",
+        "plate": "/home/gizatt/projects/scene_generation/data/table_setting_assets/plate_red.png",
         "cup": "/home/gizatt/projects/scene_generation/data/table_setting_assets/cup_water.png",
         "fork": "/home/gizatt/projects/scene_generation/data/table_setting_assets/fork.png",
         "knife": "/home/gizatt/projects/scene_generation/data/table_setting_assets/knife.png",
