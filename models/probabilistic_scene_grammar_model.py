@@ -13,6 +13,7 @@ import networkx as nx
 import numpy as np
 
 import pydrake
+from pydrake.multibody.inverse_kinematics import InverseKinematics
 import torch
 import torch.distributions.constraints as constraints
 import pyro
@@ -22,7 +23,8 @@ import torch.multiprocessing as mp
 from multiprocessing.managers import SyncManager
 
 from scene_generation.data.dataset_utils import (
-    DrawYamlEnvironmentPlanar, ProjectEnvironmentToFeasibility)
+    DrawYamlEnvironmentPlanar, DrawYamlEnvironment, DrawYamlEnvironmentPlanarForTableSettingPretty, ProjectEnvironmentToFeasibility,
+    BuildMbpAndSgFromYamlEnvironment)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
 from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting import *
 
@@ -143,6 +145,31 @@ class ParseTree(nx.DiGraph):
             print("Parents: ", parents)
             raise NotImplementedError("> 1 parent --> bad parse tree")
 
+    def is_feasible(self, base_environment_type):
+        yaml_env = convert_tree_to_yaml_env(self)
+        if yaml_env["n_objects"] == 0:
+            # Trivial short-circuit that avoids MBP barfing on empty environments
+            return True
+        builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
+            yaml_env, base_environment_type)
+        diagram = builder.Build()
+
+        diagram_context = diagram.CreateDefaultContext()
+        mbp_context = diagram.GetMutableSubsystemContext(
+            mbp, diagram_context)
+
+        ik = InverseKinematics(mbp, mbp_context)
+        q_dec = ik.q()
+
+        constraint_binding = ik.AddMinimumDistanceConstraint(0.001)
+        try:
+            return constraint_binding.evaluator().CheckSatisfied(q0)
+        except Exception as e:
+            print("Unhandled except in feasibility checking: ", e)
+            return False
+        except:
+            print("Unhandled non-Exception problem in feasibility checking.")
+            return False
 
 def generate_unconditioned_parse_tree(initial_gvs=None, root_node=Table()):
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
@@ -168,7 +195,65 @@ def generate_unconditioned_parse_tree(initial_gvs=None, root_node=Table()):
                     parse_tree.add_node(new_node)
                     parse_tree.add_edge(rule, new_node)
                     input_nodes_with_parents.append((rule, new_node))
+
     return parse_tree
+
+def resample_parse_tree_to_feasibility(old_parse_tree, base_environment_type, max_num_iters=1000):
+    is_feasible = False
+    num_iters = 0
+    while not is_feasible and num_iters < max_num_iters:
+        # Build tree into MBP and check feasibility
+        is_feasible = old_parse_tree.is_feasible(base_environment_type)
+        if not is_feasible:
+            # Find the original parent node
+            root_node = list(old_parse_tree.nodes)[0]
+            while len(list(old_parse_tree.predecessors(root_node))) > 0:
+                root_node = old_parse_tree.predecessors(root_node)[0]
+
+            # Rebuild a parse tree with the same structure, but resampled nodes
+            input_nodes_with_old_nodes = [ (root_node, root_node) ]  # (node, old_version_of_node) order
+            new_parse_tree = ParseTree()
+            new_parse_tree.global_variable_store = old_parse_tree.global_variable_store
+            new_parse_tree.add_node(root_node)
+            while len(input_nodes_with_old_nodes)>  0:
+                new_node, old_node = input_nodes_with_old_nodes.pop(0)
+                if isinstance(new_node, TerminalNode):
+                    # Nothing more to do with this node
+                    pass
+                else:
+                    # Get the old rules...
+                    production_rules = old_parse_tree.successors(old_node)
+                    # And add them to the new tree, resampling the produced nodes.
+                    for i, rule in enumerate(production_rules):
+                        new_parse_tree.add_node(rule)
+                        new_parse_tree.add_edge(new_node, rule)
+                        rule.sample_global_variables(new_parse_tree.get_global_variable_store())
+                        new_child_nodes = rule.sample_products(new_node)
+                        old_child_nodes = list(old_parse_tree.successors(rule))
+                        # If the rule has an inconsistent number (or ordering) of children, we can't resample like this.
+                        assert(len(new_child_nodes) == len(old_child_nodes))
+                        for new_child_node, old_child_node in zip(new_child_nodes, old_child_nodes):
+                            new_parse_tree.add_node(new_child_node)
+                            new_parse_tree.add_edge(rule, new_child_node)
+                            input_nodes_with_old_nodes.append((new_child_node, old_child_node))
+            old_parse_tree = new_parse_tree
+            num_iters += 1
+    if num_iters == max_num_iters:
+        raise NotImplementedError("Ran out of resampling iterations!")
+    return old_parse_tree
+
+def project_parse_tree_to_feasibility(old_parse_tree, base_environment_type, make_nonpenetration=True, make_static=False):
+    # Build tree into MBP and check feasibility
+    is_feasible = old_parse_tree.is_feasible(base_environment_type)
+    if is_feasible:
+        return old_parse_tree
+
+    # Do feasibility projection
+    yaml_env = convert_tree_to_yaml_env(old_parse_tree)
+    new_yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type=base_environment_type,
+        make_nonpenetration=make_nonpenetration, make_static=make_static)[-1]
+
+
 
 def generate_hyperexpanded_parse_tree(root_node = Table()):
     # Make a fully expanded parse tree where
@@ -272,7 +357,8 @@ def score_terminal_node_productions(parse_tree):
 
 def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
-    score, scores_by_node = parse_tree.get_total_log_prob()
+    if label_score:
+        score, scores_by_node = parse_tree.get_total_log_prob()
     pos_dict = {
         node: node.pose[:2].detach().numpy() for node in pruned_tree
     }
@@ -287,7 +373,10 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
             label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
         if label_name != "":
             label_dict[node] = label_str
-    colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
+    if label_score:
+        colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
+    else:
+        colors = []
     if len(colors) == 0 or np.isinf(min(colors)):
         colors = None
     else:
@@ -300,7 +389,8 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
                      node_color=colors, cmap='jet', font_weight='bold', **kwargs)
     ax.set_xlim(-0.2, 1.2)
     ax.set_ylim(-0.2, 1.2)
-    ax.set_title("Score: %f" % score)
+    if label_score:
+        ax.set_title("Score: %f" % score)
 
 
 def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
@@ -683,7 +773,6 @@ if __name__ == "__main__":
     noalias_dumper.ignore_aliases = lambda self, data: True
     
     # Draw + plot a few generated environments and their trees
-    '''
     plt.figure().set_size_inches(20, 20)
     for k in range(4):
         start = time.time()
@@ -704,17 +793,21 @@ if __name__ == "__main__":
         plt.gca().clear()
         plt.xlim(-0.2, 1.2)
         plt.ylim(-0.2, 1.2)
-        score, score_by_node = score_tree(parse_tree)
+        score, score_by_node = parse_tree.get_total_log_prob()
         print("Score by node: ", score_by_node)
+
+        # Resample it to feasibility
+        #parse_tree = resample_parse_tree_to_feasibility(parse_tree, base_environment_type="table_setting")
         yaml_env = convert_tree_to_yaml_env(parse_tree)
-        DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+        yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting", make_nonpenetrating=True, make_static=False)[-1]
+        DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
         draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
         print("Our score: %f" % score)
         print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
     plt.show()
     sys.exit(0)
-    '''
+
 
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
     guide_gvs = hyper_parse_tree.get_global_variable_store()
