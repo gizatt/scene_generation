@@ -8,6 +8,7 @@ import pydrake
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 from torch.utils.data import Dataset, DataLoader
 import yaml
 try:
@@ -311,7 +312,7 @@ def BuildMbpAndSgFromYamlEnvironment(
         pass
     elif base_environment_type == "table_setting":
         # Add table
-        table_shape = Cylinder(radius=0.9/2, length=0.2)
+        table_shape = Box(0.9, 0.9, 0.2)
         table_body = mbp.AddRigidBody("ground", SpatialInertia(
             mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
             G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
@@ -404,7 +405,7 @@ def BuildMbpAndSgFromYamlEnvironment(
                     body_shape = Box(length, 0.25, height)
                 else:
                     body_shape = Box(length, height, 0.25)
-            elif obj_yaml["class"] in ["table", "plate", "cup"]:
+            elif obj_yaml["class"] in ["plate", "cup"]:
                 assert(base_environment_type == "table_setting")
                 radius = max(obj_yaml["params"][0], 0.01)
                 length = 0.05
@@ -456,13 +457,14 @@ def BuildMbpAndSgFromYamlEnvironment(
             q0 += pose
         q0 = np.array(q0)
     else:
+        init_context = mbp.CreateDefaultContext()
         for k in range(yaml_environment["n_objects"]):
             obj_yaml = yaml_environment["obj_%04d" % k]
-            assert(obj_yaml["pose"] == 3)
-            mbp.GetMutableJointByName("body_{}_theta".format(k)).set_default_angle(obj_yaml["pose"][2])
-            mbp.GetMutableJointByName("body_{}_x".format(k)).set_default_translation(obj_yaml["pose"][0])
-            mbp.GetMutableJointByName("body_{}_z".format(k)).set_default_translation(obj_yaml["pose"][1])
-        q0 = mbp.GetPositions(mbp.CreateDefaultContext())
+            assert(len(obj_yaml["pose"]) == 3)
+            mbp.GetMutableJointByName("body_{}_theta".format(k)).set_angle(init_context, obj_yaml["pose"][2])
+            mbp.GetMutableJointByName("body_{}_x".format(k)).set_translation(init_context, obj_yaml["pose"][0])
+            mbp.GetMutableJointByName("body_{}_z".format(k)).set_translation(init_context, obj_yaml["pose"][1])
+        q0 = mbp.GetPositions(init_context)
 
     return builder, mbp, scene_graph, q0
 
@@ -619,6 +621,54 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
         visualizer, diagram_context))
     plt.xlim([-0.2, 1.2])
     plt.ylim([-0.2, 1.2])
+
+def DrawYamlEnvironmentPlanarForTableSettingPretty(
+        yaml_environment, facecolor=[1, 1, 1],
+        figsize=None, ax=None):
+    from PIL import Image
+
+    if ax is None:
+        (fig, ax) = plt.subplots(facecolor=facecolor,
+                                 figsize=figsize)
+    else:
+        ax = ax
+        fig = ax.get_figure()
+
+    ax.axis('equal')
+    ax.axis('off')
+    plt.xlim([-0.2, 1.2])
+    plt.ylim([-0.2, 1.2])
+
+    # Draw the table
+    table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
+    table_extent = [-0.45, 0.45, -0.45, 0.45]
+    im = ax.imshow(Image.open(table_sprite), extent=table_extent)
+    transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
+    im.set_transform(transform + ax.transData)
+
+    sprites_by_class = {
+        "plate": "/home/gizatt/projects/scene_generation/data/table_setting_assets/plate_bird.png",
+        "cup": "/home/gizatt/projects/scene_generation/data/table_setting_assets/cup_water.png",
+        "fork": "/home/gizatt/projects/scene_generation/data/table_setting_assets/fork.png",
+        "knife": "/home/gizatt/projects/scene_generation/data/table_setting_assets/knife.png",
+        "spoon": "/home/gizatt/projects/scene_generation/data/table_setting_assets/spoon.png",
+    }
+    for obj_i in range(yaml_environment['n_objects']):
+        obj_yaml = yaml_environment["obj_%04d" % obj_i]
+        obj_class = obj_yaml["class"]
+        sprite_path = sprites_by_class[obj_class]
+        if obj_class in ["plate", "cup"]:
+            diameter = max(obj_yaml["params"][0], 0.01)
+            extent=[-diameter/2., diameter/2., -diameter/2., diameter/2.]
+        elif obj_class in ["fork", "knife", "spoon"]:
+            width = max(obj_yaml["params"][0], 0.01)
+            height = max(obj_yaml["params"][1], 0.01)
+            extent = [-width/2., width/2., -height/2., height/2.]
+        im = ax.imshow(Image.open(sprite_path), extent=extent)
+        x, y, theta = obj_yaml["pose"]
+        transform = mtransforms.Affine2D().rotate(theta).translate(x, y)
+        im.set_transform(transform + ax.transData)
+    plt.draw()
 
 def fig2data ( fig ):
     """
