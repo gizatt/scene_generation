@@ -318,11 +318,11 @@ def BuildMbpAndSgFromYamlEnvironment(
             mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
             G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
         mbp.WeldFrames(world_body.body_frame(), table_body.body_frame(),
-                       RigidTransform(p=np.array([0., 0., -0.1])))
+                       RigidTransform(p=np.array([0., 0., -0.2])))
         RegisterVisualAndCollisionGeometry(
             mbp, table_body,
             RigidTransform(p=[0.5, 0.5, -0.1]),
-            table_shape, "table", np.array([0.8, 0.8, 0.8, 0.01]),
+            table_shape, "table", np.array([0.8, 0.8, 0.8, 1]),
             CoulombFriction(0.9, 0.8))
     elif base_environment_type == "dish_bin":
         ground_shape = Box(2., 2., 2.)
@@ -410,12 +410,12 @@ def BuildMbpAndSgFromYamlEnvironment(
                 assert(base_environment_type == "table_setting")
                 radius = max(obj_yaml["params"][0], 0.01)
                 length = 0.05
-                body_shape = Cylinder(radius=radius/2, length=0.25)
+                body_shape = Cylinder(radius=radius/2, length=0.2)
             elif obj_yaml["class"] in ["fork", "knife", "spoon"]:
                 assert(base_environment_type == "table_setting")
                 width = max(obj_yaml["params"][0], 0.01)
                 height = max(obj_yaml["params"][1], 0.01)
-                body_shape = Box(width, height, 0.25)
+                body_shape = Box(width, height, 0.2)
             else:
                 raise NotImplementedError(
                     "Can't handle planar object of type %s yet." %
@@ -576,8 +576,16 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type,
     sim = Simulator(diagram, diagram_context)
     sim.Initialize()
 
-    poses = scene_graph.get_pose_bundle_output_port().Eval(
-        diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    try:
+        poses = scene_graph.get_pose_bundle_output_port().Eval(
+            diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    except Exception as e:
+        print("Unhandled Exception in DrawYamlEnvironment: ", e)
+        return
+    except:
+        print("Unhandled exception in DrawYamlEnvironment")
+        return
+
     mbp.SetPositions(mbp_context, q0)
     visualizer._DoPublish(mbp_context, [])
     visualizer._DoPublish(mbp_context, [])
@@ -615,8 +623,15 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
     diagram_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(
         mbp, diagram_context)
-    poses = scene_graph.get_pose_bundle_output_port().Eval(
-        diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    try:
+        poses = scene_graph.get_pose_bundle_output_port().Eval(
+            diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    except Exception as e:
+        print("Unhandled Exception in DrawYamlEnvironment: ", e)
+        return
+    except:
+        print("Unhandled exception in DrawYamlEnvironment")
+        return
     mbp.SetPositions(mbp_context, q0)
     visualizer.draw(diagram.GetMutableSubsystemContext(
         visualizer, diagram_context))
