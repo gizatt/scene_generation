@@ -162,7 +162,7 @@ class CovaryingSetNode(NonTerminalNode):
     def build_init_weights(num_production_rules, production_weights_hints = {},
                            remaining_weight = 1.):
         assert(remaining_weight >= 0.)
-        num_combinations = 2**num_production_rules + 1
+        num_combinations = 2**num_production_rules
         init_weights = torch.ones(num_combinations) * (remaining_weight + 1E-9)
         for hint in production_weights_hints.keys():
             val = production_weights_hints[hint]
@@ -191,7 +191,8 @@ class CovaryingSetNode(NonTerminalNode):
         # weights into account.
         self.production_rules = production_rules
         self.exhaustive_set_weights = init_weights
-        self.production_dist = dist.Categorical(logits=torch.log(self.exhaustive_set_weights))
+        self.production_dist = dist.Categorical(
+            logits=torch.log(self.exhaustive_set_weights / (1. - self.exhaustive_set_weights)))
         NonTerminalNode.__init__(self, name=name)
 
     def _recover_selected_rules(self, production_rules):

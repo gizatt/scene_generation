@@ -783,7 +783,7 @@ if __name__ == "__main__":
     
     # Draw + plot a few generated environments and their trees
     plt.figure().set_size_inches(20, 20)
-    for k in range(4):
+    for k in range(9):
         start = time.time()
         pyro.clear_param_store()
         trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
@@ -798,7 +798,7 @@ if __name__ == "__main__":
         #    print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
-        plt.subplot(2, 2, k+1)
+        plt.subplot(3, 3, k+1)
         plt.gca().clear()
         plt.gca().set_xlim(0.1, 0.9)
         plt.gca().set_ylim(0.1, 0.9)
