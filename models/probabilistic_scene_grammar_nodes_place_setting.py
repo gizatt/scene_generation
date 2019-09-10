@@ -113,14 +113,14 @@ class PlaceSetting(CovaryingSetNode):
         # Key: Class name (from above)
         # Value: Nominal (Mean, Variance) used to set up prior distributions
         param_guesses_by_name = {
-            "plate": ([0., 0.12, 0.], [0.02, 0.02, 3.]),
-            "cup": ([0., 0.12 + 0.12, 0.], [0.02, 0.02, 3.]),
-            "right_fork": ([0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_fork": ([-0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_spoon": ([-0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "right_spoon": ([0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_knife": ([-0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "right_knife": ([0.12, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "plate": ([0., 0.14, 0.], [0.02, 0.01, 3.]),
+            "cup": ([0., 0.14 + 0.12, 0.], [0.03, 0.02, 3.]),
+            "right_fork": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "left_fork": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "left_spoon": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "right_spoon": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "left_knife": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "right_knife": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
         }
         self.distributions_by_name = {}
         production_rules = []
@@ -188,7 +188,7 @@ class Table(CovaryingSetNode, RootNode):
             #                  constraint=constraints.positive)
             #self.param_names = ["table_place_setting_mean", "table_place_setting_var"]
             mean = torch.tensor([0.0, 0., np.pi/2.])
-            var = torch.tensor([0.01, 0.01, 0.1])
+            var = torch.tensor([0.01, 0.01, 0.01])
             self.offset_dist = dist.Normal(mean, var).to_event(1)
             self.pose = pose
             ProductionRule.__init__(self,
