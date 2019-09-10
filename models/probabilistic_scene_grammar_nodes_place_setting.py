@@ -110,22 +110,25 @@ class PlaceSetting(CovaryingSetNode):
             "right_knife": Knife,
             "right_spoon": Spoon,
         }
+        # Key: Class name (from above)
+        # Value: Nominal (Mean, Variance) used to set up prior distributions
         param_guesses_by_name = {
-            "plate": ([0., 0.16, 0.], [0.02, 0.02, 3.]),
-            "cup": ([0., 0.16 + 0.15, 0.], [0.02, 0.02, 3.]),
-            "right_fork": ([0.15, 0.16, 0.], [0.02, 0.02, 0.5]),
-            "left_fork": ([-0.15, 0.16, 0.], [0.02, 0.02, 0.5]),
-            "left_spoon": ([-0.15, 0.16, 0.], [0.02, 0.02, 0.02]),
-            "right_spoon": ([0.15, 0.16, 0.], [0.02, 0.02, 0.02]),
-            "forward_spoon": ([0.16 + 0.15, 0.0, np.pi/2.], [0.02, 0.02, 0.02]),
-            "left_knife": ([-0.15, 0.16, 0.], [0.02, 0.02, 0.02]),
-            "right_knife": ([0.15, 0.16, 0.], [0.02, 0.02, 0.02]),
+            "plate": ([0., 0.12, 0.], [0.02, 0.02, 3.]),
+            "cup": ([0., 0.12 + 0.12, 0.], [0.02, 0.02, 3.]),
+            "right_fork": ([0.15, 0.12, 0.], [0.02, 0.02, 0.5]),
+            "left_fork": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.5]),
+            "left_spoon": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "right_spoon": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "left_knife": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "right_knife": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
         }
         self.distributions_by_name = {}
         production_rules = []
         name_to_ind = {}
         for k, object_name in enumerate(self.object_types_by_name.keys()):
             mean_init, var_init = param_guesses_by_name[object_name]
+            # Reasonably broad prior on the mean
+            mean_prior_variance = torch.ones(3)*0.01
             # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
             # beta / (alpha - 1) = var
             # (beta / var) + 1 = alpha
@@ -139,32 +142,35 @@ class PlaceSetting(CovaryingSetNode):
                     name="%s_prod_%03d" % (name, k),
                     object_name=object_name,
                     object_type=self.object_types_by_name[object_name],
-                    mean_prior_params=(torch.tensor(mean_init), torch.ones(3)*0.05),
+                    mean_prior_params=(torch.tensor(mean_init), mean_prior_variance),
                     var_prior_params=(alpha, beta)))
             # Build name mapping for convenience of building the hint dictionary
             name_to_ind[object_name] = k
 
-        # Weight the "correct" rules very heavily
+        # Initialize the production rules here. (They're parameters, so they don't have a prior.)
         production_weights_hints = {
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_knife"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_spoon"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 2.,
-            #(name_to_ind["plate"], name_to_ind["right_fork"]): 1.,
-            #(name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
-            #(name_to_ind["cup"],): 1.0,
-            #(name_to_ind["plate"], name_to_ind["cup"]): 1.,
-            #(name_to_ind["plate"],): 1.,
-            tuple(): 1.,
+            # tuple(): 1., # Nothing
+            (name_to_ind["plate"],): 1.,
+            (name_to_ind["cup"],): 1.0,
+            (name_to_ind["plate"], name_to_ind["cup"]): 1.,
+            (name_to_ind["plate"], name_to_ind["right_fork"]): 1.,
+            (name_to_ind["plate"], name_to_ind["left_fork"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_spoon"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 1.,
+            (name_to_ind["plate"], name_to_ind["left_fork"], name_to_ind["right_knife"], name_to_ind["right_spoon"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 1.,
+            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 1.,
+            # Outlier condition adds these as well:
+            #(name_to_ind["plate"], name_to_ind["left_spoon"]): 1.0,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_spoon"]): 1.0,
         }
 
         init_weights = CovaryingSetNode.build_init_weights(
             num_production_rules=len(production_rules),
             production_weights_hints=production_weights_hints,
-            remaining_weight=1.0)
+            remaining_weight=0.001)
         init_weights = pyro.param("place_setting_production_weights", init_weights, constraint=constraints.simplex)
         self.param_names = ["place_setting_production_weights"]
         CovaryingSetNode.__init__(self, name=name, production_rules=production_rules, init_weights=init_weights)
@@ -215,9 +221,9 @@ class Table(CovaryingSetNode, RootNode):
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
             return self.offset_dist.log_prob(rel_offset).sum()
 
-    def __init__(self, name="table", num_place_setting_locations=12):
+    def __init__(self, name="table", num_place_setting_locations=4):
         self.pose = torch.tensor([0.5, 0.5, 0.])
-        self.table_radius = 0.45 #pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
+        self.table_radius = 0.35 #pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
         production_rules = []
         for k in range(num_place_setting_locations):

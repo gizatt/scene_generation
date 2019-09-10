@@ -355,8 +355,9 @@ def score_terminal_node_productions(parse_tree):
                 total_score += node.score_products(parent, children)
     return total_score
 
-def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kwargs):
+def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, node_class_to_color_dict={}, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
+
     if label_score:
         score, scores_by_node = parse_tree.get_total_log_prob()
     pos_dict = {
@@ -374,21 +375,29 @@ def draw_parse_tree(parse_tree, ax=None, label_score=True, label_name=True, **kw
         if label_name != "":
             label_dict[node] = label_str
     if label_score:
-        colors = np.array([scores_by_node[node].item() for node in pruned_tree.nodes])
-    else:
-        colors = []
-    if len(colors) == 0 or np.isinf(min(colors)):
-        colors = None
-    else:
+        colors = np.array([max(-1000., scores_by_node[node].item()) for node in pruned_tree.nodes]) 
         colors -= min(colors)
         colors /= max(colors)
+    elif len(node_class_to_color_dict.keys()) > 0:
+        colors = []
+        for node in pruned_tree.nodes:
+            if node.__class__.__name__ in node_class_to_color_dict.keys():
+                colors.append(node_class_to_color_dict[node.__class__.__name__])
+            else:
+                colors.append([1., 0., 0.])
+        colors = np.array(colors)
+    else:
+        colors = None
     # Convert scores to colors
     if ax is None:
         ax = plt.gca()
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
     nx.draw_networkx(pruned_tree, ax=ax, pos=pos_dict, labels=label_dict,
                      node_color=colors, cmap='jet', font_weight='bold', **kwargs)
-    ax.set_xlim(-0.2, 1.2)
-    ax.set_ylim(-0.2, 1.2)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
     if label_score:
         ax.set_title("Score: %f" % score)
 
@@ -782,28 +791,32 @@ if __name__ == "__main__":
         end = time.time()
 
         print(bcolors.OKGREEN, "Generated data in %f seconds." % (end - start), bcolors.ENDC)
-        print("Full trace values:" )
-        for node_name in trace.nodes.keys():
-            if node_name in ["_INPUT", "_RETURN"]:
-                continue
-            print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
+        #print("Full trace values:" )
+        #for node_name in trace.nodes.keys():
+        #    if node_name in ["_INPUT", "_RETURN"]:
+        #        continue
+        #    print(node_name, ": ", trace.nodes[node_name]["value"].detach().numpy())
 
         # Recover and print the parse tree
         plt.subplot(2, 2, k+1)
         plt.gca().clear()
-        plt.xlim(-0.2, 1.2)
-        plt.ylim(-0.2, 1.2)
+        plt.gca().set_xlim(0.1, 0.9)
+        plt.gca().set_ylim(0.1, 0.9)
         score, score_by_node = parse_tree.get_total_log_prob()
-        print("Score by node: ", score_by_node)
+        #print("Score by node: ", score_by_node)
 
         # Resample it to feasibility
         #parse_tree = resample_parse_tree_to_feasibility(parse_tree, base_environment_type="table_setting")
         yaml_env = convert_tree_to_yaml_env(parse_tree)
         yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="table_setting", make_nonpenetrating=True, make_static=False)[-1]
         DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
-        draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25)
+        node_class_to_color_dict = {"Table":[0., 1., 0.], "PlaceSetting":[0., 0., 1.]}
+        draw_parse_tree(parse_tree, label_name=False, label_score=False, alpha=0.25,
+                        node_class_to_color_dict=node_class_to_color_dict)
         print("Our score: %f" % score)
-        print("Trace score: %f" % trace.log_prob_sum())
+        #print("Trace score: %f" % trace.log_prob_sum())
+        plt.gca().set_xlim(0.1, 0.9)
+        plt.gca().set_ylim(0.1, 0.9)
         assert(abs(score - trace.log_prob_sum()) < 0.001)
     plt.show()
     sys.exit(0)

@@ -313,7 +313,7 @@ def BuildMbpAndSgFromYamlEnvironment(
         pass
     elif base_environment_type == "table_setting":
         # Add table
-        table_shape = Box(0.9, 0.9, 0.2)
+        table_shape = Box(0.7, 0.7, 0.2)
         table_body = mbp.AddRigidBody("ground", SpatialInertia(
             mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
             G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
@@ -472,7 +472,11 @@ def BuildMbpAndSgFromYamlEnvironment(
 
 def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                                     make_nonpenetrating=True,
-                                    make_static=True):
+                                    make_static=True, verbose=False):
+    if yaml_environment["n_objects"] == 0:
+        # Short circuit for empty environments
+        return [yaml_environment]
+
     builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
         yaml_environment, base_environment_type)
     diagram = builder.Build()
@@ -512,13 +516,24 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         mbp.SetPositions(mbp_context, q0)
 
         prog.SetInitialGuess(q_dec, q0)
-        print("Initial guess: ", q0)
-        result = Solve(prog)
+        if verbose:
+            print("Initial guess: ", q0)
+        num_solve_attempts = 0
+        while num_solve_attempts < 10:
+            try:
+                result = Solve(prog)
+                break
+            except:
+                print("Solve had a problem, retrying")
+                q0 += np.random.normal(loc=0., scale=0.01, size=q0.shape)
+                prog.SetInitialGuess(q_dec, q0)
+                num_solve_attempts += 1
+        if num_solve_attempts == 10:
+            raise NotImplementedError("Couldn't solve with lots of restarts :(")
         qf = result.GetSolution(q_dec)
-        print("Used solver: ", result.get_solver_id().name())
-        print("Success? ", result.is_success())
-        print("qf: ", qf)
-
+        if verbose:
+            print("Used solver: ", result.get_solver_id().name())
+            print("Success? ", result.is_success())
         outputs.append(qf.copy().tolist())
     else:
         qf = q0
@@ -650,15 +665,15 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
         ax = ax
         fig = ax.get_figure()
 
-    ax.axis('equal')
+    ax.set_aspect('equal', adjustable='box')
     ax.axis('off')
-    plt.xlim([-0.2, 1.2])
-    plt.ylim([-0.2, 1.2])
+    ax.set_xlim([-0.2, 1.2])
+    ax.set_ylim([-0.2, 1.2])
 
     # Draw the table
-    table_radius = 0.9/2.
-    table_center = [0.5, 0.5]
-    ax.add_artist(patches.Circle(table_center, table_radius, edgecolor='k', facecolor=[0.5, 0.5, 0.5, 0.2]))
+    table_radius = 0.7
+    table_xy = [0.5-table_radius/2., 0.5-table_radius/2.]
+    ax.add_artist(patches.Rectangle(table_xy, table_radius, table_radius, edgecolor='k', facecolor=[0.5, 0.5, 0.5, 0.2]))
     #table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
     #table_extent = [-0.45, 0.45, -0.45, 0.45]
     #im = ax.imshow(Image.open(table_sprite), extent=table_extent)
@@ -687,7 +702,7 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
         x, y, theta = obj_yaml["pose"]
         transform = mtransforms.Affine2D().rotate(theta).translate(x, y)
         im.set_transform(transform + ax.transData)
-    plt.draw()
+    #plt.draw()
 
 def fig2data ( fig ):
     """
