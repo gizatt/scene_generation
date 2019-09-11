@@ -44,7 +44,7 @@ class GlobalVariableStore():
     def get_total_log_prob(self, names=None):
         if names is None:
             names = self.store.keys()
-        total_score = torch.tensor(0.)
+        total_score = torch.tensor(0., dtype=torch.double)
         for key in set(names):
             value, dist = self.store[key]
             total_score += dist.log_prob(value)
@@ -133,9 +133,9 @@ class OrNode(NonTerminalNode):
 
     def score_production_rules(self, parent, production_rules):
         if len(production_rules) != 1:
-            return torch.tensor(-np.inf)
+            return torch.tensor(-np.inf, dtype=torch.double)
         active_rule = self._recover_active_rule(production_rules)
-        return self.production_dist.log_prob(active_rule).sum()
+        return self.production_dist.log_prob(active_rule).sum().double()
 
 
 class AndNode(NonTerminalNode):
@@ -152,9 +152,9 @@ class AndNode(NonTerminalNode):
 
     def score_production_rules(self, parent, production_rules):
         if production_rules != self.production_rules:
-            return torch.tensor(-np.inf)
+            return torch.tensor(-np.inf, dtype=torch.double)
         else:
-            return torch.tensor(-np.inf)
+            return torch.tensor(-np.inf, dtype=torch.double)
 
 
 class CovaryingSetNode(NonTerminalNode):
@@ -227,7 +227,7 @@ class CovaryingSetNode(NonTerminalNode):
 
     def score_production_rules(self, parent, production_rules):
         selected_rules = self._recover_selected_rules(production_rules)
-        return self.production_dist.log_prob(selected_rules).sum()
+        return self.production_dist.log_prob(selected_rules).sum().double()
 
 
 class IndependentSetNode(NonTerminalNode):
@@ -274,4 +274,4 @@ class IndependentSetNode(NonTerminalNode):
 
     def score_production_rules(self, parent, production_rules):
         selected_rules = self._recover_selected_rules(production_rules)
-        return self.production_dist.log_prob(selected_rules).sum()
+        return self.production_dist.log_prob(selected_rules).sum().double()

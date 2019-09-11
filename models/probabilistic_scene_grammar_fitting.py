@@ -22,7 +22,7 @@ from torchviz import make_dot
 
 import scene_generation.data.dataset_utils as dataset_utils
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
-from scene_generation.models.probabilistic_scene_grammar_nodes_table_setting import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting import *
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
 ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score')
@@ -206,28 +206,28 @@ if __name__ == "__main__":
     hyper_parse_tree = generate_hyperexpanded_parse_tree()
     guide_gvs = hyper_parse_tree.get_global_variable_store()
 
-    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_train")
-    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_human_test")
+    train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_generated_nominal_train")
+    test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_generated_nominal_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
     
     plt.figure().set_size_inches(15, 10)
-    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset[:2], guide_gvs=hyper_parse_tree.get_global_variable_store())
+    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
+    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
     print("Parsed %d trees" % len(parse_trees))
-    print("*****************\n0: ", parse_trees[0].nodes)
-    print("*****************\n1: ", parse_trees[1].nodes)
+    #print("*****************\n0: ", parse_trees[0].nodes)
+    #print("*****************\n1: ", parse_trees[1].nodes)
     #print("*****************\n2: ", parse_trees[2].nodes)
     #print("*****************\n3: ", parse_trees[3].nodes)
-    for k in range(2):
-        plt.subplot(2, 1, k+1)
+    for k in range(4):
+        plt.subplot(2, 2, k+1)
         DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
         draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
     plt.show()
     sys.exit(0)
 
-    use_writer = True
+    use_writer = False
 
     log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/human/elbo" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")

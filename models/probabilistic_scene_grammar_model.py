@@ -5,6 +5,7 @@ import multiprocessing
 import time
 import random
 import sys
+import traceback
 import yaml
 import weakref
 
@@ -104,11 +105,11 @@ class ParseTree(nx.DiGraph):
             if isinstance(node, Node):
                 # Sanity-check feasibility
                 if parent is None and assert_rooted and not isinstance(node, RootNode):
-                    node_score = torch.tensor(-np.inf)
+                    node_score = torch.tensor(-np.inf, dtype=torch.double)
                 elif isinstance(node, TerminalNode):
                     # TODO(gizatt): Eventually, TerminalNodes
                     # may want to score their generated parameters.
-                    node_score = torch.tensor(0.)
+                    node_score = torch.tensor(0., dtype=torch.double)
                 else:
                     # Score the kids
                     node_score = node.score_production_rules(parent, list(self.successors(node)))
@@ -646,14 +647,14 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num_attempts=1, ax=None, verbose=False, root_node_type=Table):
+def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=3, num_attempts=2, ax=None, verbose=False, root_node_type=Table):
     best_tree = None
     best_score = -np.inf
 
     for attempt in range(num_attempts):
         # Build an initial parse tree.
         # Collect all possible non-terminal intermediate nodes
-        hyper_parse_tree = generate_hyperexpanded_parse_tree()
+        hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node=root_node_type())
         if guide_gvs is not None:
             hyper_parse_tree.global_variable_store = guide_gvs
         candidate_intermediate_nodes = []
@@ -732,6 +733,7 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=5, num
 
 def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims):
     try:
+        torch.set_default_tensor_type(torch.DoubleTensor)
         done_event,  = synchro_prims
         tree, score = guess_parse_tree_from_yaml(
             env, guide_gvs=guide_gvs, 
@@ -747,11 +749,13 @@ def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, sync
         done_event.wait()
     except Exception as e:
         print("Parse tree guessing thread had exception: ", e)
+        traceback.print_exc()
         output_queue.put((i, None))
         done_event.wait()
 
 def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=3):
     processes = []
+    mp.set_start_method('spawn')
     output_queue = mp.SimpleQueue()
     done_event = mp.Event()
     synchro_prims = [done_event]
