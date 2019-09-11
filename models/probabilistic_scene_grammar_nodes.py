@@ -210,7 +210,7 @@ class CovaryingSetNode(NonTerminalNode):
                 return torch.tensor(-np.inf)
             k = self.production_rules.index(rule)
             selected_rules += 2**k
-        assert(selected_rules >= 0 and selected_rules <= len(self.exhaustive_set_weights))
+        assert(selected_rules >= 0 and selected_rules < len(self.exhaustive_set_weights))
         return selected_rules
 
     def sample_production_rules(self, parent, obs_production_rules=None):

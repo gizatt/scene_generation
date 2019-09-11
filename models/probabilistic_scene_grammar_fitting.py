@@ -52,9 +52,11 @@ def rotate_yaml_env(env, r):
         init_pose[:2] = rotmat.dot(init_pose[:2] - rotation_origin) + rotation_origin
         obj_yaml["pose"] = init_pose.tolist()
 
-def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
+def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_attempts=3, max_iters_for_hyper_parse_tree=8):
     observed_tree, joint_score = guess_parse_tree_from_yaml(
-        env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
+        env, root_node_type=root_node_type, guide_gvs=guide_gvs,
+        outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False,
+        max_iters_for_hyper_parse_tree=max_iters_for_hyper_parse_tree)
     # Joint score is P(T, V_obs)
     # Latent score is P(T | V_obs)
     latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
@@ -71,7 +73,7 @@ def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
     return score_info, active_param_names
 
-def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=2):
+def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
     try:
         post_parsing_barrier, grads_reset_event, done_event = synchro_prims
         
@@ -87,7 +89,8 @@ def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_stor
                                                 constraint=guide_gvs[var_name][1].support)
 
         observed_tree, joint_score = guess_parse_tree_from_yaml(
-            env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
+            env, root_node_type=root_node_type, guide_gvs=guide_gvs, outer_iterations=outer_iterations,
+            num_attempts=num_attempts, verbose=False, max_iters_for_hyper_parse_tree=max_iters_for_hyper_parse_tree)
         # Joint score is P(T, V_obs)
         # Latent score is P(T | V_obs)
         post_parsing_barrier.wait()
@@ -124,7 +127,7 @@ def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_stor
         output_queue.put((None, None))
         done_event.wait()
 
-def score_subset_of_dataset_sync(dataset, n, guide_gvs):
+def score_subset_of_dataset_sync(dataset, n, root_node_type, guide_gvs):
     # Computes an SVI ELBO estimate of n samples from the dataset,
     # with a Delta-distribution mean-field variational distribution over
     # the global latent variables, and an implicit sampled distribution
@@ -137,7 +140,7 @@ def score_subset_of_dataset_sync(dataset, n, guide_gvs):
         # Domain randomization
         env = random.choice(dataset)
         #rotate_yaml_env(env, np.random.uniform(0, 2*np.pi))
-        score_info, active_param_names_local = score_sample_sync(env, guide_gvs)
+        score_info, active_param_names_local = score_sample_sync(env, root_node_type, guide_gvs)
         losses.append(score_info.total_score)
         all_score_infos.append(score_info)
         active_param_names = set().union(
@@ -146,7 +149,7 @@ def score_subset_of_dataset_sync(dataset, n, guide_gvs):
     loss = torch.stack(losses).mean()
     return loss, all_score_infos, active_param_names
 
-def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
+def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8):
     # Select out minibatch
     envs = []
     for p_k in range(n):
@@ -190,7 +193,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims))
+                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims))
             p.start()
             processes.append(p)
         # Wait for them to return. The detached guide gvs members
@@ -214,7 +217,8 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         return loss, all_score_infos
 
     else:    # EQUIVALENT SINGLE-THREAD
-        loss, all_score_infos, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
+        loss, all_score_infos, active_param_names = score_subset_of_dataset_sync(
+            dataset, n, root_node_type, guide_gvs, max_iters_for_hyper_parse_tree=max_iters_for_hyper_parse_tree)
         #for param in all_params_to_optimize:
         ##    param.grad *= -1.0
         print("Loss sync: ", loss)
@@ -266,7 +270,7 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(0)
 
-    use_writer = True
+    use_writer = False
 
     log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/nominal/" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
@@ -329,13 +333,13 @@ if __name__ == "__main__":
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est")
 
-        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, guide_gvs=guide_gvs, optimizer=optimizer)
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=Table, guide_gvs=guide_gvs, optimizer=optimizer)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
 
         if (total_step % 10 == 0):
             # Evaluate on a few test data points
-            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, guide_gvs=guide_gvs)
+            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=Table, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
             print("Loss_test: ", loss_test)
 
@@ -351,7 +355,7 @@ if __name__ == "__main__":
                 plt.figure().set_size_inches(20, 20)
                 for k in range(4):
                     plt.subplot(2, 2, k+1)
-                    parse_tree = generate_unconditioned_parse_tree(initial_gvs=guide_gvs)
+                    parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
                     yaml_env = convert_tree_to_yaml_env(parse_tree)
                     try:
                         DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
@@ -362,7 +366,7 @@ if __name__ == "__main__":
 
                 # Also parse some test environments
                 test_envs = [random.choice(test_dataset) for k in range(4)]
-                test_parses = guess_parse_trees_batch_async(test_envs, guide_gvs=guide_gvs.detach())
+                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=Table, guide_gvs=guide_gvs.detach())
                 plt.figure().set_size_inches(20, 20)
                 for k in range(4):
                     plt.subplot(2, 2, k+1)

@@ -96,7 +96,6 @@ class TableWithoutPlaceSettings(CovaryingSetNode, RootNode):
             return torch.tensor(0.).double()
 
     
-
     def __init__(self, name="table_lesioned"):
         self.pose = torch.tensor([0.5, 0.5, 0.]).double()
 
@@ -232,19 +231,19 @@ if __name__ == "__main__":
         # Parse examples from the test set using the learned params, and draw the parses
         plt.figure().set_size_inches(10, 10)
 
-        #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=guide_gvs.detach())
+        parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=guide_gvs.detach(), root_node_type=TableWithoutPlaceSettings, max_iters_for_hyper_parse_tree=8)
         for k in range(4):
             plt.subplot(2, 2, k+1)
-            parse_tree, _ = guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=guide_gvs, max_iters_for_hyper_parse_tree=8, outer_iterations=2, num_attempts=2, verbose=False, root_node_type=TableWithoutPlaceSettings)
+        #    parse_tree, _ = guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=guide_gvs, max_iters_for_hyper_parse_tree=8, outer_iterations=2, num_attempts=2, verbose=False, root_node_type=TableWithoutPlaceSettings)
             DrawYamlEnvironmentPlanarForTableSettingPretty(test_dataset[k], ax=plt.gca())
-            draw_parse_tree(parse_tree, label_name=True, label_score=True, alpha=0.7)
+            draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
         plt.tight_layout()
 
         # Calculate ELBO (which in the single-parse-tree case is just the probability of the observed nodes):
-        #for parse_tree in parse_trees:
-        #    joint_score = parse_tree.get_total_log_prob()[0]
-        #    latents_score = parse_tree.get_total_log_prob(include_observed=False)[0]
-        #    print("ELBO: ", joint_score - latents_score)
+        for parse_tree in parse_trees:
+            joint_score = parse_tree.get_total_log_prob()[0]
+            latents_score = parse_tree.get_total_log_prob(include_observed=False)[0]
+            print("ELBO: ", joint_score - latents_score)
 
         plt.show()
 #        for var_name in guide_gvs.keys():

@@ -173,7 +173,7 @@ class ParseTree(nx.DiGraph):
             print("Unhandled non-Exception problem in feasibility checking.")
             return False
 
-def generate_unconditioned_parse_tree(initial_gvs=None, root_node=Table()):
+def generate_unconditioned_parse_tree(root_node, initial_gvs=None):
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
     if initial_gvs is not None:
@@ -659,7 +659,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=2, num_attempts=2, ax=None, verbose=False, max_iters_for_hyper_parse_tree=8, root_node_type=Table):
+def guess_parse_tree_from_yaml(yaml_env, root_node_type, guide_gvs=None, outer_iterations=2, num_attempts=2, ax=None, verbose=False, max_iters_for_hyper_parse_tree=8):
     best_tree = None
     best_score = -np.inf
 
@@ -743,14 +743,16 @@ def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=2, num
 
     return best_tree, best_score
 
-def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims):
+def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree):
     try:
         torch.set_default_tensor_type(torch.DoubleTensor)
         done_event,  = synchro_prims
         tree, score = guess_parse_tree_from_yaml(
             env, guide_gvs=guide_gvs, 
             outer_iterations=outer_iterations,
-            num_attempts=num_attempts, verbose=False)
+            num_attempts=num_attempts, verbose=False,
+            root_node_type=root_node_type,
+            max_iters_for_hyper_parse_tree=max_iters_for_hyper_parse_tree)
         print("Finished tree with score %f" % score)
         # Detach all values in the tree so it can be communicated IPC
         tree = rebuild_object_recursively_with_detach(tree)
@@ -765,7 +767,7 @@ def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, sync
         output_queue.put((i, None))
         done_event.wait()
 
-def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=2):
+def guess_parse_trees_batch_async(envs, root_node_type, guide_gvs=None, outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
     processes = []
     try:
         mp.set_start_method('spawn')
@@ -779,7 +781,7 @@ def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_
     for i, env in enumerate(envs):
         p = mp.Process(
             target=worker, args=(
-                i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims))
+                i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree))
         p.start()
         processes.append(p)
     for k in range(n):
@@ -805,7 +807,7 @@ if __name__ == "__main__":
     for k in range(9):
         start = time.time()
         pyro.clear_param_store()
-        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(Table())
         parse_tree = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
@@ -852,7 +854,7 @@ if __name__ == "__main__":
 
     start = time.time()
     pyro.clear_param_store()
-    trace = poutine.trace(generate_unconditioned_parse_tree).get_trace()
+    trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(Table())
     parse_tree = trace.nodes["_RETURN"]["value"]
     end = time.time()
 
@@ -863,7 +865,7 @@ if __name__ == "__main__":
     for k in range(200):
         start = time.time()
         pyro.clear_param_store()
-        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(guide_gvs)
+        trace = poutine.trace(generate_unconditioned_parse_tree).get_trace(Table(), guide_gvs)
         parse_tree = trace.nodes["_RETURN"]["value"]
         end = time.time()
 
