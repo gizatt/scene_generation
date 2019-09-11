@@ -647,7 +647,7 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=3, num_attempts=2, ax=None, verbose=False, root_node_type=Table):
+def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=2, num_attempts=2, ax=None, verbose=False, root_node_type=Table):
     best_tree = None
     best_score = -np.inf
 
@@ -753,7 +753,7 @@ def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, sync
         output_queue.put((i, None))
         done_event.wait()
 
-def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=3):
+def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=2):
     processes = []
     mp.set_start_method('spawn')
     output_queue = mp.SimpleQueue()
