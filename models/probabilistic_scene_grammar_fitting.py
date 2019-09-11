@@ -24,9 +24,10 @@ from tensorboardX import SummaryWriter
 import scene_generation.data.dataset_utils as dataset_utils
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
 from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting_lesioned import *
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
-ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score')
+ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score baseline')
 torch.set_default_tensor_type(torch.DoubleTensor)
 
 def print_param_store(grads=False):
@@ -52,7 +53,7 @@ def rotate_yaml_env(env, r):
         init_pose[:2] = rotmat.dot(init_pose[:2] - rotation_origin) + rotation_origin
         obj_yaml["pose"] = init_pose.tolist()
 
-def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_attempts=3, max_iters_for_hyper_parse_tree=8):
+def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_attempts=3, max_iters_for_hyper_parse_tree=8, baseline=0.):
     observed_tree, joint_score = guess_parse_tree_from_yaml(
         env, root_node_type=root_node_type, guide_gvs=guide_gvs,
         outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False,
@@ -61,19 +62,19 @@ def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_at
     # Latent score is P(T | V_obs)
     latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
     f = joint_score - latents_score
-    baseline = 0.
     total_score = -(latents_score * (f.detach() - baseline) + f)
     score_info = ScoreInfo(joint_score=joint_score,
                            latents_score=latents_score,
                            f=f,
-                           total_score=total_score)
+                           total_score=total_score,
+                           baseline=baseline)
     print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
     active_param_names = set().union(
         *[node.get_param_names() for node in observed_tree.nodes],
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
     return score_info, active_param_names
 
-def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
+def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, baseline=0., outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
     try:
         post_parsing_barrier, grads_reset_event, done_event = synchro_prims
         
@@ -106,7 +107,6 @@ def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_s
 
         latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
         f = joint_score - latents_score
-        baseline = 0.
         total_score = -(latents_score * (f.detach() - baseline) + f)
         print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
 
@@ -115,7 +115,8 @@ def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_s
         score_info = ScoreInfo(joint_score=joint_score.detach(),
                                latents_score=latents_score.detach(),
                                f=f.detach(),
-                               total_score=total_score.detach())
+                               total_score=total_score.detach(),
+                               baseline=baseline)
         output_queue.put((total_score.detach(), score_info))
         done_event.wait()
     except Exception as e:
@@ -149,7 +150,7 @@ def score_subset_of_dataset_sync(dataset, n, root_node_type, guide_gvs):
     loss = torch.stack(losses).mean()
     return loss, all_score_infos, active_param_names
 
-def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8):
+def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8, baseline=0.):
     # Select out minibatch
     envs = []
     for p_k in range(n):
@@ -193,7 +194,7 @@ def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimiz
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims))
+                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims, baseline))
             p.start()
             processes.append(p)
         # Wait for them to return. The detached guide gvs members
@@ -245,7 +246,8 @@ if __name__ == "__main__":
     pyro.enable_validation(True)
     pyro.clear_param_store()
 
-    root_node = Table()
+    root_node_type = TableWithoutPlaceSettings
+    root_node = root_node_type()
     hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node)
     guide_gvs = hyper_parse_tree.get_global_variable_store()
 
@@ -270,9 +272,9 @@ if __name__ == "__main__":
     #plt.show()
     #sys.exit(0)
 
-    use_writer = False
+    use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/nominal/" + datetime.datetime.now().strftime(
+    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/nominal/lesioned_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:
@@ -326,6 +328,7 @@ if __name__ == "__main__":
     snapshots = {}
     total_step = 0
     pyro.get_param_store().save("param_store_initial.pyro")
+    f_history = []
     for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
@@ -333,13 +336,20 @@ if __name__ == "__main__":
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est")
 
-        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=Table, guide_gvs=guide_gvs, optimizer=optimizer)
+        if len(f_history) > 0:
+            baseline = torch.stack(f_history).mean()
+        else:
+            baseline=0.
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, optimizer=optimizer, baseline=baseline)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
+        f_history.append(torch.stack([score_info.f for score_info in all_score_infos]).mean())
+        if len(f_history) > 30:
+            f_history.pop(0)
 
         if (total_step % 10 == 0):
             # Evaluate on a few test data points
-            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=Table, guide_gvs=guide_gvs)
+            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
             print("Loss_test: ", loss_test)
 
@@ -366,7 +376,7 @@ if __name__ == "__main__":
 
                 # Also parse some test environments
                 test_envs = [random.choice(test_dataset) for k in range(4)]
-                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=Table, guide_gvs=guide_gvs.detach())
+                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach())
                 plt.figure().set_size_inches(20, 20)
                 for k in range(4):
                     plt.subplot(2, 2, k+1)
@@ -380,12 +390,11 @@ if __name__ == "__main__":
         all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in pyro.get_param_store().keys()}
         if use_writer:
             write_score_info(total_step, "train_", writer, loss, all_score_infos)
+            writer.add_scalar("baseline", baseline, total_step)
             for param_name in all_param_state.keys():
                 write_np_array(writer, param_name, all_param_state[param_name], total_step)
         param_val_history.append(all_param_state)
         #print("active param names: ", active_param_names)
-        print("Place setting plate mean est: ", pyro.param("place_setting_plate_mean_est"))
-        print("Place setting plate var est: ", pyro.param("place_setting_plate_var_est"))
         total_step += 1
     print("Final loss: ", loss)
     pyro.get_param_store().save("param_store_final.pyro")

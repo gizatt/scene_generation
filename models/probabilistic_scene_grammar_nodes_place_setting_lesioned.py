@@ -113,9 +113,9 @@ class TableWithoutPlaceSettings(CovaryingSetNode, RootNode):
         param_guesses_by_name = {
             "plate": ([0., 0., 0.], [0.1, 0.1, 3.]),
             "cup": ([0., 0., 0.], [0.1, 0.1, 3.]),
-            "fork": ([0., 0., 0.], [0.1, 0.1, 0.1]),
-            "knife": ([0., 0., 0.], [0.1, 0.1, 0.1]),
-            "spoon": ([0., 0., 0.], [0.1, 0.1, 0.1]),
+            "fork": ([0., 0., 0.], [0.1, 0.1, 3.]),
+            "knife": ([0., 0., 0.], [0.1, 0.1, 3.]),
+            "spoon": ([0., 0., 0.], [0.1, 0.1, 3.]),
         }
         production_rules = []
         name_to_ind = {}
