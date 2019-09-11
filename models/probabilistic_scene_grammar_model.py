@@ -21,6 +21,7 @@ import pyro
 import pyro.distributions as dist
 from pyro import poutine
 import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 from multiprocessing.managers import SyncManager
 
 from scene_generation.data.dataset_utils import (
@@ -254,13 +255,15 @@ def project_parse_tree_to_feasibility(old_parse_tree, base_environment_type, mak
     new_yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type=base_environment_type,
         make_nonpenetration=make_nonpenetration, make_static=make_static)[-1]
 
-
-
-def generate_hyperexpanded_parse_tree(root_node = Table()):
+# Note to self: this used to have a pre-constructed Table() as a default argument.
+# Don't do that. It gets constructed at module load time and then the Table params
+# usually get deleted from the param store and disappear.
+def generate_hyperexpanded_parse_tree(root_node):
     # Make a fully expanded parse tree where
     # *every possible* non-terminal production rule and product is followed.
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
+    root_node.sample_global_variables(parse_tree.get_global_variable_store())
     parse_tree.add_node(root_node)
     while len(input_nodes_with_parents)>  0:
         parent, node = input_nodes_with_parents.pop(0)
@@ -830,7 +833,7 @@ if __name__ == "__main__":
     sys.exit(0)
 
 
-    hyper_parse_tree = generate_hyperexpanded_parse_tree()
+    hyper_parse_tree = generate_hyperexpanded_parse_tree(Table())
     guide_gvs = hyper_parse_tree.get_global_variable_store()
     for var_name in guide_gvs.keys():
         guide_gvs[var_name][0] = pyro.param(var_name + "_est",

@@ -17,9 +17,9 @@ import pyro.distributions as dist
 from pyro.optim import Adam
 from pyro.infer import SVI, Trace_ELBO
 import torch.multiprocessing as mp
+mp.set_sharing_strategy('file_system')
 from multiprocessing.managers import SyncManager
 from tensorboardX import SummaryWriter
-from torchviz import make_dot
 
 import scene_generation.data.dataset_utils as dataset_utils
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
@@ -76,12 +76,11 @@ def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_stor
         post_parsing_barrier, grads_reset_event, done_event = synchro_prims
         
         # Rebuild param store
-        for key, value in zip(shared_param_state[0], shared_param_state[1]):
-            print("Key: ", key)
-            print("Value: ", value)
-            print("Value grad: ", value.grad)
         pyro.get_param_store().load(param_store_name)
-        pyro.get_param_store()._params = shared_param_state
+        shared_dict, shared_grad_dict = shared_param_state
+        for key in shared_dict.keys():
+            pyro.get_param_store()._params[key].data = shared_dict[key]
+            pyro.get_param_store()._params[key].grad = shared_grad_dict[key]
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est",
                                                 guide_gvs[var_name][0],
@@ -95,8 +94,8 @@ def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_stor
         if thread_id == 0:
             # Thread 0 resets the gradients to 0
             for key in pyro.get_param_store().keys():
-                
-                print("Have param key: %s, value: " % key, pyro.get_param_store()._params[key], " with grad ", pyro.get_param_store()._params[key].grad)
+                if pyro.get_param_store()._params[key].grad is None:
+                    raise NotImplementedError("%s has no grad in thread" % key)
                 pyro.get_param_store()._params[key].grad.data.zero_()
             grads_reset_event.set()
         else:
@@ -159,15 +158,12 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     do_backprop = optimizer is not None
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     
-    if False:   # ASYNC
-        print("Starting async stuff")
+    if True:   # ASYNC
         # We'll pass in the pyro param store and reconstruct the
         # autodiff-ready guide GVS on the other side.
         guide_gvs_detached = guide_gvs.detach()
         param_store_name = "/tmp/param_store_%d.pyro" % (random.random()*1000*1000)
-        print("Saving param store to %s" % param_store_name)
         pyro.get_param_store().save(param_store_name)
-        print("Saved")
         # Get all of the Multiprocessing mess set up
         try:
             mp.set_start_method('spawn')
@@ -175,11 +171,12 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
             pass
         sync_manager = SyncManager()
         sync_manager.start()
-        #shared_dict = sync_manager.dict()
-        #for key in pyro.get_param_store().keys():
-        #    print("Sending key: %s, value: " % key, pyro.get_param_store()._params[key], " with grad ", pyro.get_param_store()._params[key].grad)
-        #    shared_dict[key] = pyro.get_param_store()._params[key]
-        shared_dict = [list(pyro.get_param_store()._params.keys()), list(pyro.get_param_store()._params.values())]
+        shared_dict = sync_manager.dict()
+        shared_grad_dict = sync_manager.dict()
+        for key in pyro.get_param_store().keys():
+            shared_dict[key] = pyro.get_param_store()._params[key]
+            shared_grad_dict[key] = pyro.get_param_store()._params[key].grad
+        #shared_dict = [list(pyro.get_param_store()._params.keys()), list(pyro.get_param_store()._params.values())]
         post_parsing_barrier = sync_manager.Barrier(n)
         grads_reset_event = mp.Event()
         processes = []
@@ -193,7 +190,7 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, guide_gvs_detached, shared_dict, param_store_name, do_backprop, output_queue, synchro_prims))
+                    i, env, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims))
             p.start()
             processes.append(p)
         # Wait for them to return. The detached guide gvs members
@@ -244,7 +241,8 @@ if __name__ == "__main__":
     pyro.enable_validation(True)
     pyro.clear_param_store()
 
-    hyper_parse_tree = generate_hyperexpanded_parse_tree()
+    root_node = Table()
+    hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node)
     guide_gvs = hyper_parse_tree.get_global_variable_store()
 
     train_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_generated_nominal_train")
@@ -253,24 +251,24 @@ if __name__ == "__main__":
     print("%d test examples" % len(test_dataset))
 
     
-    plt.figure().set_size_inches(15, 10)
-    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
-    print("Parsed %d trees" % len(parse_trees))
-    #print("*****************\n0: ", parse_trees[0].nodes)
-    #print("*****************\n1: ", parse_trees[1].nodes)
-    #print("*****************\n2: ", parse_trees[2].nodes)
-    #print("*****************\n3: ", parse_trees[3].nodes)
-    for k in range(4):
-        plt.subplot(2, 2, k+1)
-        DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
-        draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
-    plt.show()
-    sys.exit(0)
+    #plt.figure().set_size_inches(15, 10)
+    ###parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
+    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())
+    #print("Parsed %d trees" % len(parse_trees))
+    ##print("*****************\n0: ", parse_trees[0].nodes)
+    ##print("*****************\n1: ", parse_trees[1].nodes)
+    ##print("*****************\n2: ", parse_trees[2].nodes)
+    ##print("*****************\n3: ", parse_trees[3].nodes)
+    #for k in range(4):
+    #    plt.subplot(2, 2, k+1)
+    #    DrawYamlEnvironmentPlanar(test_dataset[k], base_environment_type="table_setting", ax=plt.gca())
+    #    draw_parse_tree(parse_trees[k], label_name=True, label_score=True, alpha=0.7)
+    #plt.show()
+    #sys.exit(0)
 
-    use_writer = False
+    use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/human/elbo" + datetime.datetime.now().strftime(
+    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/nominal/" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:
@@ -307,11 +305,9 @@ if __name__ == "__main__":
     def per_param_callable(module_name, param_name):
         if "var" in param_name or "weights" in param_name:
             return {"lr": 0.01, "betas": (0.8, 0.95)}
-
         else:
             return {"lr": 0.001, "betas": (0.8, 0.95)}
     optimizer = Adam(per_param_callable)
-    baseline = 0.
     baseline = 0.
 
     def write_score_info(i, prefix, writer, loss, all_score_infos):
@@ -332,7 +328,7 @@ if __name__ == "__main__":
         for var_name in guide_gvs.keys():
             guide_gvs[var_name][0] = pyro.param(var_name + "_est")
 
-        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=1, guide_gvs=guide_gvs, optimizer=optimizer)
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, guide_gvs=guide_gvs, optimizer=optimizer)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
 
@@ -357,7 +353,7 @@ if __name__ == "__main__":
                     parse_tree = generate_unconditioned_parse_tree(initial_gvs=guide_gvs)
                     yaml_env = convert_tree_to_yaml_env(parse_tree)
                     try:
-                        DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=plt.gca())
+                        DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
                     except:
                         print("Unhandled exception in drawing yaml env")
                     draw_parse_tree(parse_tree, label_name=True, label_score=True, alpha=0.75)
@@ -365,12 +361,12 @@ if __name__ == "__main__":
 
                 # Also parse some test environments
                 test_envs = [random.choice(test_dataset) for k in range(4)]
-                test_parses = guess_parse_trees_batch_async(test_envs, guide_gvs=guide_gvs)
+                test_parses = guess_parse_trees_batch_async(test_envs, guide_gvs=guide_gvs.detach())
                 plt.figure().set_size_inches(20, 20)
-                for k in range(4):
+                for k in range(1):
                     plt.subplot(2, 2, k+1)
                     try:
-                        DrawYamlEnvironmentPlanar(test_envs[k], base_environment_type="table_setting", ax=plt.gca())
+                        DrawYamlEnvironmentPlanarForTableSettingPretty(test_envs[k], ax=plt.gca())
                     except:
                         print("Unhandled exception in drawing yaml env")
                     draw_parse_tree(test_parses[k], label_name=True, label_score=True, alpha=0.75)
