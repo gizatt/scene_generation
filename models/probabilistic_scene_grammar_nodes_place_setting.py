@@ -26,7 +26,7 @@ def chain_pose_transforms(p_w1, p_12):
     ''' p_w1: xytheta Pose 1 in world frame
         p_12: xytheta Pose 2 in Pose 1's frame
         Returns: xytheta Pose 2 in world frame. '''
-    out = torch.empty(3)
+    out = torch.empty(3, dtype=p_w1.dtype)
     r = p_w1[2]
     out[0] = p_w1[0] + p_12[0]*torch.cos(r) - p_12[1]*torch.sin(r)
     out[1] = p_w1[1] + p_12[0]*torch.sin(r) + p_12[1]*torch.cos(r)
@@ -35,7 +35,7 @@ def chain_pose_transforms(p_w1, p_12):
 
 def invert_pose(pose):
     # TF^-1 = [R^t  -R.' T]
-    out = torch.empty(3)
+    out = torch.empty(3, dtype=pose.dtype)
     r = pose[2]
     out[0] = -(pose[0]*torch.cos(-r) - pose[1]*torch.sin(-r))
     out[1] = -(pose[0]*torch.sin(-r) + pose[1]*torch.cos(-r))
@@ -67,9 +67,9 @@ class PlaceSetting(CovaryingSetNode):
             var_prior_dist = dist.InverseGamma(concentration=self.var_prior_params[0],
                                                rate=self.var_prior_params[1]).to_event(1)
             mean = global_variable_store.sample_global_variable("place_setting_%s_mean" % self.object_name,
-                                              mean_prior_dist)
+                                              mean_prior_dist).double()
             var = global_variable_store.sample_global_variable("place_setting_%s_var" % self.object_name,
-                                             var_prior_dist)
+                                             var_prior_dist).double()
             self.offset_dist = dist.Normal(loc=mean, scale=var).to_event(1)
             
         def sample_products(self, parent, obs_products=None):
@@ -90,7 +90,7 @@ class PlaceSetting(CovaryingSetNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_pose = self._recover_rel_pose_from_abs_pose(parent, products[0].pose.detach())
-            return self.offset_dist.log_prob(rel_pose)
+            return self.offset_dist.log_prob(rel_pose.double()).double()
 
     def __init__(self, name, pose):
         self.pose = pose
@@ -113,14 +113,14 @@ class PlaceSetting(CovaryingSetNode):
         # Key: Class name (from above)
         # Value: Nominal (Mean, Variance) used to set up prior distributions
         param_guesses_by_name = {
-            "plate": ([0., 0.14, 0.], [0.02, 0.01, 3.]),
-            "cup": ([0., 0.14 + 0.12, 0.], [0.03, 0.02, 3.]),
-            "right_fork": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_fork": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_spoon": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "right_spoon": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "left_knife": ([-0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
-            "right_knife": ([0.15, 0.12, 0.], [0.02, 0.02, 0.02]),
+            "plate": ([0., 0.14, 0.], [0.05, 0.05, 3.]),
+            "cup": ([0., 0.14 + 0.12, 0.], [0.05, 0.05, 3.]),
+            "right_fork": ([0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
+            "left_fork": ([-0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
+            "left_spoon": ([-0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
+            "right_spoon": ([0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
+            "left_knife": ([-0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
+            "right_knife": ([0.15, 0.12, 0.], [0.05, 0.05, 0.05]),
         }
         self.distributions_by_name = {}
         production_rules = []
@@ -128,21 +128,21 @@ class PlaceSetting(CovaryingSetNode):
         for k, object_name in enumerate(self.object_types_by_name.keys()):
             mean_init, var_init = param_guesses_by_name[object_name]
             # Reasonably broad prior on the mean
-            mean_prior_variance = torch.ones(3)*0.01
+            mean_prior_variance = (torch.ones(3)*0.05).double()
             # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
             # beta / (alpha - 1) = var
             # (beta / var) + 1 = alpha
             # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
             var_prior_width_fact = 1
             assert(var_prior_width_fact > 0.)
-            beta = var_prior_width_fact*torch.tensor(var_init)
-            alpha = var_prior_width_fact*torch.ones(len(var_init)) + 1
+            beta = var_prior_width_fact*torch.tensor(var_init).double()
+            alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
             production_rules.append(
                 self.ObjectProductionRule(
                     name="%s_prod_%03d" % (name, k),
                     object_name=object_name,
                     object_type=self.object_types_by_name[object_name],
-                    mean_prior_params=(torch.tensor(mean_init), mean_prior_variance),
+                    mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
                     var_prior_params=(alpha, beta)))
             # Build name mapping for convenience of building the hint dictionary
             name_to_ind[object_name] = k
@@ -187,8 +187,8 @@ class Table(CovaryingSetNode, RootNode):
             #                  torch.tensor([0.01, 0.01, 0.1]),
             #                  constraint=constraints.positive)
             #self.param_names = ["table_place_setting_mean", "table_place_setting_var"]
-            mean = torch.tensor([0.0, 0., np.pi/2.])
-            var = torch.tensor([0.01, 0.01, 0.01])
+            mean = torch.tensor([0.0, 0., np.pi/2.]).double()
+            var = torch.tensor([0.01, 0.01, 0.01]).double()
             self.offset_dist = dist.Normal(mean, var).to_event(1)
             self.pose = pose
             ProductionRule.__init__(self,
@@ -219,18 +219,18 @@ class Table(CovaryingSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            return self.offset_dist.log_prob(rel_offset).sum()
+            return self.offset_dist.log_prob(rel_offset).sum().double()
 
     def __init__(self, name="table", num_place_setting_locations=4):
-        self.pose = torch.tensor([0.5, 0.5, 0.])
+        self.pose = torch.tensor([0.5, 0.5, 0.]).double()
         self.table_radius = 0.35 #pyro.param("%s_radius" % name, torch.tensor(0.45), constraint=constraints.positive)
         # Set-valued: a plate may appear at each location.
         production_rules = []
         for k in range(num_place_setting_locations):
             # TODO(gizatt) Root pose for each cluster could be a parameter.
             # This turns this into a GMM, sort of?
-            r = torch.tensor((k / float(num_place_setting_locations))*np.pi*2.)
-            pose = torch.empty(3)
+            r = torch.tensor((k / float(num_place_setting_locations))*np.pi*2.).double()
+            pose = torch.empty(3).double()
             pose[0] = self.table_radius * torch.cos(r)
             pose[1] = self.table_radius * torch.sin(r)
             pose[2] = r

@@ -47,7 +47,7 @@ class GlobalVariableStore():
         total_score = torch.tensor(0., dtype=torch.double)
         for key in set(names):
             value, dist = self.store[key]
-            total_score += dist.log_prob(value)
+            total_score += dist.log_prob(value.double()).double()
         return total_score
 
     def generate_yaml(self):
@@ -55,6 +55,13 @@ class GlobalVariableStore():
         for key in self.store.keys():
             out[key] = [float(x) for x in self.store[key][0].tolist()]
         return out
+    
+    def detach(self):
+        # Create a copy of self with detached values, following Pytorch semantics
+        new_gvs = GlobalVariableStore()
+        for key in self.keys():
+            new_gvs.store[key] = [self[key][0].detach(), self[key][1]]
+        return new_gvs
 
 class ProductionRule(object):
     ''' Abstract interface for a production rule.
@@ -163,7 +170,7 @@ class CovaryingSetNode(NonTerminalNode):
                            remaining_weight = 1.):
         assert(remaining_weight >= 0.)
         num_combinations = 2**num_production_rules
-        init_weights = torch.ones(num_combinations) * (remaining_weight + 1E-9)
+        init_weights = torch.ones(num_combinations).double() * (remaining_weight + 1E-9)
         for hint in production_weights_hints.keys():
             val = production_weights_hints[hint]
             assert(val >= 0.)

@@ -121,12 +121,12 @@ class ParseTree(nx.DiGraph):
                     if include_observed:
                         node_score = node.score_products(parent, products)
                     else:
-                        node_score = torch.tensor(0.)
+                        node_score = torch.tensor(0., dtype=torch.double)
                 else:
                     node_score = node.score_products(parent, products)
             else:
                 raise ValueError("Invalid node type in tree: ", type(node))
-            scores_by_node[node] = node_score
+            scores_by_node[node] = node_score.double()
             all_scores.append(node_score)
 
         total_score = (torch.stack(all_scores).sum() +
@@ -356,10 +356,10 @@ def score_terminal_node_productions(parse_tree):
                 total_score += node.score_products(parent, children)
     return total_score
 
-def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, node_class_to_color_dict={}, **kwargs):
+def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, color_by_score=False, node_class_to_color_dict={}, **kwargs):
     pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
 
-    if label_score:
+    if label_score or color_by_score:
         score, scores_by_node = parse_tree.get_total_log_prob()
     pos_dict = {
         node: node.pose[:2].detach().numpy() for node in pruned_tree
@@ -369,13 +369,14 @@ def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, no
         label_str = ""
         if label_name:
             label_str += node.__class__.__name__
-        if label_score:
+        if label_score or color_by_score:
             score_of_node = scores_by_node[node].item()
             score_of_children = sum(scores_by_node[child] for child in parse_tree.successors(node))
-            label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
+            if label_score:
+                label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
         if label_name != "":
             label_dict[node] = label_str
-    if label_score:
+    if color_by_score:
         colors = np.array([max(-1000., scores_by_node[node].item()) for node in pruned_tree.nodes]) 
         colors -= min(colors)
         colors /= max(colors)
@@ -755,7 +756,10 @@ def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, sync
 
 def guess_parse_trees_batch_async(envs, guide_gvs=None, outer_iterations=2, num_attempts=2):
     processes = []
-    mp.set_start_method('spawn')
+    try:
+        mp.set_start_method('spawn')
+    except:
+        pass
     output_queue = mp.SimpleQueue()
     done_event = mp.Event()
     synchro_prims = [done_event]

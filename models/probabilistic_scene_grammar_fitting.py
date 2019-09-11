@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
+import traceback
 import time
 import yaml
 
@@ -26,6 +27,7 @@ from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting imp
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
 ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score')
+torch.set_default_tensor_type(torch.DoubleTensor)
 
 def print_param_store(grads=False):
     for param_name in pyro.get_param_store().keys():
@@ -69,9 +71,22 @@ def score_sample_sync(env, guide_gvs, outer_iterations=2, num_attempts=3):
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
     return score_info, active_param_names
 
-def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=3):
+def score_sample_async(thread_id, env, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, outer_iterations=2, num_attempts=2):
     try:
         post_parsing_barrier, grads_reset_event, done_event = synchro_prims
+        
+        # Rebuild param store
+        for key, value in zip(shared_param_state[0], shared_param_state[1]):
+            print("Key: ", key)
+            print("Value: ", value)
+            print("Value grad: ", value.grad)
+        pyro.get_param_store().load(param_store_name)
+        pyro.get_param_store()._params = shared_param_state
+        for var_name in guide_gvs.keys():
+            guide_gvs[var_name][0] = pyro.param(var_name + "_est",
+                                                guide_gvs[var_name][0],
+                                                constraint=guide_gvs[var_name][1].support)
+
         observed_tree, joint_score = guess_parse_tree_from_yaml(
             env, guide_gvs=guide_gvs, outer_iterations=outer_iterations, num_attempts=num_attempts, verbose=False)
         # Joint score is P(T, V_obs)
@@ -79,8 +94,10 @@ def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, s
         post_parsing_barrier.wait()
         if thread_id == 0:
             # Thread 0 resets the gradients to 0
-            for name in pyro.get_param_store().keys():
-                pyro.get_param_store()._params[name].grad.data.zero_()
+            for key in pyro.get_param_store().keys():
+                
+                print("Have param key: %s, value: " % key, pyro.get_param_store()._params[key], " with grad ", pyro.get_param_store()._params[key].grad)
+                pyro.get_param_store()._params[key].grad.data.zero_()
             grads_reset_event.set()
         else:
             grads_reset_event.wait()
@@ -101,6 +118,7 @@ def score_sample_async(thread_id, env, guide_gvs, eval_backward, output_queue, s
         done_event.wait()
     except Exception as e:
         print("Async score thread had exception: ", e)
+        traceback.print_exc()
         post_parsing_barrier.wait()
         if thread_id == 0:
             grads_reset_event.set()
@@ -141,9 +159,27 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
     do_backprop = optimizer is not None
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     
-    if True:   # ASYNC
+    if False:   # ASYNC
+        print("Starting async stuff")
+        # We'll pass in the pyro param store and reconstruct the
+        # autodiff-ready guide GVS on the other side.
+        guide_gvs_detached = guide_gvs.detach()
+        param_store_name = "/tmp/param_store_%d.pyro" % (random.random()*1000*1000)
+        print("Saving param store to %s" % param_store_name)
+        pyro.get_param_store().save(param_store_name)
+        print("Saved")
+        # Get all of the Multiprocessing mess set up
+        try:
+            mp.set_start_method('spawn')
+        except:
+            pass
         sync_manager = SyncManager()
         sync_manager.start()
+        #shared_dict = sync_manager.dict()
+        #for key in pyro.get_param_store().keys():
+        #    print("Sending key: %s, value: " % key, pyro.get_param_store()._params[key], " with grad ", pyro.get_param_store()._params[key].grad)
+        #    shared_dict[key] = pyro.get_param_store()._params[key]
+        shared_dict = [list(pyro.get_param_store()._params.keys()), list(pyro.get_param_store()._params.values())]
         post_parsing_barrier = sync_manager.Barrier(n)
         grads_reset_event = mp.Event()
         processes = []
@@ -152,12 +188,16 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         output_queue = mp.SimpleQueue()
         done_event = mp.Event()
         synchro_prims = [post_parsing_barrier, grads_reset_event, done_event]
+        
+        # Finally dispatch the parsers
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, guide_gvs, do_backprop, output_queue, synchro_prims))
+                    i, env, guide_gvs_detached, shared_dict, param_store_name, do_backprop, output_queue, synchro_prims))
             p.start()
             processes.append(p)
+        # Wait for them to return. The detached guide gvs members
+        # will have accumulated gradients.
         for k in range(n):
             loss, score_info = output_queue.get()
             if loss is not None:
@@ -170,11 +210,12 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         loss = torch.stack(losses).mean()
         print("Loss async: ", loss)
         if do_backprop:
-            # Apply averaging to gradients
+            # Finally averaging to gradients and run the optimizer for a step.
             for p in all_params_to_optimize:
                 p.grad.data /= float(n)
             optimizer(all_params_to_optimize)
         return loss, all_score_infos
+
     else:    # EQUIVALENT SINGLE-THREAD
         loss, all_score_infos, active_param_names = score_subset_of_dataset_sync(dataset, n, guide_gvs)
         #for param in all_params_to_optimize:
@@ -183,13 +224,13 @@ def calc_score_and_backprob_async(dataset, n, guide_gvs, optimizer=None):
         if do_backprop:
             for p in all_params_to_optimize:
                 p.grad.data.zero_()
-            print("PRE EVAL: ")
-            for name in pyro.get_param_store().keys():
-                print(name, " grad: ", pyro.get_param_store()._params[name].grad)
+            #print("PRE EVAL: ")
+            #for name in pyro.get_param_store().keys():
+            #    print(name, " grad: ", pyro.get_param_store()._params[name].grad)
             loss.backward(retain_graph=True)
-            print("POST EVAL: ")
-            for name in pyro.get_param_store().keys():
-                print(name, " grad: ", pyro.get_param_store()._params[name].grad)
+            #print("POST EVAL: ")
+            #for name in pyro.get_param_store().keys():
+            #    print(name, " grad: ", pyro.get_param_store()._params[name].grad)
             optimizer(all_params_to_optimize)
         return loss, all_score_infos
 
