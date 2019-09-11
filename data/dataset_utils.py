@@ -7,6 +7,7 @@ from copy import deepcopy
 import pydrake
 import torch
 import numpy as np
+import scipy.ndimage
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import matplotlib.transforms as mtransforms
@@ -674,7 +675,7 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
     table_radius = 0.7
     table_xy = [0.5-table_radius/2., 0.5-table_radius/2.]    
     if not hide_table:
-        table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
+        table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_simplified.png"
         table_extent = table_extent = [-table_radius/2., table_radius/2., -table_radius/2., table_radius/2.]
         im = ax.imshow(Image.open(table_sprite), extent=table_extent)
         transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
@@ -700,10 +701,27 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
             width = max(obj_yaml["params"][0], 0.01)
             height = max(obj_yaml["params"][1], 0.01)
             extent = [-width/2., width/2., -height/2., height/2.]
-        im = ax.imshow(Image.open(sprite_path), extent=extent)
+
         x, y, theta = obj_yaml["pose"]
         transform = mtransforms.Affine2D().rotate(theta).translate(x, y)
+        shadow_transform = mtransforms.Affine2D().rotate(theta).translate(x + 0.01, y - 0.01)
+
+        im_pil = Image.open(sprite_path)
+        # Hacky drop shadow first
+        shadow_im = np.asarray(im_pil).copy()
+        shadow_im[:, :, 0] = 0.
+        shadow_im[:, :, 1] = 0.
+        shadow_im[:, :, 2] = 0.
+        shadow_im = scipy.ndimage.filters.gaussian_filter(shadow_im, sigma=2, mode="constant")
+        im_shadow = ax.imshow(shadow_im, extent=extent, alpha=1.0)
+        im_shadow.set_transform(shadow_transform + ax.transData)
+
+        # Then the sprite proper
+        im = ax.imshow(im_pil, extent=extent)
         im.set_transform(transform + ax.transData)
+
+
+
     #plt.draw()
 
 def fig2data ( fig ):
