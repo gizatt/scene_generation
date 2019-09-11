@@ -258,14 +258,17 @@ def project_parse_tree_to_feasibility(old_parse_tree, base_environment_type, mak
 # Note to self: this used to have a pre-constructed Table() as a default argument.
 # Don't do that. It gets constructed at module load time and then the Table params
 # usually get deleted from the param store and disappear.
-def generate_hyperexpanded_parse_tree(root_node):
+def generate_hyperexpanded_parse_tree(root_node, max_iters=25):
     # Make a fully expanded parse tree where
     # *every possible* non-terminal production rule and product is followed.
+    # Recursions *are* followed -- use the max iter limit to keep the full tree size sane.
     input_nodes_with_parents = [ (None, root_node) ]  # (parent, node) order
     parse_tree = ParseTree()
     root_node.sample_global_variables(parse_tree.get_global_variable_store())
     parse_tree.add_node(root_node)
-    while len(input_nodes_with_parents)>  0:
+    k = 0
+    while len(input_nodes_with_parents) >  0 and k < max_iters:
+        k += 1
         parent, node = input_nodes_with_parents.pop(0)
         if isinstance(node, TerminalNode):
             # Nothing more to do with this node
@@ -407,6 +410,9 @@ def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, co
         ax.set_title("Score: %f" % score)
 
 
+# Candidate intermediate nodes are actual existing instantiations from
+# the hyper parse tree.
+# Candidate intermediate node *types* need to be constructable with no arguments.q
 def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
                                max_num_iters=100, ax=None, verbose=False):
     iter_k = 0
@@ -416,6 +422,7 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
             print("At start of iter %d, tree score is %f" % (iter_k, score))
         if ax is not None:
             ax.clear()
+            yaml_env = convert_tree_to_yaml_env(parse_tree)
             DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
             draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
             plt.title("Iter %02d: score %f" % (iter_k, score.item()))
@@ -478,6 +485,7 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
                         for rule in node.production_rules:
                             if rule in existing_rules:
                                 continue
+                            rule.sample_global_variables(parse_tree.get_global_variable_store())
                             score = rule.score_products(node, sampled_nodes)
                             score = score + node.score_production_rules(parent, existing_rules + [rule])
                             if not torch.isinf(score):
@@ -651,14 +659,14 @@ def prune_node_from_tree(parse_tree, victim_node):
                 parse_tree.remove_node(parent)
 
 
-def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=2, num_attempts=2, ax=None, verbose=False, root_node_type=Table):
+def guess_parse_tree_from_yaml(yaml_env, guide_gvs=None, outer_iterations=2, num_attempts=2, ax=None, verbose=False, max_iters_for_hyper_parse_tree=8, root_node_type=Table):
     best_tree = None
     best_score = -np.inf
 
     for attempt in range(num_attempts):
         # Build an initial parse tree.
         # Collect all possible non-terminal intermediate nodes
-        hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node=root_node_type())
+        hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node=root_node_type(), max_iters=max_iters_for_hyper_parse_tree)
         if guide_gvs is not None:
             hyper_parse_tree.global_variable_store = guide_gvs
         candidate_intermediate_nodes = []
