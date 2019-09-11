@@ -363,7 +363,7 @@ if __name__ == "__main__":
                 test_envs = [random.choice(test_dataset) for k in range(4)]
                 test_parses = guess_parse_trees_batch_async(test_envs, guide_gvs=guide_gvs.detach())
                 plt.figure().set_size_inches(20, 20)
-                for k in range(1):
+                for k in range(4):
                     plt.subplot(2, 2, k+1)
                     try:
                         DrawYamlEnvironmentPlanarForTableSettingPretty(test_envs[k], ax=plt.gca())
