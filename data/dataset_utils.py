@@ -655,7 +655,7 @@ def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
 
 def DrawYamlEnvironmentPlanarForTableSettingPretty(
         yaml_environment, facecolor=[1, 1, 1],
-        figsize=None, ax=None):
+        figsize=None, ax=None, hide_table=False):
     from PIL import Image
 
     if ax is None:
@@ -667,18 +667,20 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
 
     ax.set_aspect('equal', adjustable='box')
     ax.axis('off')
-    ax.set_xlim([-0.2, 1.2])
-    ax.set_ylim([-0.2, 1.2])
+    ax.set_xlim([0.1, 0.9])
+    ax.set_ylim([0.1, 0.9])
 
     # Draw the table
     table_radius = 0.7
-    table_xy = [0.5-table_radius/2., 0.5-table_radius/2.]
-    ax.add_artist(patches.Rectangle(table_xy, table_radius, table_radius, edgecolor='k', facecolor=[0.5, 0.5, 0.5, 0.2]))
-    #table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
-    #table_extent = [-0.45, 0.45, -0.45, 0.45]
-    #im = ax.imshow(Image.open(table_sprite), extent=table_extent)
-    #transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
-    #im.set_transform(transform + ax.transData)
+    table_xy = [0.5-table_radius/2., 0.5-table_radius/2.]    
+    if not hide_table:
+        table_sprite = "/home/gizatt/projects/scene_generation/data/table_setting_assets/tabletop_wood.png"
+        table_extent = table_extent = [-table_radius/2., table_radius/2., -table_radius/2., table_radius/2.]
+        im = ax.imshow(Image.open(table_sprite), extent=table_extent)
+        transform = mtransforms.Affine2D().rotate(0.).translate(0.5, 0.5)
+        im.set_transform(transform + ax.transData)
+    else:
+        ax.add_artist(patches.Rectangle(table_xy, table_radius, table_radius, edgecolor='k', facecolor=[1.0, 1.0, 1.0, 0.0]))
 
     sprites_by_class = {
         "plate": "/home/gizatt/projects/scene_generation/data/table_setting_assets/plate_red.png",
