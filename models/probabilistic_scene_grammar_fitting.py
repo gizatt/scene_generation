@@ -321,6 +321,7 @@ if __name__ == "__main__":
 
     snapshots = {}
     total_step = 0
+    pyro.get_param_store().save("param_store_initial.pyro")
     for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
@@ -340,7 +341,7 @@ if __name__ == "__main__":
 
             if loss_test < best_loss_yet:
                 best_loss_yet = loss
-                pyro.get_param_store().save("best_on_test_save.pyro")
+                pyro.get_param_store().save("param_store_best_on_test.pyro")
 
             if use_writer:
                 write_score_info(total_step, "test_", writer, loss_test, all_score_infos_test)
@@ -383,4 +384,5 @@ if __name__ == "__main__":
         print("Place setting plate var est: ", pyro.param("place_setting_plate_var_est"))
         total_step += 1
     print("Final loss: ", loss)
+    pyro.get_param_store().save("param_store_final.pyro")
     print_param_store()
