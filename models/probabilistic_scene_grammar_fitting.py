@@ -27,7 +27,7 @@ from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting imp
 from scene_generation.models.probabilistic_scene_grammar_nodes_place_setting_lesioned import *
 from scene_generation.models.probabilistic_scene_grammar_model import *
 
-ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score baseline')
+ScoreInfo = namedtuple('ScoreInfo', 'joint_score latents_score f total_score baseline observed_score')
 torch.set_default_tensor_type(torch.DoubleTensor)
 
 def print_param_store(grads=False):
@@ -60,11 +60,14 @@ def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_at
         max_iters_for_hyper_parse_tree=max_iters_for_hyper_parse_tree)
     # Joint score is P(T, V_obs)
     # Latent score is P(T | V_obs)
-    latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
+    latents_score, _ = observed_tree.get_total_log_prob(include_observed=False, include_gvs=False)
+    all_latents_score, _ = observed_tree.get_total_log_prob(include_observed=False, include_gvs=True)
     f = joint_score - latents_score
+    observed_score = joint_score - all_latents_score
     total_score = -(latents_score * (f.detach() - baseline) + f)
     score_info = ScoreInfo(joint_score=joint_score,
                            latents_score=latents_score,
+                           observed_score=observed_score,
                            f=f,
                            total_score=total_score,
                            baseline=baseline)
@@ -105,7 +108,9 @@ def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_s
         else:
             grads_reset_event.wait()
 
-        latents_score, _ = observed_tree.get_total_log_prob(include_observed=False)
+        latents_score, _ = observed_tree.get_total_log_prob(include_observed=False, include_gvs=False)
+        all_latents_score, _ = observed_tree.get_total_log_prob(include_observed=False, include_gvs=True)
+        observed_score = joint_score - all_latents_score
         f = joint_score - latents_score
         total_score = -(latents_score * (f.detach() - baseline) + f)
         print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
@@ -116,6 +121,7 @@ def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_s
                                latents_score=latents_score.detach(),
                                f=f.detach(),
                                total_score=total_score.detach(),
+                               observed_score=observed_score.detach(),
                                baseline=baseline)
         output_queue.put((total_score.detach(), score_info))
         done_event.wait()
@@ -136,7 +142,6 @@ def score_subset_of_dataset_sync(dataset, n, root_node_type, guide_gvs):
     losses = []
     all_score_infos = []
     active_param_names = set()
-    baseline = 0
     for p_k in range(n):
         # Domain randomization
         env = random.choice(dataset)
@@ -246,7 +251,12 @@ if __name__ == "__main__":
     pyro.enable_validation(True)
     pyro.clear_param_store()
 
-    root_node_type = TableWithoutPlaceSettings
+    # CONFIGURATION STUFF
+    root_node_type = Table #TableWithoutPlaceSettings
+    output_dir = "../data/table_setting/icra_runs/nominal/1/"
+    os.system("mkdir -p %s" % output_dir)
+
+
     root_node = root_node_type()
     hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node)
     guide_gvs = hyper_parse_tree.get_global_variable_store()
@@ -274,7 +284,7 @@ if __name__ == "__main__":
 
     use_writer = True
 
-    log_dir = "/home/gizatt/projects/scene_generation/models/runs/psg/table_setting/nominal/lesioned_" + datetime.datetime.now().strftime(
+    log_dir = output_dir + "fixed_elbo_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
 
     if use_writer:
@@ -320,14 +330,16 @@ if __name__ == "__main__":
         f = torch.stack([score_info.f for score_info in all_score_infos]).mean()
         latents_score = torch.stack([score_info.latents_score for score_info in all_score_infos]).mean()
         joint_score = torch.stack([score_info.joint_score for score_info in all_score_infos]).mean()
+        observed_score = torch.stack([score_info.observed_score for score_info in all_score_infos]).mean()
         writer.add_scalar(prefix + "loss", loss.item(), i)
         writer.add_scalar(prefix + "f", f, i)
         writer.add_scalar(prefix + "latents_score", latents_score, i)
         writer.add_scalar(prefix + "joint_score", joint_score, i)
+        writer.add_scalar(prefix + "observed_score", observed_score, i)
 
     snapshots = {}
     total_step = 0
-    pyro.get_param_store().save("param_store_initial.pyro")
+    pyro.get_param_store().save(output_dir + "param_store_initial.pyro")
     f_history = []
     for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
@@ -355,7 +367,7 @@ if __name__ == "__main__":
 
             if loss_test < best_loss_yet:
                 best_loss_yet = loss
-                pyro.get_param_store().save("param_store_best_on_test.pyro")
+                pyro.get_param_store().save(output_dir + "param_store_best_on_test.pyro")
 
             if use_writer:
                 write_score_info(total_step, "test_", writer, loss_test, all_score_infos_test)
@@ -397,5 +409,5 @@ if __name__ == "__main__":
         #print("active param names: ", active_param_names)
         total_step += 1
     print("Final loss: ", loss)
-    pyro.get_param_store().save("param_store_final.pyro")
+    pyro.get_param_store().save(output_dir + "param_store_final.pyro")
     print_param_store()

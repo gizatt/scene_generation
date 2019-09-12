@@ -84,7 +84,7 @@ class ParseTree(nx.DiGraph):
     def get_global_variable_store(self):
         return self.global_variable_store
 
-    def get_total_log_prob(self, assert_rooted=True, include_observed=True):
+    def get_total_log_prob(self, assert_rooted=True, include_observed=True, include_gvs=True):
         ''' Sum the log probabilities over the tree:
         For every node, score its set of its production rules.
         For every production rule, score its products.
@@ -130,9 +130,10 @@ class ParseTree(nx.DiGraph):
             scores_by_node[node] = node_score.double()
             all_scores.append(node_score)
 
-        total_score = (torch.stack(all_scores).sum() +
-                       self.global_variable_store.get_total_log_prob(
-                        active_global_var_names))
+        total_score = torch.stack(all_scores).sum()
+        if include_gvs:
+            total_score = total_score + self.global_variable_store.get_total_log_prob(
+                active_global_var_names)
         return total_score, scores_by_node
 
     def get_node_parent_or_none(self, node):

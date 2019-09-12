@@ -219,6 +219,7 @@ if __name__ == "__main__":
         pyro.clear_param_store()
 
         root_node = TableWithoutPlaceSettings()
+
         # Max number of the same object that can appear is enough here.
         hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node, max_iters=8)
         guide_gvs = hyper_parse_tree.get_global_variable_store()
