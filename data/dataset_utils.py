@@ -703,6 +703,8 @@ def DrawYamlEnvironmentPlanarForTableSettingPretty(
             extent = [-width/2., width/2., -height/2., height/2.]
 
         x, y, theta = obj_yaml["pose"]
+        if obj_class in ["plate", "cup"]:
+            theta = 0.
         transform = mtransforms.Affine2D().rotate(theta).translate(x, y)
         shadow_transform = mtransforms.Affine2D().rotate(theta).translate(x + 0.01, y - 0.01)
 
