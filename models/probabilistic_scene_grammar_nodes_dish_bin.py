@@ -7,6 +7,9 @@ import sys
 import yaml
 
 import matplotlib.pyplot as plt
+import meshcat
+import meshcat.geometry as meshcat_geom
+import meshcat.transformations as meshcat_tf
 import networkx as nx
 import numpy as np
 
@@ -189,11 +192,107 @@ class Mug_1(TerminalNode):
         }
 
 
+class LineBasicMaterial(meshcat_geom.Material):
+    def __init__(self, linewidth=1, color=0xffffff,
+                 linecap="round", linejoin="round"):
+        super(LineBasicMaterial, self).__init__()
+        self.linewidth = linewidth
+        self.color = color
+        self.linecap = linecap
+        self.linejoin = linejoin
+
+    def lower(self, object_data):
+        return {
+            u"uuid": self.uuid,
+            u"type": u"LineBasicMaterial",
+            u"color": self.color,
+            u"linewidth": self.linewidth,
+            u"linecap": self.linecap,
+            u"linejoin": self.linejoin
+        }
+
+def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_color_dict={}):
+    pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
+
+    if color_by_score:
+        score, scores_by_node = parse_tree.get_total_log_prob()
+    pos_dict = {
+        node: node.pose[:2].detach().numpy() for node in pruned_tree
+    }
+    if color_by_score:
+        colors = np.array([max(-1000., scores_by_node[node].item()) for node in pruned_tree.nodes]) 
+        colors -= min(colors)
+        colors /= max(colors)
+    elif len(node_class_to_color_dict.keys()) > 0:
+        colors = []
+        for node in pruned_tree.nodes:
+            if node.__class__.__name__ in node_class_to_color_dict.keys():
+                colors.append(node_class_to_color_dict[node.__class__.__name__])
+            else:
+                colors.append([1., 0., 0.])
+        colors = np.array(colors)
+    else:
+        colors = None
+
+    # Do actual drawing in meshcat, starting from root of tree
+    # So first find the root...
+    root_node = list(pruned_tree.nodes)[0]
+    while len(list(pruned_tree.predecessors(root_node))) > 0:
+        root_node = pruned_tree.predecessors(root_node)[0]
+
+    node_sphere_size = 0.01
+    vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
+    vis["parse_tree"].delete()
+    node_queue = [root_node]
+    def rgb_2_hex(rgb):
+            # Turn a list of R,G,B elements (any indexable list
+            # of >= 3 elements will work), where each element is
+            # specified on range [0., 1.], into the equivalent
+            # 24-bit value 0xRRGGBB.
+            val = 0
+            for i in range(3):
+                val += (256**(2 - i)) * int(255 * rgb[i])
+            return val
+    if colors is not None and len(colors.shape) == 1:
+        # Use cmap to get real colors
+        assert(colors.shape[0] == len(pruned_tree.nodes))
+        colors = plt.cm.get_cmap('jet')(colors)
+    while len(node_queue) > 0:
+        node = node_queue.pop(0)
+        children = list(pruned_tree.successors(node))
+        node_queue += children
+        # Draw this node
+        print(colors, colors.shape)
+        if colors is not None:
+            color = rgb_2_hex(colors[list(pruned_tree.nodes).index(node)])
+        else:
+            color = 0xff0000
+        vis["parse_tree"][node.name].set_object(
+            meshcat_geom.Sphere(node_sphere_size),
+            meshcat_geom.MeshToonMaterial(color=color))
+        tf = RigidTransform(
+            rpy=RollPitchYaw(node.pose[3:]),
+            p=node.pose[:3]).GetAsMatrix4()
+        vis["parse_tree"][node.name].set_transform(tf)
+
+        # Draw connections to children
+        verts = []
+        for child in children:
+            verts.append(node.pose[:3])
+            verts.append(child.pose[:3])
+        if len(verts) > 0:
+            verts = np.vstack(verts).T
+            vis["parse_tree"][node.name]["child_connections"].set_object(
+                meshcat_geom.Line(meshcat_geom.PointsGeometry(verts),
+                                  LineBasicMaterial(linewidth=10, color=color)))
+
+
 if __name__ == "__main__":
     #seed = 52
     #torch.manual_seed(seed)
     #np.random.seed(seed)
     #random.seed(seed)
+    torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
 
     for k in range(10):
@@ -214,8 +313,10 @@ if __name__ == "__main__":
         score, score_by_node = parse_tree.get_total_log_prob()
         print("Score by node: ", score_by_node)
         yaml_env = convert_tree_to_yaml_env(parse_tree)
-        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin")
-        #draw_parse_tree_meshcat(parse_tree)
+        #yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type="dish_bin",
+        #                                           make_nonpenetrating=True, make_static=False)[-1]
+        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+        draw_parse_tree_meshcat(parse_tree, color_by_score=True)
         print("Our score: %f" % score)
         print("Trace score: %f" % trace.log_prob_sum())
         assert(abs(score - trace.log_prob_sum()) < 0.001)
