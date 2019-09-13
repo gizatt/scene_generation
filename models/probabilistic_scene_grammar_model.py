@@ -609,6 +609,7 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
                         continue
                     if isinstance(new_node, AndNode) and len(new_node.production_rules) > 1:
                         print("WARNING: inference will never succeed, as only one prod rule is added at a time.")
+                    new_node.seed_from_candidate_nodes(sampled_nodes)
                     for rule in new_node.production_rules:
                         rule.sample_global_variables(parse_tree.get_global_variable_store())
                         score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(None, [rule])
@@ -620,6 +621,7 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
             if len(possible_parent_nodes_scores) == 0:
                 iter_k  += 1
                 continue
+
             possible_parent_nodes_scores_raw = torch.stack(possible_parent_nodes_scores)
             # Normalize by subtracting off log(sum(exp(possible_parent_nodes_scores_raw)))
             # See https://en.wikipedia.org/wiki/LogSumExp
