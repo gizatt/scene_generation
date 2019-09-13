@@ -447,6 +447,14 @@ def BuildMbpAndSgFromYamlEnvironment(
             assert(obj_yaml["class"] in candidate_model_files.keys())
             model_id = parser.AddModelFromFile(candidate_model_files[obj_yaml["class"]], model_name="model_{}".format(k))
 
+    if yaml_environment["n_objects"] == 0:
+        print("Adding dummy object to keep sim from breaking.")
+        dummy_body = mbp.AddRigidBody("dummy", 
+            mbp.AddModelInstance("dummy_model"),
+            SpatialInertia(
+                mass=1.0, p_PScm_E=np.array([0., 0., 0.]),
+                G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
+
     mbp.Finalize()
 
     # TODO(gizatt) Eventually, we'll be able to do this default
@@ -457,6 +465,8 @@ def BuildMbpAndSgFromYamlEnvironment(
             pose = yaml_environment["obj_%04d" % k]["pose"]
             assert(len(pose) == 7) 
             q0 += pose
+        if yaml_environment["n_objects"] == 0:
+            q0 += [1., 0., 0., 0., 0., 0., 0.]
         q0 = np.array(q0)
     else:
         init_context = mbp.CreateDefaultContext()
@@ -512,6 +522,8 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                 body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
                 prog.AddBoundingBoxConstraint(0., 1., q_dec[body_x_index])
                 prog.AddBoundingBoxConstraint(0., 1, q_dec[body_z_index])
+        elif base_environment_type in ["dish_bin"]:
+            pass
         else:
             raise NotImplementedError()
         mbp.SetPositions(mbp_context, q0)
@@ -545,7 +557,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
         simulator = Simulator(diagram, diagram_context)
         simulator.set_target_realtime_rate(1.0)
         simulator.set_publish_every_time_step(False)
-        simulator.StepTo(5.0)
+        simulator.StepTo(1.0)
         qf = mbp.GetPositions(mbp_context).copy()
         outputs.append(qf.copy().tolist())
 
@@ -566,6 +578,11 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                         output_qf[z_index],
                         output_qf[t_index]]
                 output_dict["obj_%04d" % k]["pose"] = pose
+        elif base_environment_type in ["dish_bin"]:
+            for k in range(yaml_environment["n_objects"]):
+                offset = (k*7)
+                pose = output_qf[offset:(offset+7)]
+                output_dict["obj_%04d" % k]["pose"] = pose
         else:
             raise NotImplementedError()
         output_dicts.append(output_dict)
@@ -573,13 +590,14 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
 
 
 def DrawYamlEnvironment(yaml_environment, base_environment_type,
-                        zmq_url="tcp://127.0.0.1:6000"):
+                        zmq_url="tcp://127.0.0.1:6000", alpha=1.):
     builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
         yaml_environment, base_environment_type)
     visualizer = builder.AddSystem(MeshcatVisualizer(
                 scene_graph,
                 zmq_url=zmq_url,
-                draw_period=0.0))
+                draw_period=0.0,
+                global_alpha_multiplier=alpha))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
     diagram = builder.Build()
