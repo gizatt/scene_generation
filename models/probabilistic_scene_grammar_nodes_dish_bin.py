@@ -92,10 +92,8 @@ class DishStack(IndependentSetNode):
                 product_types=[self.product_type])
             
         def _recover_rel_offset_from_abs_offset(self, parent, abs_offset):
-            my_pose_tf = pose_to_tf_matrix(parent.pose)
             parent_pose_tf = pose_to_tf_matrix(parent.pose)
-            my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
-            rel_tf = torch.mm(invert_tf(my_pose_tf), pose_to_tf_matrix(abs_offset))
+            rel_tf = torch.mm(invert_tf(parent_pose_tf), pose_to_tf_matrix(abs_offset))
             return tf_matrix_to_pose(rel_tf)
 
         def sample_global_variables(self, global_variable_store):
@@ -123,11 +121,9 @@ class DishStack(IndependentSetNode):
                 rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.object_name),
                                          self.offset_dist).detach()
                 # Chain relative offset on top of current pose in world
-                my_pose_tf = pose_to_tf_matrix(parent.pose)
                 parent_pose_tf = pose_to_tf_matrix(parent.pose)
-                my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
                 offset_tf = pose_to_tf_matrix(rel_offset)
-                abs_offset = tf_matrix_to_pose(torch.mm(my_pose_in_world_tf, offset_tf))
+                abs_offset = tf_matrix_to_pose(torch.mm(parent_pose_tf, offset_tf))
                 return [self.product_type(name=self.name + "_" + self.object_name, pose=abs_offset)]
 
         def score_products(self, parent, products):
@@ -240,10 +236,8 @@ class DishBin(IndependentSetNode, RootNode):
             self.offset_dist = dist.Normal(loc=offset_mean, scale=offset_var).to_event(1)
 
         def _recover_rel_offset_from_abs_offset(self, parent, abs_offset):
-            my_pose_tf = pose_to_tf_matrix(parent.pose)
             parent_pose_tf = pose_to_tf_matrix(parent.pose)
-            my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
-            rel_tf = torch.mm(invert_tf(my_pose_tf), pose_to_tf_matrix(abs_offset))
+            rel_tf = torch.mm(invert_tf(parent_pose_tf), pose_to_tf_matrix(abs_offset))
             return tf_matrix_to_pose(rel_tf)
 
         def sample_products(self, parent, obs_products=None):
@@ -257,11 +251,9 @@ class DishBin(IndependentSetNode, RootNode):
                 rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.product_name),
                                          self.offset_dist).detach()
                 # Chain relative offset on top of current pose in world
-                my_pose_tf = pose_to_tf_matrix(parent.pose)
                 parent_pose_tf = pose_to_tf_matrix(parent.pose)
-                my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
                 offset_tf = pose_to_tf_matrix(rel_offset)
-                abs_offset = tf_matrix_to_pose(torch.mm(my_pose_in_world_tf, offset_tf))
+                abs_offset = tf_matrix_to_pose(torch.mm(parent_pose_tf, offset_tf))
                 return [self.product_type(name=self.name + "_" + self.product_name, pose=abs_offset)]
 
         def score_products(self, parent, products):
