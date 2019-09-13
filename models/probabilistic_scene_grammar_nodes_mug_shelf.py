@@ -169,7 +169,7 @@ class MugIntermediate(OrNode):
         self.pose = child_nodes[0].pose
 
 
-class MugShelfLevel(IndependentSetNode, RootNode):
+class MugShelfLevel(IndependentSetNode):
     class MugProductionRule(ProductionRule):
         def __init__(self, name, shelf_name, xyz_mean_prior_params, xyz_var_prior_params):
             self.product_type = MugIntermediate
@@ -239,7 +239,7 @@ class MugShelfLevel(IndependentSetNode, RootNode):
                 assert(len(obs_products) == 1 and isinstance(obs_products[0], MugShelfLevel))
                 return obs_products
             else:
-                return [MugShelfLevel(name="%s_%s" % (self.name, "recurse"), pose=parent.pose + torch.tensor([0., 0., 0.01, 0., 0., 0.]), shelf_name=parent.shelf_name)]
+                return [MugShelfLevel(name="%s_%s" % (self.name, "recurse"), pose=parent.pose, shelf_name=parent.shelf_name)]
 
         def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], MugShelfLevel):
@@ -256,7 +256,7 @@ class MugShelfLevel(IndependentSetNode, RootNode):
 
         # Mug production
         mean_init = torch.tensor([0., 0., 0.])
-        var_init = torch.tensor([0.02, 0.05, 0.01])
+        var_init = torch.tensor([0.04, 0.07, 0.01])
         
         # Pretty specific prior on mean and variance
         mean_prior_variance = (torch.ones(3)*0.01).double()
@@ -285,124 +285,43 @@ class MugShelfLevel(IndependentSetNode, RootNode):
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
 
 
-class DishBin(IndependentSetNode, RootNode):
-    class ObjectProductionRule(ProductionRule):
-        def __init__(self, name, product_type, offset_mean_prior_params, offset_var_prior_params):
-            self.product_type = product_type
-            self.product_name = product_type.__name__
-            self.offset_mean_prior_params = offset_mean_prior_params
-            self.offset_var_prior_params = offset_var_prior_params
-            self.global_variable_names = ["prod_%s_pose_var" % self.product_name,
-                                          "prod_%s_pose_mean" % self.product_name]
+class MugShelf(IndependentSetNode, RootNode):
+    class MugShelfLevelProductionRule(ProductionRule):
+        def __init__(self, name, pose, shelf_name):
+            self.product_type = MugShelfLevel
+            self.shelf_name = shelf_name
+            self.desired_pose = pose
             ProductionRule.__init__(self,
                 name=name,
-                product_types=[product_type])
-            
-        def sample_global_variables(self, global_variable_store):
-            # Handles class-general setup
-            offset_mean_prior_dist = dist.Normal(
-                loc=self.offset_mean_prior_params[0],
-                scale=self.offset_mean_prior_params[1]).to_event(1)
-            offset_var_prior_dist = dist.InverseGamma(concentration=self.offset_var_prior_params[0],
-                                                      rate=self.offset_var_prior_params[1]).to_event(1)
-            offset_mean = global_variable_store.sample_global_variable(
-                "prod_%s_pose_mean" % self.product_name,
-                offset_mean_prior_dist).double()
-            offset_var = global_variable_store.sample_global_variable(
-                "prod_%s_pose_var" % self.product_name, offset_var_prior_dist).double()
-            self.offset_dist = dist.Normal(loc=offset_mean, scale=offset_var).to_event(1)
-
-        def _recover_rel_offset_from_abs_offset(self, parent, abs_offset):
-            my_pose_tf = pose_to_tf_matrix(parent.pose)
-            parent_pose_tf = pose_to_tf_matrix(parent.pose)
-            my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
-            rel_tf = torch.mm(invert_tf(my_pose_tf), pose_to_tf_matrix(abs_offset))
-            return tf_matrix_to_pose(rel_tf)
+                product_types=[self.product_type])
 
         def sample_products(self, parent, obs_products=None):
+            # Observation should be absolute position of the product
             if obs_products is not None:
-                assert len(obs_products) == 1 and isinstance(obs_products[0], self.product_type)
-                obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose) 
-                rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.product_name),
-                                         self.offset_dist, obs=obs_rel_offset)
+                assert(len(obs_products) == 1 and isinstance(obs_products[0], self.product_type))
                 return obs_products
             else:
-                rel_offset = pyro.sample("%s_%s_offset" % (self.name, self.product_name),
-                                         self.offset_dist).detach()
-                # Chain relative offset on top of current pose in world
-                my_pose_tf = pose_to_tf_matrix(parent.pose)
-                parent_pose_tf = pose_to_tf_matrix(parent.pose)
-                my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
-                offset_tf = pose_to_tf_matrix(rel_offset)
-                abs_offset = tf_matrix_to_pose(torch.mm(my_pose_in_world_tf, offset_tf))
-                return [self.product_type(name=self.name + "_" + self.product_name, pose=abs_offset)]
+                return [self.product_type(name="%s_shelf" % (self.name), pose=self.desired_pose, shelf_name=self.shelf_name)]
 
         def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], self.product_type):
                 return torch.tensor(-np.inf)
-            # Get relative offset of the PlaceSetting
-            rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            return self.offset_dist.log_prob(rel_offset).sum()
+            return torch.tensor(0.).double()
+
 
     def __init__(self, name="mug_shelf"):
         self.pose = torch.tensor([0.0, 0.0, 0., 0., 0., 0.])
 
-        # Set-valued: 4 independent mugs, 4 independent plates, and a plate stack can all independently occur.
+        # Independently produce a shelf at each level
         production_rules = []
+        for k in range(3):
+            production_rules.append(
+                self.MugShelfLevelProductionRule("%s_prod_shelf_%d" % (name, k),
+                    shelf_name="shelf_%d" % k,
+                    pose=torch.tensor([0., 0., 0.15*k, 0., 0., 0.])))
 
-        mean_init = torch.tensor([0., 0., 0.1, 0., 0., 0.]).double()
-        var_init = torch.tensor([0.05, 0.05, 0.05, 2., 2., 2.]).double()
-        # Reasonably broad prior on the mean
-        mean_prior_variance = (torch.ones(6)*0.05).double()
-        # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
-        # beta / (alpha - 1) = var
-        # (beta / var) + 1 = alpha
-        # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
-        var_prior_width_fact = 10.
-        assert(var_prior_width_fact > 0.)
-        beta = var_prior_width_fact*torch.tensor(var_init).double()
-        alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
-        
-        # MUG
-        rule_types = []
-        for k in range(4):
-            production_rules.append(self.ObjectProductionRule(
-                name="%s_prod_mug_1_%03d" % (name, k), product_type=Mug_1,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                offset_var_prior_params=(alpha, beta)))
-            rule_types.append("mug")
-#
-        # PLATE
-        for k in range(4):
-            production_rules.append(self.ObjectProductionRule(
-                name="%s_prod_plate_11in_%03d" % (name, k), product_type=Plate_11in,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                offset_var_prior_params=(alpha, beta)))
-            rule_types.append("plate")
-        
-        # PLATE STACK
-        for k in range(4):
-            production_rules.append(self.ObjectProductionRule(
-                name="%s_prod_dish_stack_%03d" % (name, k), product_type=DishStack,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                offset_var_prior_params=(alpha, beta)))
-            rule_types.append("plate_stack")
-
-        # STRONGLY prefer plate stacks over plates to bias towards using them
-        #init_weights = CovaryingSetNode.build_init_weights(
-        #    num_production_rules=len(production_rules))
-        init_weights = torch.ones(len(rule_types))
-        for k, rule in enumerate(rule_types):
-            if rule == "mug":
-                init_weights[k] = 0.5
-            elif rule == "plate":
-                init_weights[k] = 0.01
-            elif rule == "plate_stack":
-                init_weights[k] = 0.4
-            else:
-                raise NotImplementedError()
-        init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.unit_interval)
-        self.param_names = ["%s_production_weights" % name]
+        init_weights = pyro.param("%s_shelf_production_weights" % name, torch.tensor([0.5, 0.5, 0.5]), constraint=constraints.unit_interval)
+        self.param_names = ["%s_shelf_production_weights" % name]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=init_weights)
 
 
@@ -450,7 +369,7 @@ if __name__ == "__main__":
     torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
 
-    root_node = MugShelfLevel(name="test_shelf", shelf_name="shelf_1ower", pose=torch.tensor([0., 0., .175, 0., 0., 0.]))
+    root_node = MugShelf(name="shelf")
 
     plt.figure()
     from scene_generation.models.probabilistic_scene_grammar_model import *
