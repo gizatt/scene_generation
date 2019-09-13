@@ -7,9 +7,6 @@ import sys
 import yaml
 
 import matplotlib.pyplot as plt
-import meshcat
-import meshcat.geometry as meshcat_geom
-import meshcat.transformations as meshcat_tf
 import networkx as nx
 import numpy as np
 
@@ -24,7 +21,6 @@ from pyro import poutine
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironment, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
-from scene_generation.models.probabilistic_scene_grammar_model import *
 
 # Simple form, for now:
 # DishBin can independently produce each (up to maximum #) of the dishes or mugs.
@@ -82,7 +78,7 @@ def invert_tf(tf):
     return out
 
 
-class DishStack(IndependentSetNode, RootNode):
+class DishStack(IndependentSetNode):
     class DishProductionRule(ProductionRule):
         def __init__(self, name, object_name, offset_mean_prior_params, offset_var_prior_params):
             self.product_type = Plate_11in
@@ -139,7 +135,6 @@ class DishStack(IndependentSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            print("Scoring dish stack element with rel offset ", rel_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, name, pose):
@@ -155,7 +150,7 @@ class DishStack(IndependentSetNode, RootNode):
         for k in range(4):
             z_offset = k*vertical_spacing
             mean_init = torch.tensor([0., 0., z_offset, 0., 0., 0.])
-            var_init = torch.tensor([0.02, 0.02, 0.02, 0.01, 0.01, 0.01])
+            var_init = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
             
             # Pretty specific prior on mean and variance
             mean_prior_variance = (torch.ones(6)*0.01).double()
@@ -175,13 +170,13 @@ class DishStack(IndependentSetNode, RootNode):
                     offset_var_prior_params=(alpha, beta)))
 
         # Even production probs to start out
-        production_probs = torch.ones(len(production_rules)).double() / len(production_rules)
-        production_probs = pyro.param("dish_stack_production_weights", production_probs, constraint=constraints.simplex)
+        production_probs = torch.ones(len(production_rules)).double() * 0.4
+        production_probs = pyro.param("dish_stack_production_weights", production_probs, constraint=constraints.unit_interval)
         self.param_names = ["dish_stack_production_weights"]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
 
 
-class DishBin(CovaryingSetNode, RootNode):
+class DishBin(IndependentSetNode, RootNode):
     class ObjectProductionRule(ProductionRule):
         def __init__(self, name, product_type, offset_mean_prior_params, offset_var_prior_params):
             self.product_type = product_type
@@ -238,7 +233,6 @@ class DishBin(CovaryingSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            print("In scoring for %s, I recovered rel offset of " % self.name, rel_offset)
             return self.offset_dist.log_prob(rel_offset).sum()
 
     def __init__(self, name="dish_bin"):
@@ -261,11 +255,13 @@ class DishBin(CovaryingSetNode, RootNode):
         alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
         
         # MUG
+        rule_types = []
         for k in range(4):
             production_rules.append(self.ObjectProductionRule(
                 name="%s_prod_mug_1_%03d" % (name, k), product_type=Mug_1,
                 offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
                 offset_var_prior_params=(alpha, beta)))
+            rule_types.append("mug")
 #
         # PLATE
         for k in range(4):
@@ -273,21 +269,36 @@ class DishBin(CovaryingSetNode, RootNode):
                 name="%s_prod_plate_11in_%03d" % (name, k), product_type=Plate_11in,
                 offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
                 offset_var_prior_params=(alpha, beta)))
+            rule_types.append("plate")
         
         # PLATE STACK
-        production_rules.append(self.ObjectProductionRule(
-            name="%s_prod_dish_stack" % (name), product_type=DishStack,
-            offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-            offset_var_prior_params=(alpha, beta)))
+        for k in range(4):
+            production_rules.append(self.ObjectProductionRule(
+                name="%s_prod_dish_stack_%03d" % (name, k), product_type=DishStack,
+                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                offset_var_prior_params=(alpha, beta)))
+            rule_types.append("plate_stack")
 
-        init_weights = CovaryingSetNode.build_init_weights(
-            num_production_rules=len(production_rules)) # Even weight on any possible combination to start with
-        init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.simplex)
+        # STRONGLY prefer plate stacks over plates to bias towards using them
+        #init_weights = CovaryingSetNode.build_init_weights(
+        #    num_production_rules=len(production_rules))
+        init_weights = torch.ones(len(rule_types))
+        for k, rule in enumerate(rule_types):
+            if rule == "mug":
+                init_weights[k] = 0.5
+            elif rule == "plate":
+                init_weights[k] = 0.01
+            elif rule == "plate_stack":
+                init_weights[k] = 0.4
+            else:
+                raise NotImplementedError()
+        init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.unit_interval)
         self.param_names = ["%s_production_weights" % name]
-        CovaryingSetNode.__init__(self, name=name, production_rules=production_rules, init_weights=init_weights)
+        IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=init_weights)
 
 
 def convert_xyzrpy_to_quatxyz(pose):
+    assert(len(pose) == 6)
     pose = np.array(pose)
     out = np.zeros(7)
     out[-3:] = pose[:3]
@@ -301,8 +312,6 @@ class Plate_11in(TerminalNode):
         self.params = params
     
     def generate_yaml(self):
-        # Convert xyz rpy pose to qw qx qy qz x y z pose
-
         return {
             "class": "plate_11in",
             "params": self.params,
@@ -324,98 +333,6 @@ class Mug_1(TerminalNode):
             "pose": convert_xyzrpy_to_quatxyz(self.pose).tolist()
         }
 
-
-class LineBasicMaterial(meshcat_geom.Material):
-    def __init__(self, linewidth=1, color=0xffffff,
-                 linecap="round", linejoin="round"):
-        super(LineBasicMaterial, self).__init__()
-        self.linewidth = linewidth
-        self.color = color
-        self.linecap = linecap
-        self.linejoin = linejoin
-
-    def lower(self, object_data):
-        return {
-            u"uuid": self.uuid,
-            u"type": u"LineBasicMaterial",
-            u"color": self.color,
-            u"linewidth": self.linewidth,
-            u"linecap": self.linecap,
-            u"linejoin": self.linejoin
-        }
-
-def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_color_dict={}):
-    pruned_tree = remove_production_rules_from_parse_tree(parse_tree)
-
-    if color_by_score:
-        score, scores_by_node = parse_tree.get_total_log_prob()
-        colors = np.array([max(-1000., scores_by_node[node].item()) for node in pruned_tree.nodes]) 
-        colors -= min(colors)
-        colors /= max(colors)
-    elif len(node_class_to_color_dict.keys()) > 0:
-        colors = []
-        for node in pruned_tree.nodes:
-            if node.__class__.__name__ in node_class_to_color_dict.keys():
-                colors.append(node_class_to_color_dict[node.__class__.__name__])
-            else:
-                colors.append([1., 0., 0.])
-        colors = np.array(colors)
-    else:
-        colors = None
-
-    # Do actual drawing in meshcat, starting from root of tree
-    # So first find the root...
-    root_node = list(pruned_tree.nodes)[0]
-    while len(list(pruned_tree.predecessors(root_node))) > 0:
-        root_node = pruned_tree.predecessors(root_node)[0]
-
-    node_sphere_size = 0.01
-    vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
-    vis["parse_tree"].delete()
-    node_queue = [root_node]
-    def rgb_2_hex(rgb):
-            # Turn a list of R,G,B elements (any indexable list
-            # of >= 3 elements will work), where each element is
-            # specified on range [0., 1.], into the equivalent
-            # 24-bit value 0xRRGGBB.
-            val = 0
-            for i in range(3):
-                val += (256**(2 - i)) * int(255 * rgb[i])
-            return val
-    if colors is not None and len(colors.shape) == 1:
-        # Use cmap to get real colors
-        assert(colors.shape[0] == len(pruned_tree.nodes))
-        colors = plt.cm.get_cmap('jet')(colors)
-    while len(node_queue) > 0:
-        node = node_queue.pop(0)
-        children = list(pruned_tree.successors(node))
-        node_queue += children
-        # Draw this node
-        print(colors, colors.shape)
-        if colors is not None:
-            color = rgb_2_hex(colors[list(pruned_tree.nodes).index(node)])
-        else:
-            color = 0xff0000
-        vis["parse_tree"][node.name].set_object(
-            meshcat_geom.Sphere(node_sphere_size),
-            meshcat_geom.MeshToonMaterial(color=color))
-
-        # Get node global pose by going all the way up pose TF chain
-        tf = pose_to_tf_matrix(node.pose).detach().numpy()
-        vis["parse_tree"][node.name].set_transform(tf)
-
-        # Draw connections to children
-        verts = []
-        for child in children:
-            verts.append(node.pose[:3])
-            verts.append(child.pose[:3])
-        if len(verts) > 0:
-            verts = np.vstack(verts).T
-            vis["parse_tree"][node.name + "_child_connections"].set_object(
-                meshcat_geom.Line(meshcat_geom.PointsGeometry(verts),
-                                  LineBasicMaterial(linewidth=10, color=color)))
-
-
 if __name__ == "__main__":
     #seed = 52
     #torch.manual_seed(seed)
@@ -424,6 +341,7 @@ if __name__ == "__main__":
     torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
 
+    from scene_generation.models.probabilistic_scene_grammar_model import *
     for k in range(10):
         # Draw + plot a few generated environments and their trees
         start = time.time()
