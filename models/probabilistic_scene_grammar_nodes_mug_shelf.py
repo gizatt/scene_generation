@@ -2,6 +2,7 @@ from __future__ import print_function
 from copy import deepcopy
 from functools import partial
 import time
+import networkx
 import random
 import sys
 import yaml
@@ -168,15 +169,15 @@ class MugIntermediate(OrNode):
         self.pose = child_nodes[0].pose
 
 
-class MugShelfLevel(IndependentSetNode):
+class MugShelfLevel(IndependentSetNode, RootNode):
     class MugProductionRule(ProductionRule):
-        def __init__(self, name, shelf_name, offset_mean_prior_params, offset_var_prior_params):
+        def __init__(self, name, shelf_name, xyz_mean_prior_params, xyz_var_prior_params):
             self.product_type = MugIntermediate
             self.shelf_name = shelf_name
-            self.offset_mean_prior_params = offset_mean_prior_params
-            self.offset_var_prior_params = offset_var_prior_params
-            self.global_variable_names = ["%s_mug_pose_mean" % shelf_name,
-                                          "%s_mug_pose_var" % shelf_name]
+            self.xyz_mean_prior_params = xyz_mean_prior_params
+            self.xyz_var_prior_params = xyz_var_prior_params
+            self.global_variable_names = ["%s_mug_xyz_mean" % shelf_name,
+                                          "%s_mug_xyz_var" % shelf_name]
             ProductionRule.__init__(self,
                 name=name,
                 product_types=[self.product_type])
@@ -189,33 +190,33 @@ class MugShelfLevel(IndependentSetNode):
         def sample_global_variables(self, global_variable_store):
             # Handles class-general setup
             offset_mean_prior_dist = dist.Normal(
-                loc=self.offset_mean_prior_params[0],
-                scale=self.offset_mean_prior_params[1]).to_event(1)
-            offset_var_prior_dist = dist.InverseGamma(concentration=self.offset_var_prior_params[0],
-                                                      rate=self.offset_var_prior_params[1]).to_event(1)
+                loc=self.xyz_mean_prior_params[0],
+                scale=self.xyz_mean_prior_params[1]).to_event(1)
+            offset_var_prior_dist = dist.InverseGamma(concentration=self.xyz_var_prior_params[0],
+                                                      rate=self.xyz_var_prior_params[1]).to_event(1)
             offset_mean = global_variable_store.sample_global_variable(
-                "%s_mug_pose_mean" % self.shelf_name,
+                "%s_mug_xyz_mean" % self.shelf_name,
                 offset_mean_prior_dist).double()
             offset_var = global_variable_store.sample_global_variable(
-                "%s_mug_pose_var" % self.shelf_name, offset_var_prior_dist).double()
-            self.offset_dist = dist.Normal(loc=offset_mean, scale=offset_var).to_event(1)
+                "%s_mug_xyz_var" % self.shelf_name, offset_var_prior_dist).double()
+            self.xyz_offset_dist = dist.Normal(loc=offset_mean, scale=offset_var).to_event(1)
 
         def sample_products(self, parent, obs_products=None):
             if obs_products is not None:
                 assert len(obs_products) == 1 and isinstance(obs_products[0], Plate_11in)
-                obs_rel_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose) 
+                obs_rel_xyz_offset = self._recover_rel_offset_from_abs_offset(parent, obs_products[0].pose)[:3]
                 rel_offset = pyro.sample("%s_mug_offset" % (self.name),
-                                         self.offset_dist, obs=obs_rel_offset)
+                                         self.xyz_offset_dist, obs=obs_rel_xyz_offset)
                 return obs_products
             else:
-                rel_offset = pyro.sample("%s_mug_offset" % (self.name),
-                                         self.offset_dist).detach()
-                # Chain relative offset on top of current pose in world
-                my_pose_tf = pose_to_tf_matrix(parent.pose)
-                parent_pose_tf = pose_to_tf_matrix(parent.pose)
-                my_pose_in_world_tf = torch.mm(parent_pose_tf, my_pose_tf)
+                rel_xyz_offset = pyro.sample("%s_mug_offset" % (self.name),
+                                             self.xyz_offset_dist)[:3].detach()
+                rel_offset = torch.zeros(6).double()
+                rel_offset[:3] = rel_xyz_offset[:3]
                 offset_tf = pose_to_tf_matrix(rel_offset)
-                abs_offset = tf_matrix_to_pose(torch.mm(my_pose_in_world_tf, offset_tf))
+                # Chain relative offset on top of current pose in world
+                parent_pose_tf = pose_to_tf_matrix(parent.pose)
+                abs_offset = tf_matrix_to_pose(torch.mm(parent_pose_tf, offset_tf))
                 return [self.product_type(name=self.name + "_mug", pose=abs_offset)]
 
         def score_products(self, parent, products):
@@ -223,64 +224,64 @@ class MugShelfLevel(IndependentSetNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            R = pose_to_tf_matrix(rel_offset)[:3, :3]
-            option_1 = self.offset_dist.log_prob(rel_offset).sum()
-            # Try alternative
-            other_rel_offset = torch.empty(6).double()
-            other_rel_offset[:3] = rel_offset[:3]
-            # Flip to an equivalent RPY and check its log prob as well
-            if rel_offset[3] > 0:
-                other_rel_offset[3] = rel_offset[3] - 3.1415
-            else:
-                other_rel_offset[3] = rel_offset[3] + 3.1415
-            if rel_offset[4] > 0:
-                other_rel_offset[4] = rel_offset[4] - 3.1415
-            else:
-                other_rel_offset[4] = rel_offset[4] + 3.1415
-            if rel_offset[5] > 0:
-                other_rel_offset[5] = rel_offset[5] - 3.1415
-            else:
-                other_rel_offset[5] = rel_offset[5] + 3.1415
-            R = pose_to_tf_matrix(other_rel_offset)[:3, :3]
-            option_2 = self.offset_dist.log_prob(other_rel_offset).sum()
-            return torch.max(option_1, option_2)
+            return self.xyz_offset_dist.log_prob(rel_offset[:3])
 
-    def __init__(self, name, pose):
+    
+    class MugShelfLevelSelfProductionRule(ProductionRule):
+        def __init__(self, name):
+            ProductionRule.__init__(self,
+                name=name,
+                product_types=[MugShelfLevel])
+
+        def sample_products(self, parent, obs_products=None):
+            # Observation should be absolute position of the product
+            if obs_products is not None:
+                assert(len(obs_products) == 1 and isinstance(obs_products[0], MugShelfLevel))
+                return obs_products
+            else:
+                return [MugShelfLevel(name="%s_%s" % (self.name, "recurse"), pose=parent.pose + torch.tensor([0., 0., 0.01, 0., 0., 0.]), shelf_name=parent.shelf_name)]
+
+        def score_products(self, parent, products):
+            if len(products) != 1 or not isinstance(products[0], MugShelfLevel):
+                return torch.tensor(-np.inf)
+            return torch.tensor(0.).double()
+
+
+    def __init__(self, name, shelf_name, pose):
         self.pose = pose
-        # Represent each dish's relative position to the
-        # stack origin with a diagonal Normal distribution.
-        
-        # Key: Class name (from above)
-        # Value: Nominal (Mean, Variance) used to set up prior distributions
+         # Shelf name is conserved for all recursive shelves generated from this shelf, so they can share some params
+        self.shelf_name = shelf_name
 
         production_rules = []
-        vertical_spacing = 0.01
-        for k in range(4):
-            z_offset = k*vertical_spacing
-            mean_init = torch.tensor([0., 0., z_offset, 0., 0., 0.])
-            var_init = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
-            
-            # Pretty specific prior on mean and variance
-            mean_prior_variance = (torch.ones(6)*0.01).double()
-            # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
-            # beta / (alpha - 1) = var
-            # (beta / var) + 1 = alpha
-            # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
-            var_prior_width_fact = 1
-            assert(var_prior_width_fact > 0.)
-            beta = var_prior_width_fact*torch.tensor(var_init).double()
-            alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
-            production_rules.append(
-                self.DishProductionRule(
-                    name="%s_prod_dish_%d" % (name, k),
-                    object_name="stack_%d" % k,
-                    offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                    offset_var_prior_params=(alpha, beta)))
+
+        # Mug production
+        mean_init = torch.tensor([0., 0., 0.])
+        var_init = torch.tensor([0.02, 0.05, 0.01])
+        
+        # Pretty specific prior on mean and variance
+        mean_prior_variance = (torch.ones(3)*0.01).double()
+        # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
+        # beta / (alpha - 1) = var
+        # (beta / var) + 1 = alpha
+        # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
+        var_prior_width_fact = 1
+        assert(var_prior_width_fact > 0.)
+        beta = var_prior_width_fact*torch.tensor(var_init).double()
+        alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
+        production_rules.append(
+            self.MugProductionRule(
+                name="%s_prod_mug" % (name),
+                shelf_name=self.shelf_name,
+                xyz_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                xyz_var_prior_params=(alpha, beta)))
+
+        # Self-production for recursion
+        production_rules.append(self.MugShelfLevelSelfProductionRule("%s_prod_self" % name))
 
         # Even production probs to start out
-        production_probs = torch.ones(len(production_rules)).double() * 0.4
-        production_probs = pyro.param("dish_stack_production_weights", production_probs, constraint=constraints.unit_interval)
-        self.param_names = ["dish_stack_production_weights"]
+        production_probs = torch.tensor([1.0, 0.5])
+        production_probs = pyro.param("mug_shelf_%s_production_weights" % self.shelf_name, production_probs, constraint=constraints.unit_interval)
+        self.param_names = ["mug_shelf_%s_production_weights" % self.shelf_name]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
 
 
@@ -449,8 +450,9 @@ if __name__ == "__main__":
     torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
 
-    root_node = MugIntermediate("test", torch.tensor([0., 0., 0.25, 0., 0., 0.]))
+    root_node = MugShelfLevel(name="test_shelf", shelf_name="shelf_1ower", pose=torch.tensor([0., 0., .175, 0., 0., 0.]))
 
+    plt.figure()
     from scene_generation.models.probabilistic_scene_grammar_model import *
     for k in range(10):
         # Draw + plot a few generated environments and their trees
@@ -476,6 +478,10 @@ if __name__ == "__main__":
         draw_parse_tree_meshcat(parse_tree, color_by_score=True)
         print("Our score: %f" % score)
         print("Trace score: %f" % trace.log_prob_sum())
+
+        plt.gca().clear()
+        networkx.draw_networkx(parse_tree, labels={n:n.name for n in parse_tree})
+        plt.pause(1E-3)
         #assert(abs(score - trace.log_prob_sum()) < 0.001)
         input("Press enter to continue...")
         #time.sleep(1)
