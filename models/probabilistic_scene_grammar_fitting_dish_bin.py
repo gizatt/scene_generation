@@ -57,7 +57,7 @@ if __name__ == "__main__":
     
     plt.figure().set_size_inches(15, 10)
     #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(4)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5)
+    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=4, num_attempts=5)
     print("Parsed %d trees" % len(parse_trees))
     #print("*****************\n0: ", parse_trees[0].nodes)
     #print("*****************\n1: ", parse_trees[1].nodes)

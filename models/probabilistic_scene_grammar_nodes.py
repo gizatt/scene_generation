@@ -98,6 +98,8 @@ class Node(object):
         if not hasattr(self, "global_variable_names"):
             return []
         return self.global_variable_names
+    def seed_from_candidate_nodes(self, child_nodes):
+        pass
 
 class RootNode(Node):
     pass

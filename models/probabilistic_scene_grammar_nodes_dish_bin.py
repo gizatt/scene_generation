@@ -135,7 +135,35 @@ class DishStack(IndependentSetNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            return self.offset_dist.log_prob(rel_offset).sum()
+            #print("Observed rel offset ", rel_offset)
+            R = pose_to_tf_matrix(rel_offset)[:3, :3]
+            #print("As a rotation matrix: ", )
+            #print("As an angle: ", torch.acos( (torch.trace(R) - 1)/2.))
+            #print("Rot axis: ", [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+            option_1 = self.offset_dist.log_prob(rel_offset).sum()
+            # Try alternative
+            other_rel_offset = torch.empty(6).double()
+            other_rel_offset[:3] = rel_offset[:3]
+            # Flip to an equivalent RPY and check its log prob as well
+            if rel_offset[3] > 0:
+                other_rel_offset[3] = rel_offset[3] - 3.1415
+            else:
+                other_rel_offset[3] = rel_offset[3] + 3.1415
+            if rel_offset[4] > 0:
+                other_rel_offset[4] = rel_offset[4] - 3.1415
+            else:
+                other_rel_offset[4] = rel_offset[4] + 3.1415
+            if rel_offset[5] > 0:
+                other_rel_offset[5] = rel_offset[5] - 3.1415
+            else:
+                other_rel_offset[5] = rel_offset[5] + 3.1415
+            #print("Other option:")
+            R = pose_to_tf_matrix(other_rel_offset)[:3, :3]
+            #print("As a rotation matrix: ", )
+            #print("As an angle: ", torch.acos( (torch.trace(R) - 1)/2.))
+            #print("Rot axis: ", [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+            option_2 = self.offset_dist.log_prob(other_rel_offset).sum()
+            return torch.max(option_1, option_2)
 
     def __init__(self, name, pose):
         self.pose = pose
@@ -146,11 +174,9 @@ class DishStack(IndependentSetNode):
         # Value: Nominal (Mean, Variance) used to set up prior distributions
 
         production_rules = []
-        vertical_spacing = 0.01
         for k in range(4):
-            z_offset = k*vertical_spacing
-            mean_init = torch.tensor([0., 0., z_offset, 0., 0., 0.])
-            var_init = torch.tensor([0.01, 0.01, 0.01, 0.01, 0.01, 0.01])
+            mean_init = torch.tensor([0., 0., 0., 0., 0., 0.])
+            var_init = torch.tensor([0.025, 0.025, 0.025, 0.1, 2.0, 0.1])
             
             # Pretty specific prior on mean and variance
             mean_prior_variance = (torch.ones(6)*0.01).double()
@@ -170,11 +196,21 @@ class DishStack(IndependentSetNode):
                     offset_var_prior_params=(alpha, beta)))
 
         # Even production probs to start out
-        production_probs = torch.ones(len(production_rules)).double() * 0.4
+        production_probs = torch.tensor([1., 0.8, 0.5, 0.3]).double()
         production_probs = pyro.param("dish_stack_production_weights", production_probs, constraint=constraints.unit_interval)
         self.param_names = ["dish_stack_production_weights"]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
 
+    def seed_from_candidate_nodes(self, child_nodes):
+        # Adopt the average pose of the child nodes.
+        # (All possible candidate children will have pose in this model type.)
+        avg_pose = torch.zeros(6).double()
+        for child in child_nodes:
+            if not isinstance(child, Plate_11in):
+                return
+            avg_pose = avg_pose + child.pose
+        avg_pose = avg_pose / len(child_nodes)
+        self.pose = avg_pose
 
 class DishBin(IndependentSetNode, RootNode):
     class ObjectProductionRule(ProductionRule):
@@ -272,7 +308,7 @@ class DishBin(IndependentSetNode, RootNode):
             rule_types.append("plate")
         
         # PLATE STACK
-        for k in range(4):
+        for k in range(1):
             production_rules.append(self.ObjectProductionRule(
                 name="%s_prod_dish_stack_%03d" % (name, k), product_type=DishStack,
                 offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
@@ -287,9 +323,9 @@ class DishBin(IndependentSetNode, RootNode):
             if rule == "mug":
                 init_weights[k] = 0.5
             elif rule == "plate":
-                init_weights[k] = 0.01
+                init_weights[k] = 0.1
             elif rule == "plate_stack":
-                init_weights[k] = 0.4
+                init_weights[k] = 0.5
             else:
                 raise NotImplementedError()
         init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.unit_interval)
