@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     # CONFIGURATION STUFF
     root_node_type = DishBin
-    output_dir = "../data/table_setting/icra_runs/dish_bin/test/"
+    output_dir = "../data/dish_bins/icra_runs/test/2_with_inter_heuristic/"
     os.system("mkdir -p %s" % output_dir)
 
 
@@ -55,25 +55,25 @@ if __name__ == "__main__":
     print("%d test examples" % len(test_dataset))
 
     
-    plt.figure().set_size_inches(15, 10)
-    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(4)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=4, num_attempts=5)
-    print("Parsed %d trees" % len(parse_trees))
-    #print("*****************\n0: ", parse_trees[0].nodes)
-    #print("*****************\n1: ", parse_trees[1].nodes)
-    ##print("*****************\n2: ", parse_trees[2].nodes)
-    ##print("*****************\n3: ", parse_trees[3].nodes)
-    for k in range(4):
-        yaml_env = convert_tree_to_yaml_env(parse_trees[k])
-        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
-        draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
-        print(parse_trees[k].get_total_log_prob())
-        input("Press enter to continue...")
-        
-    #plt.show()
-    sys.exit(0)
+    #plt.figure().set_size_inches(15, 10)
+    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(4)]
+    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=4, num_attempts=5)
+    #print("Parsed %d trees" % len(parse_trees))
+    ##print("*****************\n0: ", parse_trees[0].nodes)
+    ##print("*****************\n1: ", parse_trees[1].nodes)
+    ###print("*****************\n2: ", parse_trees[2].nodes)
+    ###print("*****************\n3: ", parse_trees[3].nodes)
+    #for k in range(4):
+    #    yaml_env = convert_tree_to_yaml_env(parse_trees[k])
+    #    DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+    #    draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
+    #    print(parse_trees[k].get_total_log_prob())
+    #    input("Press enter to continue...")
+    #    
+    ##plt.show()
+    #sys.exit(0)
 
-    use_writer = False
+    use_writer = True
 
     log_dir = output_dir + "fixed_elbo_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     total_step = 0
     pyro.get_param_store().save(output_dir + "param_store_initial.pyro")
     f_history = []
-    for step in range(500):
+    for step in range(2000):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
         # unconstrianed value we optimize, so we need to regenerate the constrained value.
@@ -150,7 +150,7 @@ if __name__ == "__main__":
         if len(f_history) > 30:
             f_history.pop(0)
 
-        if (total_step % 10 == 0):
+        if (total_step % 2 == 0):
             # Evaluate on a few test data points
             loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs)
             score_test_history.append(loss_test)
@@ -163,32 +163,23 @@ if __name__ == "__main__":
             if use_writer:
                 write_score_info(total_step, "test_", writer, loss_test, all_score_infos_test)
 
-                # Also generate a few example environments
-                # Generate a ground truth test environment
-                plt.figure().set_size_inches(20, 20)
-                for k in range(4):
-                    plt.subplot(2, 2, k+1)
-                    parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
-                    yaml_env = convert_tree_to_yaml_env(parse_tree)
-                    try:
-                        DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=plt.gca())
-                    except:
-                        print("Unhandled exception in drawing yaml env")
-                    draw_parse_tree(parse_tree, label_name=True, label_score=True, alpha=0.75)
-                writer.add_figure("generated_envs", plt.gcf(), total_step, close=True)
+                parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
+                yaml_env = convert_tree_to_yaml_env(parse_tree)
+                DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+                draw_parse_tree_meshcat(parse_tree, color_by_score=True)
 
                 # Also parse some test environments
-                test_envs = [random.choice(test_dataset) for k in range(4)]
-                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach())
-                plt.figure().set_size_inches(20, 20)
-                for k in range(4):
-                    plt.subplot(2, 2, k+1)
-                    try:
-                        DrawYamlEnvironmentPlanarForTableSettingPretty(test_envs[k], ax=plt.gca())
-                    except:
-                        print("Unhandled exception in drawing yaml env")
-                    draw_parse_tree(test_parses[k], label_name=True, label_score=True, alpha=0.75)
-                writer.add_figure("parsed_test_envs", plt.gcf(), total_step, close=True)
+                #test_envs = [random.choice(test_dataset) for k in range(4)]
+                #test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach())
+                #plt.figure().set_size_inches(20, 20)
+                #for k in range(4):
+                #    plt.subplot(2, 2, k+1)
+                #    try:
+                #        DrawYamlEnvironmentPlanarForTableSettingPretty(test_envs[k], ax=plt.gca())
+                #    except:
+                #        print("Unhandled exception in drawing yaml env")
+                #    draw_parse_tree(test_parses[k], label_name=True, label_score=True, alpha=0.75)
+                #writer.add_figure("parsed_test_envs", plt.gcf(), total_step, close=True)
 
         all_param_state = {name: pyro.param(name).detach().cpu().numpy().copy() for name in pyro.get_param_store().keys()}
         if use_writer:

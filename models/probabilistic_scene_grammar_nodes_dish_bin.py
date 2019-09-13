@@ -175,8 +175,8 @@ class DishStack(IndependentSetNode):
 
         production_rules = []
         for k in range(4):
-            mean_init = torch.tensor([0., 0., 0., 0., 0., 0.])
-            var_init = torch.tensor([0.025, 0.025, 0.025, 0.1, 2.0, 0.1])
+            mean_init = torch.tensor([0., 0., 0., 0., 0., 0.]).double()
+            var_init = torch.tensor([0.025, 0.025, 0.025, 0.1, 2.0, 0.1]).double()
             
             # Pretty specific prior on mean and variance
             mean_prior_variance = (torch.ones(6)*0.01).double()
@@ -186,13 +186,13 @@ class DishStack(IndependentSetNode):
             # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
             var_prior_width_fact = 1
             assert(var_prior_width_fact > 0.)
-            beta = var_prior_width_fact*torch.tensor(var_init).double()
+            beta = var_prior_width_fact*var_init
             alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
             production_rules.append(
                 self.DishProductionRule(
                     name="%s_prod_dish_%d" % (name, k),
                     object_name="stack_%d" % k,
-                    offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                    offset_mean_prior_params=(mean_init, mean_prior_variance),
                     offset_var_prior_params=(alpha, beta)))
 
         # Even production probs to start out
@@ -269,7 +269,35 @@ class DishBin(IndependentSetNode, RootNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            return self.offset_dist.log_prob(rel_offset).sum()
+            #print("Observed rel offset ", rel_offset)
+            R = pose_to_tf_matrix(rel_offset)[:3, :3]
+            #print("As a rotation matrix: ", )
+            #print("As an angle: ", torch.acos( (torch.trace(R) - 1)/2.))
+            #print("Rot axis: ", [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+            option_1 = self.offset_dist.log_prob(rel_offset).sum()
+            # Try alternative
+            other_rel_offset = torch.empty(6).double()
+            other_rel_offset[:3] = rel_offset[:3]
+            # Flip to an equivalent RPY and check its log prob as well
+            if rel_offset[3] > 0:
+                other_rel_offset[3] = rel_offset[3] - 3.1415
+            else:
+                other_rel_offset[3] = rel_offset[3] + 3.1415
+            if rel_offset[4] > 0:
+                other_rel_offset[4] = rel_offset[4] - 3.1415
+            else:
+                other_rel_offset[4] = rel_offset[4] + 3.1415
+            if rel_offset[5] > 0:
+                other_rel_offset[5] = rel_offset[5] - 3.1415
+            else:
+                other_rel_offset[5] = rel_offset[5] + 3.1415
+            #print("Other option:")
+            R = pose_to_tf_matrix(other_rel_offset)[:3, :3]
+            #print("As a rotation matrix: ", )
+            #print("As an angle: ", torch.acos( (torch.trace(R) - 1)/2.))
+            #print("Rot axis: ", [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+            option_2 = self.offset_dist.log_prob(other_rel_offset).sum()
+            return torch.max(option_1, option_2)
 
     def __init__(self, name="dish_bin"):
         self.pose = torch.tensor([0.0, 0.0, 0., 0., 0., 0.])
@@ -278,16 +306,16 @@ class DishBin(IndependentSetNode, RootNode):
         production_rules = []
 
         mean_init = torch.tensor([0., 0., 0.1, 0., 0., 0.]).double()
-        var_init = torch.tensor([0.05, 0.05, 0.05, 2., 2., 2.]).double()
+        var_init = torch.tensor([0.1, 0.1, 0.1, 2., 2., 2.]).double()
         # Reasonably broad prior on the mean
         mean_prior_variance = (torch.ones(6)*0.05).double()
         # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
         # beta / (alpha - 1) = var
         # (beta / var) + 1 = alpha
         # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
-        var_prior_width_fact = 10.
+        var_prior_width_fact = 1.
         assert(var_prior_width_fact > 0.)
-        beta = var_prior_width_fact*torch.tensor(var_init).double()
+        beta = var_prior_width_fact*var_init
         alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
         
         # MUG
@@ -295,23 +323,23 @@ class DishBin(IndependentSetNode, RootNode):
         for k in range(4):
             production_rules.append(self.ObjectProductionRule(
                 name="%s_prod_mug_1_%03d" % (name, k), product_type=Mug_1,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                offset_mean_prior_params=(mean_init, mean_prior_variance),
                 offset_var_prior_params=(alpha, beta)))
             rule_types.append("mug")
 #
         # PLATE
-        for k in range(4):
-            production_rules.append(self.ObjectProductionRule(
-                name="%s_prod_plate_11in_%03d" % (name, k), product_type=Plate_11in,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                offset_var_prior_params=(alpha, beta)))
-            rule_types.append("plate")
+        #for k in range(4):
+        #    production_rules.append(self.ObjectProductionRule(
+        #        name="%s_prod_plate_11in_%03d" % (name, k), product_type=Plate_11in,
+        #        offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+        #        offset_var_prior_params=(alpha, beta)))
+        #    rule_types.append("plate")
         
         # PLATE STACK
-        for k in range(1):
+        for k in range(4):
             production_rules.append(self.ObjectProductionRule(
                 name="%s_prod_dish_stack_%03d" % (name, k), product_type=DishStack,
-                offset_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                offset_mean_prior_params=(mean_init, mean_prior_variance),
                 offset_var_prior_params=(alpha, beta)))
             rule_types.append("plate_stack")
 
@@ -325,7 +353,7 @@ class DishBin(IndependentSetNode, RootNode):
             elif rule == "plate":
                 init_weights[k] = 0.1
             elif rule == "plate_stack":
-                init_weights[k] = 0.5
+                init_weights[k] = 0.25
             else:
                 raise NotImplementedError()
         init_weights = pyro.param("%s_production_weights" % name, init_weights, constraint=constraints.unit_interval)
