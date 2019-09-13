@@ -344,6 +344,25 @@ def BuildMbpAndSgFromYamlEnvironment(
         mbp.WeldFrames(world_body.body_frame(), mbp.GetBodyByName("bus_tub_01_decomp_body_link").body_frame(),
                        RigidTransform(p=[0.0, 0., 0.], rpy=RollPitchYaw(np.pi/2., 0., 0.)))
         mbp.AddForceElement(UniformGravityFieldElement())
+    elif base_environment_type == "mug_shelf":
+        ground_shape = Box(2., 2., 2.)
+        ground_body = mbp.AddRigidBody("ground", SpatialInertia(
+            mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
+            G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
+        mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
+                       RigidTransform(p=[0, 0, -1]))
+        mbp.RegisterVisualGeometry(
+            ground_body, RigidTransform.Identity(), ground_shape, "ground_vis",
+            np.array([0.5, 0.5, 0.5, 1.]))
+        mbp.RegisterCollisionGeometry(
+            ground_body, RigidTransform.Identity(), ground_shape, "ground_col",
+            CoulombFriction(0.9, 0.8))
+        # Add the dish bin itself
+        dish_bin_model = "/home/gizatt/projects/scene_generation/models/dish_models/shelf_two_levels.sdf"
+        parser.AddModelFromFile(dish_bin_model)
+        mbp.WeldFrames(world_body.body_frame(), mbp.GetBodyByName("shelf_origin_body").body_frame(),
+                       RigidTransform(p=[0.0, 0, 0.0]))
+        mbp.AddForceElement(UniformGravityFieldElement())
     else:
         raise ValueError("Unknown base environment type.")
 
@@ -439,7 +458,7 @@ def BuildMbpAndSgFromYamlEnvironment(
                 color, CoulombFriction(0.9, 0.8))
 
         else:
-            assert(base_environment_type is "dish_bin")
+            assert(base_environment_type in ["dish_bin", "mug_shelf"])
             candidate_model_files = {
                 "mug_1": "/home/gizatt/projects/scene_generation/models/dish_models/mug_1_decomp/mug_1_decomp.urdf",
                 "plate_11in": "/home/gizatt/projects/scene_generation/models/dish_models/plate_11in_decomp/plate_11in_decomp.urdf",
@@ -459,7 +478,7 @@ def BuildMbpAndSgFromYamlEnvironment(
 
     # TODO(gizatt) Eventually, we'll be able to do this default
     # setup stuff before Finalize()... yuck...
-    if base_environment_type is "dish_bin":
+    if base_environment_type in ["dish_bin", "mug_shelf"]:
         q0 = []
         for k in range(yaml_environment["n_objects"]):
             pose = yaml_environment["obj_%04d" % k]["pose"]
@@ -522,7 +541,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                 body_theta_index = mbp.GetJointByName("body_{}_theta".format(i)).position_start()
                 prog.AddBoundingBoxConstraint(0., 1., q_dec[body_x_index])
                 prog.AddBoundingBoxConstraint(0., 1, q_dec[body_z_index])
-        elif base_environment_type in ["dish_bin"]:
+        elif base_environment_type in ["dish_bin", "mug_shelf"]:
             pass
         else:
             raise NotImplementedError()
@@ -578,7 +597,7 @@ def ProjectEnvironmentToFeasibility(yaml_environment, base_environment_type,
                         output_qf[z_index],
                         output_qf[t_index]]
                 output_dict["obj_%04d" % k]["pose"] = pose
-        elif base_environment_type in ["dish_bin"]:
+        elif base_environment_type in ["dish_bin", "mug_shelf"]:
             for k in range(yaml_environment["n_objects"]):
                 offset = (k*7)
                 pose = output_qf[offset:(offset+7)]
