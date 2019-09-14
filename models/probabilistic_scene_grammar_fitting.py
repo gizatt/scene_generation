@@ -77,7 +77,7 @@ def score_sample_sync(env, root_node_type, guide_gvs, outer_iterations=2, num_at
         *[[n + "_est" for n in node.get_global_variable_names()] for node in observed_tree.nodes])
     return score_info, active_param_names
 
-def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, baseline=0., outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
+def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_state, param_store_name, eval_backward, output_queue, synchro_prims, baseline=0., threshold_joint_score=None, outer_iterations=2, num_attempts=2, max_iters_for_hyper_parse_tree=8):
     try:
         post_parsing_barrier, grads_reset_event, done_event = synchro_prims
         
@@ -114,6 +114,10 @@ def score_sample_async(thread_id, env, root_node_type, guide_gvs, shared_param_s
         f = joint_score - latents_score
         total_score = -(latents_score * (f.detach() - baseline) + f)
         print("Obs tree with joint score %f, latents score %f, f %f, total score %f" % (joint_score, latents_score, f, total_score))
+
+        if (threshold_joint_score is not None and joint_score < threshold_joint_score):
+            print("Ignoring this example")
+            eval_backward = False
 
         if eval_backward:
             total_score.backward(retain_graph=True)
@@ -155,7 +159,7 @@ def score_subset_of_dataset_sync(dataset, n, root_node_type, guide_gvs):
     loss = torch.stack(losses).mean()
     return loss, all_score_infos, active_param_names
 
-def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8, baseline=0., outer_iterations=2, num_attempts=2):
+def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8, baseline=0., threshold_joint_score=None, outer_iterations=2, num_attempts=2):
     # Select out minibatch
     envs = []
     for p_k in range(n):
@@ -199,7 +203,7 @@ def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimiz
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims, baseline, outer_iterations, num_attempts, max_iters_for_hyper_parse_tree))
+                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims, baseline, threshold_joint_score, outer_iterations, num_attempts, max_iters_for_hyper_parse_tree))
             p.start()
             processes.append(p)
         # Wait for them to return. The detached guide gvs members

@@ -144,6 +144,7 @@ if __name__ == "__main__":
     total_step = 0
     pyro.get_param_store().save(output_dir + "param_store_initial.pyro")
     f_history = []
+    joint_score_history = []
     for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
@@ -153,14 +154,18 @@ if __name__ == "__main__":
 
         if len(f_history) > 0:
             baseline = torch.stack(f_history).mean()
+            threshold_joint_score = torch.stack(joint_score_history).mean() - 50.
         else:
             baseline=0.
-        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, optimizer=optimizer, baseline=baseline, outer_iterations=3, num_attempts=3)
+            threshold_joint_score = 0.
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, optimizer=optimizer, baseline=baseline, threshold_joint_score=threshold_joint_score, outer_iterations=3, num_attempts=3)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
         f_history.append(torch.stack([score_info.f for score_info in all_score_infos]).mean())
+        joint_score_history.append(torch.stack([score_info.joint_score for score_info in all_score_infos]).mean())
         if len(f_history) > 30:
             f_history.pop(0)
+            joint_score_history.pop(0)
 
         if (total_step % 2 == 0):
             # Evaluate on a few test data points
@@ -182,7 +187,7 @@ if __name__ == "__main__":
 
                 # Also parse some test environments
                 test_envs = [random.choice(test_dataset) for k in range(1)]
-                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach(), outer_iterations=3, num_attempts=3)
+                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach(), outer_iterations=5, num_attempts=5)
                 yaml_env = convert_tree_to_yaml_env(test_parses[0])
                 DrawYamlEnvironment(yaml_env, base_environment_type="mug_shelf", alpha=0.5)
                 draw_parse_tree_meshcat(test_parses[0], color_by_score=True)
