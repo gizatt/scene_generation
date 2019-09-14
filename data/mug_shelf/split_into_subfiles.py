@@ -22,7 +22,7 @@ inds = list(range(num_envs))
 random.shuffle(inds)
 
 end_train_ind = 60 # int(train_fraction * num_envs)
-start_test_ind = end_train_ind + 1
+start_test_ind = end_train_ind
 
 print("Splitting into %d train, %d test in files of size %d" % (
     int(end_train_ind),
