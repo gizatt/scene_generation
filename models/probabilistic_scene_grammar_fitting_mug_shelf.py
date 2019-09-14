@@ -112,7 +112,7 @@ if __name__ == "__main__":
     best_loss_yet = np.infty
 
     # setup the optimizer
-    adam_params = {"lr": 0.01, "betas": (0.8, 0.95)}
+    adam_params = {"lr": 0.001, "betas": (0.8, 0.95)}
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     # Ensure everything in pyro param store has zero grads
     for p in all_params_to_optimize:
@@ -121,12 +121,12 @@ if __name__ == "__main__":
         p.share_memory_()
         p.grad.share_memory_()
 
-    #def per_param_callable(module_name, param_name):
-    #    if "var" in param_name or "weights" in param_name:
-    #        return {"lr": 0.1, "betas": (0.8, 0.95)}
-    #    else:
-    #        return {"lr": 0.01, "betas": (0.8, 0.95)}
-    optimizer = Adam(adam_params)
+    def per_param_callable(module_name, param_name):
+        if "var" in param_name or "weights" in param_name:
+            return {"lr": 0.01, "betas": (0.8, 0.95)}
+        else:
+            return {"lr": 0.001, "betas": (0.8, 0.95)}
+    optimizer = Adam(per_param_callable)
     baseline = 0.
 
     def write_score_info(i, prefix, writer, loss, all_score_infos):
