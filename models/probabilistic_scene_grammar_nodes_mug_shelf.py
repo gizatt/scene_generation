@@ -162,9 +162,9 @@ class MugIntermediate(OrNode):
     def seed_from_candidate_nodes(self, child_nodes):
         # Adopt the pose of the child.
         # (All possible candidate children will have pose in this model type.)
-        if len(child_nodes) != 1:
+        if len(child_nodes) != 1 or not isinstance(child_nodes[0], Mug_1):
             return
-        self.pose = child_nodes[0].pose
+        self.pose = child_nodes[0].pose.clone()
 
 
 class MugShelfLevel(IndependentSetNode):
@@ -210,7 +210,7 @@ class MugShelfLevel(IndependentSetNode):
                 return obs_products
             else:
                 rel_xyz_offset = pyro.sample("%s_mug_offset" % (self.name),
-                                             self.xyz_offset_dist)[:3].detach()
+                                             self.xyz_offset_dist).detach()
                 rel_offset = torch.zeros(6).double()
                 rel_offset[:3] = rel_xyz_offset[:3]
                 offset_tf = pose_to_tf_matrix(rel_offset)
@@ -239,7 +239,7 @@ class MugShelfLevel(IndependentSetNode):
                 assert(len(obs_products) == 1 and isinstance(obs_products[0], MugShelfLevel))
                 return obs_products
             else:
-                return [MugShelfLevel(name="%s_%s" % (self.name, "recurse"), pose=parent.pose, shelf_name=parent.shelf_name)]
+                return [MugShelfLevel(name="%s_%s" % (self.name, "recurse"), pose=parent.pose.clone(), shelf_name=parent.shelf_name)]
 
         def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], MugShelfLevel):
@@ -248,7 +248,7 @@ class MugShelfLevel(IndependentSetNode):
 
 
     def __init__(self, name, shelf_name, pose):
-        self.pose = pose
+        self.pose = pose.clone()
          # Shelf name is conserved for all recursive shelves generated from this shelf, so they can share some params
         self.shelf_name = shelf_name
 
@@ -256,7 +256,7 @@ class MugShelfLevel(IndependentSetNode):
 
         # Mug production
         mean_init = torch.tensor([0., 0., 0.])
-        var_init = torch.tensor([0.04, 0.07, 0.01])
+        var_init = torch.tensor([0.02, 0.04, 0.01])
         
         # Pretty specific prior on mean and variance
         mean_prior_variance = (torch.ones(3)*0.01).double()
@@ -292,7 +292,7 @@ class MugShelf(IndependentSetNode, RootNode):
         def __init__(self, name, pose, shelf_name):
             self.product_type = MugShelfLevel
             self.shelf_name = shelf_name
-            self.desired_pose = pose
+            self.desired_pose = pose.clone()
             ProductionRule.__init__(self,
                 name=name,
                 product_types=[self.product_type])
@@ -303,7 +303,7 @@ class MugShelf(IndependentSetNode, RootNode):
                 assert(len(obs_products) == 1 and isinstance(obs_products[0], self.product_type))
                 return obs_products
             else:
-                return [self.product_type(name="%s_shelf" % (self.name), pose=self.desired_pose, shelf_name=self.shelf_name)]
+                return [self.product_type(name="%s_shelf" % (self.name), pose=self.desired_pose.clone(), shelf_name=self.shelf_name)]
 
         def score_products(self, parent, products):
             if len(products) != 1 or not isinstance(products[0], self.product_type):
