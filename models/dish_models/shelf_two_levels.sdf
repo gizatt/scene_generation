@@ -1,0 +1,98 @@
+<sdf version='1.6'>
+  <model name='shelf'>
+
+
+  <link name='shelf_origin_body'>
+  <pose> 0 0 0 0 0 0</pose>
+
+  <visual name='right_wall'>
+    <pose> 0 0.15 0.175 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.15 0.016 0.35</size>
+      </box>
+    </geometry>
+  </visual>
+
+  <visual name='left_wall'>
+    <pose> 0 -0.15 0.175 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.15 0.016 0.35</size>
+      </box>
+    </geometry>
+  </visual>
+
+  <collision name='right_wall'>
+    <pose> 0 0.15 0.175 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.15 0.016 0.35</size>
+      </box>
+    </geometry>
+  </collision>
+
+  <collision name='left_wall'>
+    <pose> 0 -0.15 0.175 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.15 0.016 0.35</size>
+      </box>
+    </geometry>
+  </collision>
+
+  </link>
+
+
+  <link name='top_and_bottom'>
+  <pose> 0 0 0 0 0 0</pose>
+
+  <visual name='top'>
+    <pose> 0 0 0.3 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.14 0.3 0.016</size>
+      </box>
+    </geometry>
+  </visual>
+
+  <visual name='shelf_lower'>
+    <pose> 0 0 0.15 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.14 0.3 0.016</size>
+      </box>
+    </geometry>
+  </visual>
+
+  <collision name='top'>
+    <pose> 0 0 0.3 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.14 0.3 0.016</size>
+      </box>
+    </geometry>
+  </collision>
+
+  <collision name='shelf_lower'>
+    <pose> 0 0 0.15 0 0 0</pose>
+    <geometry>
+      <box>
+       <size>0.14 0.3 0.016</size>
+      </box>
+    </geometry>
+  </collision>
+
+ </link>
+
+
+
+  <!-- joint between bottom_top and world -->
+  <joint name='top_and_bottom_shelf_origin_body' type='fixed'>
+    <child>top_and_bottom</child>
+    <parent>shelf_origin_body</parent>
+    <pose>0 0 0 0 0 0 </pose>
+  </joint>
+
+  </model>
+</sdf>
