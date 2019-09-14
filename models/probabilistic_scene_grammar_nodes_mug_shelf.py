@@ -139,6 +139,8 @@ class MugIntermediate(OrNode):
                 other_rel_offset[5] = rel_offset[5] + 3.1415
             R = pose_to_tf_matrix(other_rel_offset)[:3, :3]
             option_2 = self.offset_dist.log_prob(other_rel_offset).sum()
+            score = torch.max(option_1, option_2)
+            #print("%s got score %f for offset " % (self.name, score.item()), products[0].pose, rel_offset)
             return torch.max(option_1, option_2)
 
     def __init__(self, name, pose):
@@ -164,7 +166,10 @@ class MugIntermediate(OrNode):
         # (All possible candidate children will have pose in this model type.)
         if len(child_nodes) != 1 or not isinstance(child_nodes[0], Mug_1):
             return
-        self.pose = child_nodes[0].pose.clone()
+        self.pose[:3] = child_nodes[0].pose.clone()[:3]
+        self.pose[3] = 0.
+        self.pose[4] = 0.
+        self.pose[5] = 0.
 
 
 class MugShelfLevel(IndependentSetNode):
