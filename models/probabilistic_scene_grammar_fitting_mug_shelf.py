@@ -63,27 +63,27 @@ if __name__ == "__main__":
     print("%d test examples" % len(test_dataset))
 
     
-    #plt.figure().set_size_inches(15, 10)
-    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(1)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset, root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=2)
-    print("Parsed %d trees" % len(parse_trees))
-    #print("*****************\n0: ", parse_trees[0].nodes)
-    #print("*****************\n1: ", parse_trees[1].nodes)
-    ##print("*****************\n2: ", parse_trees[2].nodes)
-    ##print("*****************\n3: ", parse_trees[3].nodes)
-    for k in range(len(parse_trees)):
-        yaml_env = convert_tree_to_yaml_env(parse_trees[k])
-        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
-        draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
-        print(parse_trees[k].get_total_log_prob())
-#
-        plt.gca().clear()
-        networkx.draw_networkx(parse_trees[k], labels={n:n.__class__.__name__ for n in parse_trees[k]})
-        plt.pause(1E-3)
-        #plt.show()
+    ##plt.figure().set_size_inches(15, 10)
+    ###parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(1)]
+    #parse_trees = guess_parse_trees_batch_async(test_dataset, root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=2)
+    #print("Parsed %d trees" % len(parse_trees))
+    ##print("*****************\n0: ", parse_trees[0].nodes)
+    ##print("*****************\n1: ", parse_trees[1].nodes)
+    ###print("*****************\n2: ", parse_trees[2].nodes)
+    ###print("*****************\n3: ", parse_trees[3].nodes)
+    #for k in range(len(parse_trees)):
+    #    yaml_env = convert_tree_to_yaml_env(parse_trees[k])
+    #    DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+    #    draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
+    #    print(parse_trees[k].get_total_log_prob())
+##
+    #    plt.gca().clear()
+    #    networkx.draw_networkx(parse_trees[k], labels={n:n.__class__.__name__ for n in parse_trees[k]})
+    #    plt.pause(1E-3)
+    #    #plt.show()
+    ##sys.exit(0)
+    #    input("Press enter to continue...")   
     #sys.exit(0)
-        input("Press enter to continue...")   
-    sys.exit(0)
 
     use_writer = True
 
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     best_loss_yet = np.infty
 
     # setup the optimizer
-    adam_params = {"lr": 0.001, "betas": (0.8, 0.95)}
+    adam_params = {"lr": 0.01, "betas": (0.8, 0.95)}
     all_params_to_optimize = set(pyro.get_param_store()._params[name] for name in pyro.get_param_store().keys())
     # Ensure everything in pyro param store has zero grads
     for p in all_params_to_optimize:
@@ -121,12 +121,12 @@ if __name__ == "__main__":
         p.share_memory_()
         p.grad.share_memory_()
 
-    def per_param_callable(module_name, param_name):
-        if "var" in param_name or "weights" in param_name:
-            return {"lr": 0.01, "betas": (0.8, 0.95)}
-        else:
-            return {"lr": 0.001, "betas": (0.8, 0.95)}
-    optimizer = Adam(per_param_callable)
+    #def per_param_callable(module_name, param_name):
+    #    if "var" in param_name or "weights" in param_name:
+    #        return {"lr": 0.1, "betas": (0.8, 0.95)}
+    #    else:
+    #        return {"lr": 0.01, "betas": (0.8, 0.95)}
+    optimizer = Adam(adam_params)
     baseline = 0.
 
     def write_score_info(i, prefix, writer, loss, all_score_infos):
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     total_step = 0
     pyro.get_param_store().save(output_dir + "param_store_initial.pyro")
     f_history = []
-    for step in range(2000):
+    for step in range(500):
         # Synchronize gvs and param store. In the case of constrained parameters,
         # the constrained value returned by pyro.param() is distinct from the
         # unconstrianed value we optimize, so we need to regenerate the constrained value.
@@ -155,7 +155,7 @@ if __name__ == "__main__":
             baseline = torch.stack(f_history).mean()
         else:
             baseline=0.
-        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, optimizer=optimizer, baseline=baseline)
+        loss, all_score_infos = calc_score_and_backprob_async(train_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, optimizer=optimizer, baseline=baseline, outer_iterations=3, num_attempts=3)
         #loss = svi.step(observed_tree)
         score_history.append(loss)
         f_history.append(torch.stack([score_info.f for score_info in all_score_infos]).mean())
@@ -164,7 +164,7 @@ if __name__ == "__main__":
 
         if (total_step % 2 == 0):
             # Evaluate on a few test data points
-            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs)
+            loss_test, all_score_infos_test = calc_score_and_backprob_async(test_dataset, n=10, root_node_type=root_node_type, guide_gvs=guide_gvs, outer_iterations=3, num_attempts=3)
             score_test_history.append(loss_test)
             print("Loss_test: ", loss_test)
 
@@ -175,14 +175,17 @@ if __name__ == "__main__":
             if use_writer:
                 write_score_info(total_step, "test_", writer, loss_test, all_score_infos_test)
 
-                parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
-                yaml_env = convert_tree_to_yaml_env(parse_tree)
-                DrawYamlEnvironment(yaml_env, base_environment_type="mug_shelf", alpha=0.5)
-                draw_parse_tree_meshcat(parse_tree, color_by_score=True)
+                #parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
+                #yaml_env = convert_tree_to_yaml_env(parse_tree)
+                #DrawYamlEnvironment(yaml_env, base_environment_type="mug_shelf", alpha=0.5)
+                #draw_parse_tree_meshcat(parse_tree, color_by_score=True)
 
                 # Also parse some test environments
-                #test_envs = [random.choice(test_dataset) for k in range(4)]
-                #test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach())
+                test_envs = [random.choice(test_dataset) for k in range(1)]
+                test_parses = guess_parse_trees_batch_async(test_envs, root_node_type=root_node_type, guide_gvs=guide_gvs.detach(), outer_iterations=3, num_attempts=3)
+                yaml_env = convert_tree_to_yaml_env(test_parses[0])
+                DrawYamlEnvironment(yaml_env, base_environment_type="mug_shelf", alpha=0.5)
+                draw_parse_tree_meshcat(test_parses[0], color_by_score=True)
                 #plt.figure().set_size_inches(20, 20)
                 #for k in range(4):
                 #    plt.subplot(2, 2, k+1)

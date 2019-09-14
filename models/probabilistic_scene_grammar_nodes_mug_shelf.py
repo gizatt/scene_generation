@@ -256,7 +256,7 @@ class MugShelfLevel(IndependentSetNode):
 
         # Mug production
         mean_init = torch.tensor([0., 0., 0.])
-        var_init = torch.tensor([0.02, 0.04, 0.01])
+        var_init = torch.tensor([0.02, 0.04, 0.005])
         
         # Pretty specific prior on mean and variance
         mean_prior_variance = (torch.ones(3)*0.01).double()
@@ -266,7 +266,7 @@ class MugShelfLevel(IndependentSetNode):
         # Picking bigger beta/var ratio leads to tighter peak around the guessed variance.
         var_prior_width_fact = 1
         assert(var_prior_width_fact > 0.)
-        beta = var_prior_width_fact*torch.tensor(var_init).double()
+        beta = var_prior_width_fact*var_init.double()
         alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
 
         for k in range(6):
@@ -274,7 +274,7 @@ class MugShelfLevel(IndependentSetNode):
                 self.MugProductionRule(
                     name="%s_prod_mug_%d" % (name,  k),
                     shelf_name=self.shelf_name,
-                    xyz_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                    xyz_mean_prior_params=(mean_init, mean_prior_variance),
                     xyz_var_prior_params=(alpha, beta)))
 
         # Self-production for recursion
@@ -320,7 +320,7 @@ class MugShelf(IndependentSetNode, RootNode):
             production_rules.append(
                 self.MugShelfLevelProductionRule("%s_prod_shelf_%d" % (name, k),
                     shelf_name="shelf_%d" % k,
-                    pose=torch.tensor([0., 0., 0.15*k, 0., 0., 0.])))
+                    pose=torch.tensor([0., 0., 0.15*k + 0.03, 0., 0., 0.])))
 
         init_weights = pyro.param("%s_shelf_production_weights" % name, torch.tensor([0.5, 0.5, 0.5]), constraint=constraints.unit_interval)
         self.param_names = ["%s_shelf_production_weights" % name]
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
     plt.figure()
     from scene_generation.models.probabilistic_scene_grammar_model import *
-    for k in range(10):
+    for k in range(100):
         # Draw + plot a few generated environments and their trees
         start = time.time()
         pyro.clear_param_store()

@@ -155,7 +155,7 @@ def score_subset_of_dataset_sync(dataset, n, root_node_type, guide_gvs):
     loss = torch.stack(losses).mean()
     return loss, all_score_infos, active_param_names
 
-def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8, baseline=0.):
+def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimizer=None, max_iters_for_hyper_parse_tree=8, baseline=0., outer_iterations=2, num_attempts=2):
     # Select out minibatch
     envs = []
     for p_k in range(n):
@@ -199,7 +199,7 @@ def calc_score_and_backprob_async(dataset, n, root_node_type, guide_gvs, optimiz
         for i, env in enumerate(envs):
             p = mp.Process(
                 target=score_sample_async, args=(
-                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims, baseline))
+                    i, env, root_node_type, guide_gvs_detached, (shared_dict, shared_grad_dict), param_store_name, do_backprop, output_queue, synchro_prims, baseline, outer_iterations, num_attempts, max_iters_for_hyper_parse_tree))
             p.start()
             processes.append(p)
         # Wait for them to return. The detached guide gvs members
