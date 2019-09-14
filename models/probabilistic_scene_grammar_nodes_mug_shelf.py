@@ -22,6 +22,7 @@ from pyro import poutine
 from scene_generation.data.dataset_utils import (
     DrawYamlEnvironment, ProjectEnvironmentToFeasibility)
 from scene_generation.models.probabilistic_scene_grammar_nodes import *
+from scene_generation.models.probabilistic_scene_grammar_nodes_dish_bin import Mug_1
 
 # General layout:
 # MugShelf is rooted at world origin.
@@ -141,10 +142,7 @@ class MugIntermediate(OrNode):
             return torch.max(option_1, option_2)
 
     def __init__(self, name, pose):
-        self.pose = pose
-        # Represent each dish's relative position to the
-        # stack origin with a diagonal Normal distribution.
-        
+        self.pose = pose.clone()
         production_rules = [
             self.MugProductionRule("%s_up_prod" % name,
                                    target_xyzrpy_offset=torch.tensor([0., 0., 0., 3.1415/2., 0., 0.]),
@@ -199,6 +197,8 @@ class MugShelfLevel(IndependentSetNode):
                 offset_mean_prior_dist).double()
             offset_var = global_variable_store.sample_global_variable(
                 "%s_mug_xyz_var" % self.shelf_name, offset_var_prior_dist).double()
+            self.offset_mean = offset_mean
+            self.offset_var = offset_var
             self.xyz_offset_dist = dist.Normal(loc=offset_mean, scale=offset_var).to_event(1)
 
         def sample_products(self, parent, obs_products=None):
@@ -224,7 +224,7 @@ class MugShelfLevel(IndependentSetNode):
                 return torch.tensor(-np.inf)
             # Get relative offset of the PlaceSetting
             rel_offset = self._recover_rel_offset_from_abs_offset(parent, products[0].pose)
-            return self.xyz_offset_dist.log_prob(rel_offset[:3])
+            return self.xyz_offset_dist.log_prob(rel_offset[:3]).sum()
 
     
     class MugShelfLevelSelfProductionRule(ProductionRule):
@@ -268,18 +268,20 @@ class MugShelfLevel(IndependentSetNode):
         assert(var_prior_width_fact > 0.)
         beta = var_prior_width_fact*torch.tensor(var_init).double()
         alpha = var_prior_width_fact*torch.ones(len(var_init)).double() + 1
-        production_rules.append(
-            self.MugProductionRule(
-                name="%s_prod_mug" % (name),
-                shelf_name=self.shelf_name,
-                xyz_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
-                xyz_var_prior_params=(alpha, beta)))
+
+        for k in range(6):
+            production_rules.append(
+                self.MugProductionRule(
+                    name="%s_prod_mug_%d" % (name,  k),
+                    shelf_name=self.shelf_name,
+                    xyz_mean_prior_params=(torch.tensor(mean_init, dtype=torch.double), mean_prior_variance),
+                    xyz_var_prior_params=(alpha, beta)))
 
         # Self-production for recursion
-        production_rules.append(self.MugShelfLevelSelfProductionRule("%s_prod_self" % name))
+        #production_rules.append(self.MugShelfLevelSelfProductionRule("%s_prod_self" % name))
 
         # Even production probs to start out
-        production_probs = torch.tensor([1.0, 0.5])
+        production_probs = torch.ones(len(production_rules))*0.25
         production_probs = pyro.param("mug_shelf_%s_production_weights" % self.shelf_name, production_probs, constraint=constraints.unit_interval)
         self.param_names = ["mug_shelf_%s_production_weights" % self.shelf_name]
         IndependentSetNode.__init__(self, name=name, production_rules=production_rules, production_probs=production_probs)
@@ -332,34 +334,6 @@ def convert_xyzrpy_to_quatxyz(pose):
     out[-3:] = pose[:3]
     out[:4] = RollPitchYaw(pose[3:]).ToQuaternion().wxyz()
     return out
-
-class Plate_11in(TerminalNode):
-    def __init__(self, pose, params=[], name="plate_11in"):
-        TerminalNode.__init__(self, name)
-        self.pose = pose
-        self.params = params
-    
-    def generate_yaml(self):
-        return {
-            "class": "plate_11in",
-            "params": self.params,
-            "params_names": [],
-            "pose": convert_xyzrpy_to_quatxyz(self.pose).tolist()
-        }
-
-class Mug_1(TerminalNode):
-    def __init__(self, pose, params=[], name="mug_1"):
-        TerminalNode.__init__(self, name)
-        self.pose = pose
-        self.params = params
-    
-    def generate_yaml(self):
-        return {
-            "class": "mug_1",
-            "params": self.params,
-            "params_names": [],
-            "pose": convert_xyzrpy_to_quatxyz(self.pose).tolist()
-        }
 
 if __name__ == "__main__":
     #seed = 52
