@@ -263,10 +263,20 @@ def project_parse_tree_to_feasibility(old_parse_tree, base_environment_type, mak
     new_yaml_env = ProjectEnvironmentToFeasibility(yaml_env, base_environment_type=base_environment_type,
         make_nonpenetration=make_nonpenetration, make_static=make_static)[-1]
 
+def get_node_depth_in_tree(parse_tree, node):
+    depth = 0
+    parents = [node]
+    while len(parents) > 0:
+        assert(len(parents) == 1)
+        node = parents[0]
+        parents = list(parse_tree.predecessors(node))
+        depth += 1
+    return depth
+
 # Note to self: this used to have a pre-constructed Table() as a default argument.
 # Don't do that. It gets constructed at module load time and then the Table params
 # usually get deleted from the param store and disappear.
-def generate_hyperexpanded_parse_tree(root_node, max_iters=25):
+def generate_hyperexpanded_parse_tree(root_node, max_iters=8):
     # Make a fully expanded parse tree where
     # *every possible* non-terminal production rule and product is followed.
     # Recursions *are* followed -- use the max iter limit to keep the full tree size sane.
@@ -274,11 +284,9 @@ def generate_hyperexpanded_parse_tree(root_node, max_iters=25):
     parse_tree = ParseTree()
     root_node.sample_global_variables(parse_tree.get_global_variable_store())
     parse_tree.add_node(root_node)
-    k = 0
-    while len(input_nodes_with_parents) >  0 and k < max_iters:
-        k += 1
+    while len(input_nodes_with_parents) > 0:
         parent, node = input_nodes_with_parents.pop(0)
-        if isinstance(node, TerminalNode):
+        if isinstance(node, TerminalNode) or get_node_depth_in_tree(parse_tree, node) >= max_iters:
             # Nothing more to do with this node
             pass
         else:
@@ -613,6 +621,7 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
                     for rule in new_node.production_rules:
                         rule.sample_global_variables(parse_tree.get_global_variable_store())
                         score = rule.score_products(new_node, sampled_nodes) + new_node.score_production_rules(None, [rule])
+                        #print("Considering node ", new_node, " and rule ", rule, " to explain ", sampled_nodes, " with scores: ", rule.score_products(new_node, sampled_nodes), new_node.score_production_rules(None, [rule]))
                         if not torch.isinf(score):
                             possible_child_nodes.append(sampled_nodes)
                             possible_parent_nodes.append((new_node, rule))
