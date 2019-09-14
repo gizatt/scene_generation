@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
 
     root_node = root_node_type()
-    hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node, max_iters=10)
+    hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node, max_iters=8)
 
     #plt.gca().clear()
     #hyper_parse_tree_for_viz = remove_production_rules_from_parse_tree(hyper_parse_tree)
@@ -63,29 +63,27 @@ if __name__ == "__main__":
     print("%d test examples" % len(test_dataset))
 
     
-    plt.figure().set_size_inches(15, 10)
-    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(1)]
-    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=2)
-    print("Parsed %d trees" % len(parse_trees))
-    #print("*****************\n0: ", parse_trees[0].nodes)
-    #print("*****************\n1: ", parse_trees[1].nodes)
-    ##print("*****************\n2: ", parse_trees[2].nodes)
-    ##print("*****************\n3: ", parse_trees[3].nodes)
-    for k in range(4):
-        yaml_env = convert_tree_to_yaml_env(parse_trees[k])
-        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
-        draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
-        print(parse_trees[k].get_total_log_prob())
-
-        #plt.gca().clear()
-        #networkx.draw_networkx(parse_trees[k], labels={n:n.__class__.__name__ for n in parse_trees[k]})
-        #plt.show()
-    #sys.exit(0)
-        
-        input("Press enter to continue...")
-        
+    #plt.figure().set_size_inches(15, 10)
+    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(1)]
+    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=2)
+    #print("Parsed %d trees" % len(parse_trees))
+    ##print("*****************\n0: ", parse_trees[0].nodes)
+    ##print("*****************\n1: ", parse_trees[1].nodes)
+    ###print("*****************\n2: ", parse_trees[2].nodes)
+    ###print("*****************\n3: ", parse_trees[3].nodes)
+    #for k in range(4):
+    #    yaml_env = convert_tree_to_yaml_env(parse_trees[k])
+    #    DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+    #    draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
+    #    print(parse_trees[k].get_total_log_prob())
+#
+    #    #plt.gca().clear()
+    #    #networkx.draw_networkx(parse_trees[k], labels={n:n.__class__.__name__ for n in parse_trees[k]})
+    #    #plt.show()
+    ##sys.exit(0)
+    #    input("Press enter to continue...")   
     #plt.show()
-    sys.exit(0)
+    #sys.exit(0)
 
     use_writer = True
 
@@ -179,7 +177,7 @@ if __name__ == "__main__":
 
                 parse_tree = generate_unconditioned_parse_tree(root_node, initial_gvs=guide_gvs)
                 yaml_env = convert_tree_to_yaml_env(parse_tree)
-                DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+                DrawYamlEnvironment(yaml_env, base_environment_type="mug_shelf", alpha=0.5)
                 draw_parse_tree_meshcat(parse_tree, color_by_score=True)
 
                 # Also parse some test environments
