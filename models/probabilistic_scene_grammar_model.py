@@ -431,7 +431,7 @@ def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, co
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
     nx.draw_networkx(pruned_tree, ax=ax, pos=pos_dict, labels=label_dict,
-                     node_color=colors, cmap='jet', font_weight='bold', **kwargs)
+                     node_color=colors, cmap='jet', font_weight='bold', node_size=1000, width=3.0, **kwargs)
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
     if label_score:
@@ -529,7 +529,7 @@ def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_colo
         k += 1
 # Candidate intermediate nodes are actual existing instantiations from
 # the hyper parse tree.
-# Candidate intermediate node *types* need to be constructable with no arguments.q
+# Candidate intermediate node *types* need to be constructable with no arguments.
 def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
                                max_num_iters=100, ax=None, verbose=False):
     iter_k = 0
@@ -540,8 +540,9 @@ def repair_parse_tree_in_place(parse_tree, candidate_intermediate_nodes,
         if ax is not None:
             ax.clear()
             yaml_env = convert_tree_to_yaml_env(parse_tree)
-            DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
-            draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
+            DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=ax)
+            node_class_to_color_dict = {"Table":[0., 1., 0.], "PlaceSetting":[0., 0., 1.]}
+            draw_parse_tree(parse_tree, label_name=False, label_score=False, node_class_to_color_dict=node_class_to_color_dict, ax=ax, alpha=0.75)
             plt.title("Iter %02d: score %f" % (iter_k, score.item()))
             plt.pause(0.1)
             plt.savefig('iter_%02d.png' % iter_k)
@@ -850,9 +851,11 @@ def guess_parse_tree_from_yaml(yaml_env, root_node_type, guide_gvs=None, outer_i
             score, _ = parse_tree.get_total_log_prob()
             if ax is not None:
                 ax.clear()
-                DrawYamlEnvironmentPlanar(yaml_env, base_environment_type="table_setting", ax=ax)
-                draw_parse_tree(parse_tree, label_name=True, label_score=True, ax=ax, alpha=0.75)
+                DrawYamlEnvironmentPlanarForTableSettingPretty(yaml_env, ax=ax)
+                node_class_to_color_dict = {"Table":[0., 1., 0.], "PlaceSetting":[0., 0., 1.]}
+                draw_parse_tree(parse_tree, label_name=False, label_score=False, node_class_to_color_dict=node_class_to_color_dict, ax=ax, alpha=0.75)
                 plt.pause(0.1)
+                plt.savefig('iter_999final.png')
             if verbose:
                 print("\tEnding iter %d at score %f" % (outer_k, score))
         if score > best_score:
