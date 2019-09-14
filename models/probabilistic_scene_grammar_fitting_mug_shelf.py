@@ -42,7 +42,7 @@ if __name__ == "__main__":
 
     # CONFIGURATION STUFF
     root_node_type = MugShelf
-    output_dir = "../data/mug_shelf/icra_runs/test/1/"
+    output_dir = "../data/mug_shelf/icra_runs/1/"
     os.system("mkdir -p %s" % output_dir)
 
 
@@ -57,8 +57,8 @@ if __name__ == "__main__":
         
     guide_gvs = hyper_parse_tree.get_global_variable_store()
 
-    train_dataset = dataset_utils.ScenesDataset("../data/mug_shelf/mug_rack_environments_human.yaml")
-    test_dataset = dataset_utils.ScenesDataset("../data/mug_shelf/mug_rack_environments_human.yaml")
+    train_dataset = dataset_utils.ScenesDataset("../data/mug_shelf/mug_rack_environments_human_train/")
+    test_dataset = dataset_utils.ScenesDataset("../data/mug_shelf/mug_rack_environments_human_test/")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
 
