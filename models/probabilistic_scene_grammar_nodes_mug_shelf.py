@@ -261,10 +261,10 @@ class MugShelfLevel(IndependentSetNode):
 
         # Mug production
         mean_init = torch.tensor([0., 0., 0.])
-        var_init = torch.tensor([0.02, 0.04, 0.005])
+        var_init = torch.tensor([0.1, 0.05, 0.005])
         
         # Pretty specific prior on mean and variance
-        mean_prior_variance = (torch.ones(3)*0.01).double()
+        mean_prior_variance = torch.tensor([0.03, 0.03, 0.01])
         # Use an inverse gamma prior for variance. It has MEAN (rather than mode)
         # beta / (alpha - 1) = var
         # (beta / var) + 1 = alpha
