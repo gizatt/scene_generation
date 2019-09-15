@@ -437,7 +437,7 @@ def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, co
     if label_score:
         ax.set_title("Score: %f" % score)
 
-def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_color_dict={}):
+def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_color_dict={}, alpha=1.0):
     class LineBasicMaterial(meshcat_geom.Material):
         def __init__(self, linewidth=1, color=0xffffff,
                      linecap="round", linejoin="round"):
@@ -510,7 +510,7 @@ def draw_parse_tree_meshcat(parse_tree, color_by_score=False, node_class_to_colo
             color = 0xff0000
         vis["parse_tree"][node.name + "%d" % k].set_object(
             meshcat_geom.Sphere(node_sphere_size),
-            meshcat_geom.MeshToonMaterial(color=color))
+            meshcat_geom.MeshToonMaterial(color=color, opacity=alpha, transparent=(alpha != 1.)))
 
         # Get node global pose by going all the way up pose TF chain
         tf = pose_to_tf_matrix(node.pose).detach().numpy()
@@ -866,9 +866,10 @@ def guess_parse_tree_from_yaml(yaml_env, root_node_type, guide_gvs=None, outer_i
 
     return best_tree, best_score
 
-def worker(i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree):
+def worker(i, env, guide_gvs, param_store_name, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree):
     try:
         torch.set_default_tensor_type(torch.DoubleTensor)
+        pyro.get_param_store().load(param_store_name)
         done_event,  = synchro_prims
         tree, score = guess_parse_tree_from_yaml(
             env, guide_gvs=guide_gvs, 
@@ -896,6 +897,9 @@ def guess_parse_trees_batch_async(envs, root_node_type, guide_gvs=None, outer_it
         mp.set_start_method('spawn')
     except:
         pass
+
+    param_store_name = "/tmp/param_store_%d.pyro" % (random.random()*1000*1000)
+    pyro.get_param_store().save(param_store_name)
     output_queue = mp.SimpleQueue()
     done_event = mp.Event()
     synchro_prims = [done_event]
@@ -904,7 +908,7 @@ def guess_parse_trees_batch_async(envs, root_node_type, guide_gvs=None, outer_it
     for i, env in enumerate(envs):
         p = mp.Process(
             target=worker, args=(
-                i, env, guide_gvs, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree))
+                i, env, guide_gvs, param_store_name, outer_iterations, num_attempts, output_queue, synchro_prims, root_node_type, max_iters_for_hyper_parse_tree))
         p.start()
         processes.append(p)
     for k in range(n):
