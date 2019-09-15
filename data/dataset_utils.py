@@ -18,7 +18,7 @@ try:
 except ImportError:
     from yaml import Loader
 
-from pydrake.common.eigen_geometry import Quaternion, AngleAxis
+from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
 from pydrake.math import (RollPitchYaw, RotationMatrix, RigidTransform)
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
@@ -643,6 +643,76 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type,
     visualizer._DoPublish(mbp_context, [])
     visualizer._DoPublish(mbp_context, [])
 
+
+def DrawYamlEnvironmentWithBlender(yaml_environment, base_environment_type, cam_isom=None):
+    from blender_server.drake_blender_visualizer.blender_visualizer import BlenderColorCamera
+    from PIL import Image
+
+    assert(base_environment_type is "mug_shelf")
+    # Not configured for anything else...
+
+    builder, mbp, scene_graph, q0 = BuildMbpAndSgFromYamlEnvironment(
+        yaml_environment, base_environment_type)
+    
+    if cam_isom is None:
+        cam_quat_base = RollPitchYaw(
+                22.*np.pi/180.,
+                0.*np.pi/180,
+                65.*np.pi/180.).ToQuaternion()
+        cam_trans_base = np.array([0.67, -0.11, 0.5])
+        cam_tf_base = Isometry3(quaternion=cam_quat_base,
+                                translation=cam_trans_base)
+        # Rotate camera around origin
+        cam_additional_rotation = Isometry3(quaternion=RollPitchYaw(0., 0., camera_rotation).ToQuaternion(),
+                                            translation=[0, 0, 0])
+        cam_tf_base = cam_additional_rotation.multiply(cam_tf_base)
+    else:
+        cam_tf_base = cam_isom
+    cam_tfs = [cam_tf_base]
+
+    offset_quat_base = RollPitchYaw(0., 0., 0.).ToQuaternion().wxyz()
+    os.system("mkdir -p /tmp/yaml_env_render")
+    blender_cam = builder.AddSystem(BlenderColorCamera(
+        scene_graph,
+        draw_period=0.03333/2.,
+        camera_tfs=cam_tfs,
+        #material_overrides=[
+        #    (".*ground.*",
+        #        {"material_type": "CC0_texture",
+        #         "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood15/Wood15"}),
+        #    (".*shelf.*",
+        #        {"material_type": "CC0_texture",
+        #         "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood26/Wood26"}),
+        #],
+        global_transform=Isometry3(translation=[0, 0, 0],
+                                   quaternion=Quaternion(offset_quat_base)),
+        out_prefix="/tmp/yaml_env_render"
+    ))
+    builder.Connect(scene_graph.get_pose_bundle_output_port(),
+                    blender_cam.get_input_port(0))
+    diagram = builder.Build()
+
+    diagram_context = diagram.CreateDefaultContext()
+
+    mbp_context = diagram.GetMutableSubsystemContext(
+        mbp, diagram_context)
+
+    sim = Simulator(diagram, diagram_context)
+    sim.Initialize()
+
+    try:
+        poses = scene_graph.get_pose_bundle_output_port().Eval(
+            diagram.GetMutableSubsystemContext(scene_graph, diagram_context))
+    except Exception as e:
+        print("Unhandled Exception in DrawYamlEnvironment: ", e)
+        return
+    except:
+        print("Unhandled exception in DrawYamlEnvironment")
+        return
+
+    mbp.SetPositions(mbp_context, q0)
+    blender_cam._DoPublish(mbp_context, [])
+    return Image.open(blender_cam.last_out_filepath)
 
 def DrawYamlEnvironmentPlanar(yaml_environment, base_environment_type,
                               **kwargs):
