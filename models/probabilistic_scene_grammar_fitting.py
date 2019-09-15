@@ -257,7 +257,7 @@ if __name__ == "__main__":
 
     # CONFIGURATION STUFF
     root_node_type = Table #TableWithoutPlaceSettings
-    output_dir = "../data/table_setting/icra_runs/nominal/newpriors_1/"
+    output_dir = "../data/table_setting/icra_runs/nominal/1_evennewerpriors/"
     os.system("mkdir -p %s" % output_dir)
 
 
