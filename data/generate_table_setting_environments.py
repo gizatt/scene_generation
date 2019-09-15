@@ -27,11 +27,15 @@ if __name__ == "__main__":
     #torch.manual_seed(seed)
     #np.random.seed(seed)
     #random.seed(seed)
+
+    torch.set_default_tensor_type(torch.DoubleTensor)
     pyro.enable_validation(True)
 
     noalias_dumper = yaml.dumper.SafeDumper
     noalias_dumper.ignore_aliases = lambda self, data: True
     
+    root_node_type = Table
+
     nominal_values = {
         'place_setting_plate_mean': torch.tensor([0.0, 0.14, 0.0]),
         'place_setting_plate_var': torch.tensor([0.02, 0.01, 3.]),
@@ -50,7 +54,7 @@ if __name__ == "__main__":
         'place_setting_right_spoon_mean': torch.tensor([0.15, 0.12, 0.]),
         'place_setting_right_spoon_var': torch.tensor([0.02, 0.02, 0.02]),
     }
-    hyper_parse_tree = generate_hyperexpanded_parse_tree()
+    hyper_parse_tree = generate_hyperexpanded_parse_tree(root_node=root_node_type())
     guide_gvs = hyper_parse_tree.get_global_variable_store()
     for var_name in guide_gvs.keys():
         guide_gvs[var_name][0] = pyro.param(var_name + "_est",
@@ -91,7 +95,7 @@ if __name__ == "__main__":
     #sys.exit(0)
 
     # Save out the param store to "nominal"
-    pyro.get_param_store().save("place_setting_nominal_param_store.pyro")
+    pyro.get_param_store().save("place_setting_outlier_param_store.pyro")
 
     plt.figure().set_size_inches(15, 10)
     for k in range(200):
@@ -124,5 +128,5 @@ if __name__ == "__main__":
 
         plt.pause(0.1)
 
-        with open("table_setting_environments_generated_nominal.yaml", "a") as file:
+        with open("table_setting_environments_generated_outlier.yaml", "a") as file:
             yaml.dump({"env_%d" % int(round(time.time() * 1000)): yaml_env}, file, Dumper=noalias_dumper)
