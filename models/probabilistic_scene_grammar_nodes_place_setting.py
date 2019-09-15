@@ -163,13 +163,13 @@ class PlaceSetting(CovaryingSetNode):
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_fork"], name_to_ind["right_knife"]): 1.,
             (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["right_fork"], name_to_ind["right_knife"]): 1.,
             # Outlier condition adds these as well:
-            (name_to_ind["plate"], name_to_ind["left_spoon"]): 1.0,
-            (name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_spoon"]): 1.0,
+            #(name_to_ind["plate"], name_to_ind["left_spoon"]): 1.0,
+            #(name_to_ind["plate"], name_to_ind["cup"], name_to_ind["left_spoon"]): 1.0,
         }
 
         init_weights = CovaryingSetNode.build_init_weights(
             num_production_rules=len(production_rules),
-            production_weights_hints=production_weights_hints,
+            #production_weights_hints=production_weights_hints,
             remaining_weight=0.001)
         init_weights = pyro.param("place_setting_production_weights", init_weights, constraint=constraints.simplex)
         self.param_names = ["place_setting_production_weights"]
