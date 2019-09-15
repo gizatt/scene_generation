@@ -169,7 +169,7 @@ class PlaceSetting(CovaryingSetNode):
 
         init_weights = CovaryingSetNode.build_init_weights(
             num_production_rules=len(production_rules),
-            production_weights_hints=production_weights_hints,
+            #production_weights_hints=production_weights_hints,
             remaining_weight=0.001)
         init_weights = pyro.param("place_setting_production_weights", init_weights, constraint=constraints.simplex)
         self.param_names = ["place_setting_production_weights"]
