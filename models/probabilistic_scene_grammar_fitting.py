@@ -269,11 +269,12 @@ if __name__ == "__main__":
     test_dataset = dataset_utils.ScenesDataset("../data/table_setting/table_setting_environments_generated_nominal_test")
     print("%d training examples" % len(train_dataset))
     print("%d test examples" % len(test_dataset))
-
-    #plt.figure().set_size_inches(20, 20)
+    
+    plt.figure(figsize=(5, 5), dpi=300)
     # [2] is has a single place setting at the top
-    #parse_tree = guess_parse_tree_from_yaml(test_dataset[2], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), ax=plt.gca(), num_attempts=1, outer_iterations=1)
-    #sys.exit(0)
+    for k in range(20):
+        parse_tree = guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), ax=plt.gca(), num_attempts=1, outer_iterations=1)
+    sys.exit(0)
     #plt.figure().set_size_inches(15, 10)
     ###parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], guide_gvs=hyper_parse_tree.get_global_variable_store())[0] for k in range(4)]
     #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], guide_gvs=hyper_parse_tree.get_global_variable_store())

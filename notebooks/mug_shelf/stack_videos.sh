@@ -1,0 +1,2 @@
+ffmpeg -i untrained_pre_proj_2hz.mp4 -i untrained_post_proj_2hz.mp4 -filter_complex hstack=inputs=2 untrained_pre_and_post_2hz.mp4
+ffmpeg -i trained_pre_proj_2hz.mp4 -i trained_post_proj_2hz.mp4 -filter_complex hstack=inputs=2 trained_pre_and_post_2hz.mp4
