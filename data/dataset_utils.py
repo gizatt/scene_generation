@@ -676,14 +676,14 @@ def DrawYamlEnvironmentWithBlender(yaml_environment, base_environment_type, cam_
         scene_graph,
         draw_period=0.03333/2.,
         camera_tfs=cam_tfs,
-        #material_overrides=[
-        #    (".*ground.*",
-        #        {"material_type": "CC0_texture",
-        #         "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood15/Wood15"}),
-        #    (".*shelf.*",
-        #        {"material_type": "CC0_texture",
-        #         "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood26/Wood26"}),
-        #],
+        material_overrides=[
+            (".*ground.*",
+                {"material_type": "CC0_texture",
+                 "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood15/Wood15"}),
+            (".*shelf.*",
+                {"material_type": "CC0_texture",
+                 "path": "/home/gizatt/tools/blender_server/data/pbr_textures/Wood26/Wood26"}),
+        ],
         global_transform=Isometry3(translation=[0, 0, 0],
                                    quaternion=Quaternion(offset_quat_base)),
         out_prefix="/tmp/yaml_env_render"
