@@ -55,8 +55,8 @@ def create_cut_cylinder(radius, height, cutting_planes,
             transform=box_tf))
 
     if verbose:
-        print "Computing difference between cylinder and %d boxes" % (
-            len(cutting_planes))
+        print("Computing difference between cylinder and %d boxes" % (
+            len(cutting_planes)))
     differences = trimesh.boolean.difference(meshes, 'scad')
     chull = trimesh.convex.convex_hull(differences)
     return chull
@@ -82,7 +82,7 @@ def export_sdf(mesh, name, directory, color=[0.75, 0.2, 0.2, 1.],
     os.system("mkdir -p %s/meshes" % directory)
 
     with open(mesh_path, 'w') as f:
-        f.write(trimesh.exchange.wavefront.export_wavefront(mesh))
+        f.write(trimesh.exchange.obj.export_obj(mesh))
     with open("%s/%s.sdf" % (directory, name), 'w') as f:
         f.write(sdf_string)
 
@@ -92,7 +92,7 @@ if __name__ == "__main__":
                               cutting_planes=[([0., 0, 0], [0.7, 0.0, 0.7])],
                               sections=10, verbose=True)
     export_sdf(cyl, "test_mesh", "/tmp/test_mesh_export/")
-    print open("/tmp/test_mesh_export/test_mesh.sdf").read()
+    print(open("/tmp/test_mesh_export/test_mesh.sdf").read())
 
     loaded = trimesh.exchange.load.load(
         open("/tmp/test_mesh_export/meshes/test_mesh.obj"),
