@@ -38,7 +38,6 @@ from pydrake.multibody.tree import (
     PrismaticJoint,
     SpatialInertia,
     RevoluteJoint,
-    UniformGravityFieldElement,
     UnitInertia
 )
 from pydrake.multibody.plant import (
@@ -309,7 +308,6 @@ def BuildMbpAndSgFromYamlEnvironment(
             RigidTransform(p=[1, 0, 0]),
             wall_shape, "wall_px",
             np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
-        mbp.AddForceElement(UniformGravityFieldElement([0., 0., -9.81]))
     elif base_environment_type == "planar_tabletop":
         pass
     elif base_environment_type == "table_setting":
@@ -343,7 +341,6 @@ def BuildMbpAndSgFromYamlEnvironment(
         parser.AddModelFromFile(dish_bin_model)
         mbp.WeldFrames(world_body.body_frame(), mbp.GetBodyByName("bus_tub_01_decomp_body_link").body_frame(),
                        RigidTransform(p=[0.0, 0., 0.], rpy=RollPitchYaw(np.pi/2., 0., 0.)))
-        mbp.AddForceElement(UniformGravityFieldElement())
     elif base_environment_type == "mug_shelf":
         ground_shape = Box(2., 2., 2.)
         ground_body = mbp.AddRigidBody("ground", SpatialInertia(
@@ -362,7 +359,6 @@ def BuildMbpAndSgFromYamlEnvironment(
         parser.AddModelFromFile(dish_bin_model)
         mbp.WeldFrames(world_body.body_frame(), mbp.GetBodyByName("shelf_origin_body").body_frame(),
                        RigidTransform(p=[0.0, 0, 0.0]))
-        mbp.AddForceElement(UniformGravityFieldElement())
     else:
         raise ValueError("Unknown base environment type.")
 
