@@ -223,7 +223,8 @@ if __name__ == "__main__":
         viz = builder.AddSystem(PlanarSceneGraphVisualizer(
             scene_graph,
             xlim=[0.25, 0.8], ylim=[-0.1, 0.5],
-            ax=plt.gca()))
+            ax=plt.gca(),
+            draw_period=0.1))
         builder.Connect(station.GetOutputPort("pose_bundle"),
                         viz.get_input_port(0))
         if args.planar_record:
