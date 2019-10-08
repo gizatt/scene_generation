@@ -17,6 +17,7 @@ from pydrake.geometry import (
     SceneGraph,
     Sphere
 )
+from pydrake.math import RigidTransform
 from pydrake.multibody.tree import (
     PrismaticJoint,
     SpatialInertia,
@@ -34,12 +35,13 @@ from pydrake.forwarddiff import gradient
 from pydrake.multibody.parsing import Parser
 from pydrake.multibody.inverse_kinematics import InverseKinematics
 from pydrake.solvers.ipopt import (IpoptSolver)
+from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
 from pydrake.systems.analysis import Simulator
 from pydrake.systems.framework import DiagramBuilder
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.systems.rendering import PoseBundle
 
-from underactuated.planar_multibody_visualizer import PlanarMultibodyVisualizer
+from underactuated.planar_scenegraph_visualizer import PlanarSceneGraphVisualizer
 
 def RegisterVisualAndCollisionGeometry(
         mbp, body, pose, shape, name, color, friction):
@@ -61,21 +63,21 @@ def generate_example():
         mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
         G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
     mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
-                   Isometry3())
+                   RigidTransform())
     RegisterVisualAndCollisionGeometry(
         mbp, ground_body,
-        Isometry3(rotation=np.eye(3), translation=[0, 0, -0.5]),
+        RigidTransform(p=[0, 0, -0.5]),
         ground_shape, "ground", np.array([0.5, 0.5, 0.5, 1.]),
         CoulombFriction(0.9, 0.8))
     # Short table walls
     RegisterVisualAndCollisionGeometry(
         mbp, ground_body,
-        Isometry3(rotation=np.eye(3), translation=[-1, 0, 0]),
+        RigidTransform(p=[-1, 0, 0]),
         wall_shape, "wall_nx",
         np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
     RegisterVisualAndCollisionGeometry(
         mbp, ground_body,
-        Isometry3(rotation=np.eye(3), translation=[1, 0, 0]),
+        RigidTransform(p=[1, 0, 0]),
         wall_shape, "wall_px",
         np.array([0.5, 0.5, 0.5, 1.]), CoulombFriction(0.9, 0.8))
 
@@ -147,21 +149,20 @@ def generate_example():
                 }
 
             RegisterVisualAndCollisionGeometry(
-                mbp, body, Isometry3(), body_shape, "body_{}".format(k),
+                mbp, body, RigidTransform(), body_shape, "body_{}".format(k),
                 color, CoulombFriction(0.9, 0.8))
             k += 1
 
-    mbp.AddForceElement(UniformGravityFieldElement())
     mbp.Finalize()
 
     visualizer = builder.AddSystem(MeshcatVisualizer(
         scene_graph,
-        zmq_url="tcp://127.0.0.1:6001"))
+        zmq_url="tcp://127.0.0.1:6000"))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
 
     plt.gca().clear()
-    visualizer = builder.AddSystem(PlanarMultibodyVisualizer(scene_graph, ylim=[-0.5, 1.0], ax=plt.gca()))
+    visualizer = builder.AddSystem(PlanarSceneGraphVisualizer(scene_graph, ylim=[-0.5, 1.0], ax=plt.gca()))
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
     diagram = builder.Build()
@@ -200,11 +201,12 @@ def generate_example():
 
     prog.SetInitialGuess(q_dec, q0)
     print("Solving")
-    print "Initial guess: ", q0
-    print prog.Solve()
-    print prog.GetSolverId().name()
-    q0_proj = prog.GetSolution(q_dec)
-    print "Final: ", q0_proj
+    print("Initial guess: ", q0)
+    result = Solve(prog)
+    print(result)
+    print(result.get_solver_id().name())
+    q0_proj = result.GetSolution(q_dec)
+    print("Final: ", q0_proj)
 
     mbp.SetPositions(mbp_context, q0_proj)
 
@@ -236,9 +238,9 @@ if __name__ == "__main__":
     # Somewhere in the n=1000 range, I hit a
     # "Unhandled exception: Too many open files" error somewhere
     # between Meshcat setup and the print "Solving" line.
-    #import matplotlib.pyplot as plt
-    #plt.plot(10, 10)
-    for example_num in range(100):
+    import matplotlib.pyplot as plt
+    plt.plot(10, 10)
+    for example_num in range(1):
         #try:
             env = generate_example()
             # Check if it's reasonable
@@ -248,9 +250,9 @@ if __name__ == "__main__":
                 pose = np.array(obj_yaml["pose"])
                 if pose[0] > 2.0 or pose[0] < -2.0 or pose[1] > 2.0 or pose[1] < 0.0:
                     raise ValueError("Skipping scene due to bad projection.")
-            with open("planar_bin_static_scenes_stacks.yaml", "a") as file:
-                yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-                          env},
-                          file)
+            #with open("planar_bin_static_scenes_stacks.yaml", "a") as file:
+            #    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+            #              env},
+            #              file)
        # except Exception as e:
        #     print "Unhandled exception: ", e
