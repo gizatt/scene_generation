@@ -102,10 +102,17 @@ def tile_box_with_texture(base_image, decal_image, corners, scale=(1.0, 1.0), ro
         and lower right corners of where the image should go.
     '''
 
+    # Rescale the declar first
+    scaling = np.ones(3)
+    scaling[:2] = scale
+    decal_image_scaled = scipy.ndimage.zoom(decal_image, scaling, mode='wrap')
+
     number_of_tiles = (np.max(corners, axis=0) - np.min(corners, axis=0)) * \
-        base_image.shape[:2] / decal_image.shape[:2] / np.array(scale)
+        base_image.shape[:2] / decal_image_scaled.shape[:2]
     # Tile the decal image a sufficient number of times
-    decal_full = np.tile(decal_image, reps=np.ceil(number_of_tiles).astype(int))
+    reps = np.hstack([np.ceil(number_of_tiles).astype(int), 1])
+    print(reps)
+    decal_full = np.tile(decal_image_scaled, reps=reps)
     # And clip it down to the exact number of pixels in each direction it should be
     true_size = np.ceil(decal_full.shape[:2] * (number_of_tiles / np.ceil(number_of_tiles))).astype(int)
     decal_full = decal_full[:true_size[0], :true_size[1], :]
@@ -131,24 +138,13 @@ if __name__ == "__main__":
 
     face_uvs = generate_unit_box_face_uvs()
 
-    color = np.zeros((1024, 1024, 3), dtype=np.uint8)
+    baseColorTexture = np.zeros((2048, 2048, 3), dtype=np.uint8)
 
-    # Fill each side with a unique color
-    cmap = plt.cm.get_cmap('Spectral')
-    for i, corner_uvs in enumerate(face_uvs.values()):
-        min_x = int(min(corner_uvs[:, 0])*color.shape[0])
-        max_x = int(max(corner_uvs[:, 0])*color.shape[0])
-        min_y = int(min(corner_uvs[:, 1])*color.shape[1])
-        max_y = int(max(corner_uvs[:, 1])*color.shape[1])
-        color[min_x:max_x, min_y:max_y, :] = np.array(cmap(float(i)/len(face_uvs.keys()))[:3])*255
-
-    baseColorTexture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :3]
-    #baseColorTexture = np.array(PIL.Image.open("/home/gizatt/Dropbox/Misc/desktops_work/check-108 (1).png"))[:, :, :3]
-    tile_box_with_texture(color, baseColorTexture, face_uvs['top'],
-                          scale=np.array([1./extents[1], 1/extents[2]])/10.)
-
-    baseColorTexture = PIL.Image.fromarray(color)
-    #baseColorTexture = PIL.Image.open("cardboard-effect-and-colour-paper.jpg")
-
+    # Fill the base color map with the cardboard texture
+    cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :3]
+    tile_box_with_texture(baseColorTexture, cardboard_texture, np.array([[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
+                          scale=[1/10., 1/10.], rotation=0.2)
+    
+    baseColorTexture = PIL.Image.fromarray(baseColorTexture)
     mesh.visual.material = trimesh.visual.material.PBRMaterial(baseColorTexture=baseColorTexture)
     mesh.show()
