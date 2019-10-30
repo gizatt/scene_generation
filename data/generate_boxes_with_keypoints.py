@@ -209,7 +209,7 @@ if __name__ == "__main__":
         renderer_name="vtk", z_near=0.1, z_far=5.5)
 
     # Put it at the origin.
-    X_WB = RigidTransform(p=[0., 0., 1.0], rpy=RollPitchYaw(0., np.pi, 0.))
+    X_WB = RigidTransform(p=[0., 0., 1.0], rpy=RollPitchYaw(np.pi, 0., 0.))
     # This id would fail if we tried to render; no such id exists.
     parent_id = scene_graph.world_frame_id()
     camera_poses = RgbdSensor.CameraPoses(
@@ -260,12 +260,28 @@ if __name__ == "__main__":
     depth_K = sensor.depth_camera_info().intrinsic_matrix()
     keypoints_rendered = depth_K.dot(keypoints_in_cam)
     keypoints_rendered /= keypoints_rendered[2, :]
-    keypoints_rendered = keypoints_rendered.astype(int)
+
+    # Prune out the keypoints based on their depth visibility
+    # depths = np.linalg.norm(keypoints_in_cam, axis=0)
+    # Depth is just camera Z level for this camera type
+    depths = keypoints_in_cam[2, :]
+    keep = np.zeros(keypoints.shape[1]).astype(int)
+    for k in range(keypoints.shape[1]):
+        v, u = np.round(keypoints_rendered[:2, k]).astype(int)
+        if u < 0 or u >= 480 or v < 0 or v >= 640:
+            continue
+        if depths[k] < depth_im[u, v] + 1E-2:
+            keep[k] = 1.
+    keypoints_rendered_visible = keypoints_rendered[:, keep > 0]
+    vals_visible = vals[keep > 0]
 
     plt.figure()
     plt.imshow(depth_im, cmap='summer')
-    plt.scatter(keypoints_rendered[0, :], keypoints_rendered[1, :], c=vals, cmap="winter")
+    plt.scatter(keypoints_rendered_visible[0, :],
+                keypoints_rendered_visible[1, :],
+                c=vals_visible, cmap="winter")
     plt.xlim(0, 640)
     plt.ylim(0, 480)
+    plt.gca().invert_xaxis()
 
     plt.show()
