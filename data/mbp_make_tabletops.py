@@ -121,8 +121,6 @@ if __name__ == "__main__":
                     [np.random.uniform(-0.1, 0.1),
                      np.random.uniform(-0.1, 0.1),
                      np.random.uniform(0.1, 0.2)]])
-
-            mbp.AddForceElement(UniformGravityFieldElement())
             mbp.Finalize()
 
             visualizer = builder.AddSystem(MeshcatVisualizer(
@@ -134,12 +132,12 @@ if __name__ == "__main__":
 
             # Add camera
             depth_camera_properties = DepthCameraProperties(
-                width=640, height=480, fov_y=np.pi/2, renderer_name="renderer", z_near=0.1, z_far=2.0)
+                width=640, height=480, fov_y=np.pi/2, renderer_name="renderer", z_near=0.1, z_far=5.0)
             parent_frame_id = scene_graph.world_frame_id()
-            # TODO: read the drake docs about RgbdSensor and figure out what to set this transform to
-            # to get the camera upright and facing towards the origin.
-            camera_tf = RigidTransform(p=[1., 0., 0.5], rpy=RollPitchYaw([np.pi/2., 0., 0.]))
-            camera = builder.AddSystem(RgbdSensor(parent_frame_id, camera_tf, depth_camera_properties, show_window=True))
+            # Above origin facing straight down
+            camera_tf = RigidTransform(p=[0., 0., 3.0], rpy=RollPitchYaw([0., np.pi, 0.]))
+            camera = builder.AddSystem(
+                RgbdSensor(parent_frame_id, camera_tf, depth_camera_properties, show_window=True))
             builder.Connect(scene_graph.get_query_output_port(),
                             camera.query_object_input_port())
 
