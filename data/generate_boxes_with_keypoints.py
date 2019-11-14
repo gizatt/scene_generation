@@ -9,6 +9,10 @@ import time
 import yaml
 import sys
 
+import meshcat
+import meshcat.geometry as g
+import meshcat.transformations as tf
+
 import pydrake
 from pydrake.systems.analysis import Simulator
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
@@ -463,7 +467,8 @@ def sample_and_draw_pyro():
         model_keypoint_observations(keypoints, vals, observed_keypoints, observed_vals)
 
     def run_affine_cpd_on_model_and_observed(model_keypoints, model_vals,
-                                             observed_keypoints, observed_vals):
+                                             observed_keypoints, observed_vals,
+                                             verbose=False):
         # CPD essentially operates by modeling the observed keypoints as
         # independent draws from a GMM induced by the model keypoints, where the
         # means of the GMM are constrained to be connected by an affine transform
@@ -473,7 +478,7 @@ def sample_and_draw_pyro():
         N_s = observed_keypoints.shape[1]
         N_m = model_keypoints.shape[1]
         D_spatial = model_keypoints.shape[0]
-        w = 0.1
+        w = 0.01
         assert(len(model_vals.shape) == 2)
         D_feature = model_vals.shape[0]
         def solve_affine(M, S, P, verbose=False):
@@ -505,7 +510,7 @@ def sample_and_draw_pyro():
             rhs = torch.trace(torch.mm(torch.t(S_hat),
                                        torch.mm(torch.t(P),
                                                 torch.mm(M_hat, torch.t(B)))))
-            variance =  (lhs - rhs)/(N_p * S.shape[1])
+            variance =  100.*(lhs - rhs)/(N_p * S.shape[1])
             if verbose:
                 print("\tResulting B = ", B)
                 print("\tResulting t = ", t)
@@ -516,26 +521,28 @@ def sample_and_draw_pyro():
             # Get affine transformation of the model points
             transformed_model_keypoints = torch.mm(B, model_keypoints) + t
             # Concatenate both model and observed with their vals
-            m_with_vals = torch.cat([transformed_model_keypoints, model_vals*100.], dim=0)
-            s_with_vals = torch.cat([observed_keypoints, observed_vals*100.], dim=0)
+            m_with_vals = torch.cat([transformed_model_keypoints, 100.*model_vals], dim=0)
+            s_with_vals = torch.cat([observed_keypoints, 100.*observed_vals], dim=0)
             
             # Reshape each of these into D x N_m x N_s matrix so we can take distances
             m_expanded = m_with_vals.unsqueeze(-1).permute(0, 1, 2).repeat(1, 1, N_s)
             s_expanded = s_with_vals.unsqueeze(-1).permute(0, 2, 1).repeat(1, N_m, 1)
             distances = torch.norm(m_expanded - s_expanded, dim=0)
-            print("Distances: ", distances)
             return distances
 
         # Initial affine TF guess
         random_quat = torch.randn(1, 4)
         random_quat = random_quat / torch.norm(random_quat)
-        B = (1. + torch.randn(1)*0.1) + quaternionToRotMatrix(random_quat)[0, :, :]
+        B = torch.mm(torch.eye(3)*(1. + torch.randn(1)*0.1), quaternionToRotMatrix(random_quat)[0, :, :])
         B = B.double()
         t = torch.randn(3, 1).double()
         # Initialize variance as average distance between all pairs of points
         distances = compute_pairwise_distances(B, t)
+        print("Initial distances: ", distances)
         variance = torch.sum(distances)
-        variance = variance / (model_keypoints.shape[1] * observed_keypoints.shape[1] * (D_feature + D_spatial))
+        variance = variance / (N_s * N_m * (D_feature + D_spatial))
+        print("Init variance: ", variance.item())
+        vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
         for k in range(10):
             # Bound variance
             variance = torch.clamp(variance, min=1E-4, max=None)
@@ -546,13 +553,35 @@ def sample_and_draw_pyro():
             distances = compute_pairwise_distances(B, t)
             # And now just form the complete probability matrix by using the normalization
             matchwise_probs = torch.exp(-distances/(2.*variance))
+            print("Matchwise probs: ", matchwise_probs)
             c = torch.pow((2 * np.pi * variance), (D_feature + D_spatial)/2.) + (w / (1. - w)) * (N_m / N_s)
             col_normalizers = torch.sum(matchwise_probs, dim=0) + c
             P = matchwise_probs / col_normalizers.reshape(1, -1).repeat(N_m, 1)
-            print("P before: ", P)
-            print("B, t, var before: ", B, t, variance)
+            if torch.matrix_rank(P) < 3:
+                if verbose:
+                    print("Failed to find a fit.")
+                break
+            if verbose:
+                print("P before: ", P)
+                print("B, t, var before: ", B, t, variance)
             B, t, variance = solve_affine(torch.t(model_keypoints), torch.t(observed_keypoints), P)
-            print("B, t, var after: ", B, t, variance)
+            if verbose:
+                print("B, t, var after: ", B, t, variance)
+
+            print("Var at iter %d: %f" % (k, variance.item()))
+            model_pts_tf = torch.mm(B, model_keypoints) + t
+            draw_pts_with_meshcat(vis, "fitting/fit", 
+                                  model_pts_tf.detach().numpy(),
+                                  val_channel=2, vals=model_vals.detach().numpy())
+            time.sleep(1.)
+
+        return B, t, P, variance
+
+    def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.01):
+        colors = np.ones((3, pts.shape[1]))
+        colors[val_channel, :] = vals[:]
+        vis[name].set_object(
+            g.PointCloud(position=pts, color=colors, size=size))
 
     def sample_box_from_observed_points(observed_keypoints_and_vals):
         observed_keypoints = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
@@ -570,10 +599,25 @@ def sample_and_draw_pyro():
 
         #observed_keypoints = model_pts
         #observed_vals = model_vals
-        run_affine_cpd_on_model_and_observed(model_pts, model_vals, observed_keypoints, observed_vals)
+        B, t, P, variance = run_affine_cpd_on_model_and_observed(
+            model_pts.detach(), model_vals.detach(),
+            observed_keypoints.detach(), observed_vals.detach())
+        model_pts_tf = torch.mm(B, model_pts) + t
 
-        print(sampled_box)
-        print(model_pts, model_vals)
+        vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
+        
+        draw_pts_with_meshcat(vis, "fitting/observed", 
+                              observed_keypoints.detach().numpy(),
+                              val_channel=0, vals=observed_vals.detach().numpy())
+        draw_pts_with_meshcat(vis, "fitting/fit", 
+                              model_pts_tf.detach().numpy(),
+                              val_channel=2, vals=model_vals.detach().numpy())
+
+        print("Aligned:")
+        print("\tvariance: ", variance)
+        print("\tB: ", B)
+        print("\tt: ", t)
+        print("\tP: ", P)
 
 
 
