@@ -1,6 +1,7 @@
 import argparse
 from collections import namedtuple
 import datetime
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -466,63 +467,31 @@ def sample_and_draw_pyro():
         keypoints, vals = generate_keypoints_from_box_with_label(box)
         model_keypoint_observations(keypoints, vals, observed_keypoints, observed_vals)
 
-    def run_affine_cpd_on_model_and_observed(model_keypoints, model_vals,
-                                             observed_keypoints, observed_vals,
-                                             verbose=False):
-        # CPD essentially operates by modeling the observed keypoints as
-        # independent draws from a GMM induced by the model keypoints, where the
-        # means of the GMM are constrained to be connected by an affine transform
-        # of the model keypoint set, and the variances are unknown.
-        # Ref https://en.wikipedia.org/wiki/Point_set_registration for its abbreviated
-        # algorithm writeup.
-        N_s = observed_keypoints.shape[1]
-        N_m = model_keypoints.shape[1]
-        D_spatial = model_keypoints.shape[0]
-        w = 0.01
+    def sample_correspondences(B, t, C, model_pts, model_vals,
+                               observed_pts, observed_vals,
+                               spatial_variance=0.1,
+                               feature_variance=0.01,
+                               num_mh_iters=1,
+                               outlier_prob=0.01):
+        # Given a fixed affine transform B, t of a set of model points,
+        # a current correspondence set C, and the point sets,
+        # sample from the set of correspondences of those point sets using MH
+        # and a simple flipping proposal.
+        # Inspired by  "EM, MCMC, and Chain Flipping for Structure from Motion
+        # with Unknown Correspondence".
+
+        N_s = observed_pts.shape[1]
+        N_m = model_pts.shape[1]
+        D_spatial = model_pts.shape[0]
         assert(len(model_vals.shape) == 2)
         D_feature = model_vals.shape[0]
-        def solve_affine(M, S, P, verbose=False):
-            # Scene points S, model points M, association probs P
-            # S is Ns x D
-            # M is Nm x D
-            # P is Nm x Ns
-            if verbose:
-                print("Solving affine with ...")
-                print("\tM = ", M)
-                print("\tS = ", S)
-                print("\tP = ", P)
-            P_rowsum = torch.sum(P, dim=1).reshape(-1, 1)
-            P_colsum = torch.sum(P, dim=0).reshape(-1, 1)
-            N_p = torch.sum(P_rowsum)
-            mu_s = torch.mm(torch.t(S), P_colsum) / N_p  # D x 1
-            mu_m = torch.mm(torch.t(M), P_rowsum) / N_p  # D x 1
-            S_hat = torch.t(torch.t(S) - torch.sum(mu_s)) # Take off mean translations
-            M_hat = torch.t(torch.t(M) - torch.sum(mu_m))
-            # Now compute B and t using those terms
-            lhs = torch.mm(torch.t(S_hat), torch.mm(torch.t(P), M_hat))
-            rhs = torch.mm(torch.t(M_hat), torch.mm(torch.diag(P_rowsum.squeeze()), M_hat))
-            rhs = torch.inverse(rhs)
-            B = torch.mm(lhs, rhs)
-            t = mu_s - torch.mm(B, mu_m)
-            # And compute variance using those terms.
-            lhs = torch.trace(torch.mm(torch.t(S_hat),
-                                       torch.mm(torch.diag(P_colsum.squeeze()), S_hat)))
-            rhs = torch.trace(torch.mm(torch.t(S_hat),
-                                       torch.mm(torch.t(P),
-                                                torch.mm(M_hat, torch.t(B)))))
-            variance =  100.*(lhs - rhs)/(N_p * S.shape[1])
-            if verbose:
-                print("\tResulting B = ", B)
-                print("\tResulting t = ", t)
-                print("\tResulting var = ", variance)
-            return B, t, variance
-
+        # Build the pairwise distance matrix in the complete feature space
         def compute_pairwise_distances(B, t):
             # Get affine transformation of the model points
-            transformed_model_keypoints = torch.mm(B, model_keypoints) + t
+            transformed_model_pts = torch.mm(B, model_pts) + t
             # Concatenate both model and observed with their vals
-            m_with_vals = torch.cat([transformed_model_keypoints, 100.*model_vals], dim=0)
-            s_with_vals = torch.cat([observed_keypoints, 100.*observed_vals], dim=0)
+            m_with_vals = torch.cat([transformed_model_pts, 100.*model_vals], dim=0)
+            s_with_vals = torch.cat([observed_pts, 100.*observed_vals], dim=0)
             
             # Reshape each of these into D x N_m x N_s matrix so we can take distances
             m_expanded = m_with_vals.unsqueeze(-1).permute(0, 1, 2).repeat(1, 1, N_s)
@@ -530,52 +499,96 @@ def sample_and_draw_pyro():
             distances = torch.norm(m_expanded - s_expanded, dim=0)
             return distances
 
-        # Initial affine TF guess
-        random_quat = torch.randn(1, 4)
-        random_quat = random_quat / torch.norm(random_quat)
-        B = torch.mm(torch.eye(3)*(1. + torch.randn(1)*0.1), quaternionToRotMatrix(random_quat)[0, :, :])
-        B = B.double()
-        t = torch.randn(3, 1).double()
-        # Initialize variance as average distance between all pairs of points
-        distances = compute_pairwise_distances(B, t)
-        print("Initial distances: ", distances)
-        variance = torch.sum(distances)
-        variance = variance / (N_s * N_m * (D_feature + D_spatial))
-        print("Init variance: ", variance.item())
-        vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
-        for k in range(10):
-            # Bound variance
-            variance = torch.clamp(variance, min=1E-4, max=None)
-            # Compute the association probabilities under the current GMM parameters guesses
-            # Slight deviation from vanilla CPD: the distance between a pair of points
-            # is going to be a combination of the Euclidean distance between the points' features
-            # and the distance between the affine-transformed model point with the scene point.
-            distances = compute_pairwise_distances(B, t)
-            # And now just form the complete probability matrix by using the normalization
-            matchwise_probs = torch.exp(-distances/(2.*variance))
-            print("Matchwise probs: ", matchwise_probs)
-            c = torch.pow((2 * np.pi * variance), (D_feature + D_spatial)/2.) + (w / (1. - w)) * (N_m / N_s)
-            col_normalizers = torch.sum(matchwise_probs, dim=0) + c
-            P = matchwise_probs / col_normalizers.reshape(1, -1).repeat(N_m, 1)
-            if torch.matrix_rank(P) < 3:
-                if verbose:
-                    print("Failed to find a fit.")
-                break
-            if verbose:
-                print("P before: ", P)
-                print("B, t, var before: ", B, t, variance)
-            B, t, variance = solve_affine(torch.t(model_keypoints), torch.t(observed_keypoints), P)
-            if verbose:
-                print("B, t, var after: ", B, t, variance)
+        pairwise_distances = compute_pairwise_distances(B, t)
+        # Translate into probabilities
+        pairwise_distances[0:N_m, :] = (
+            torch.exp(-pairwise_distances[0:N_m, :]/(2.*spatial_variance)) /
+            math.sqrt(2*np.pi*spatial_variance))
+        pairwise_distances[N_m:, :] = (
+            torch.exp(-pairwise_distances[N_m:, :]/(2.*feature_variance)) /
+            math.sqrt(2*np.pi*feature_variance))
 
-            print("Var at iter %d: %f" % (k, variance.item()))
-            model_pts_tf = torch.mm(B, model_keypoints) + t
-            draw_pts_with_meshcat(vis, "fitting/fit", 
-                                  model_pts_tf.detach().numpy(),
-                                  val_channel=2, vals=model_vals.detach().numpy())
-            time.sleep(1.)
+        print("Pairwise scores: ", pairwise_distances)
+        # Augment with a row of the outlier probabilities
+        pairwise_distances = torch.cat([pairwise_distances,
+                                        torch.ones(1, N_s).double()*outlier_prob],
+                                        dim=0)
+        assert(pairwise_distances.shape == C.shape)
 
-        return B, t, P, variance
+        current_score = torch.sum(C * pairwise_distances)
+
+        for k in range(num_mh_iters):
+            # Sample a new correspondence set by randomly flipping some number of correspondences.
+            C_new = C.clone().detach()
+            num_to_flip = dist.Binomial(probs=0.5).sample() + 1
+            for flip_k in range(int(num_to_flip)):
+                to_add_ind_s = torch.randint(N_s, (1, 1))
+                to_add_ind_m = dist.Categorical(
+                    probs=(pairwise_distances*(1. - C))[:, to_add_ind_s].squeeze()).sample()
+                if to_add_ind_m != N_m:
+                    C_new[to_add_ind_m, :] = 0.
+                C_new[:, to_add_ind_s] = 0.
+                C_new[to_add_ind_m, to_add_ind_s] = 1.
+            new_score = torch.sum(C_new * pairwise_distances)
+
+            # MH acceptance
+            if torch.rand(1).item() <= new_score / current_score:
+                C = C_new
+
+        return C
+
+    def sample_transform_given_correspondences(
+            B, t, C, model_pts, observed_pts):
+        # Given the fixed correspondences, find an optimal translation t
+        # and affine transform B to align the corresponded model and observed
+        # points.
+        # In the case of these boxes, I'm going to use a restricted class of
+        # affine transforms allowing scale but not skew, which I'll
+        # formulate
+
+        # Reorder into only the relevant point pairs
+        keep_model_points = C.sum(dim=1) != 0
+        keep_model_points[-1] = False
+        C_reduced = C[keep_model_points, :]
+        model_pts_reduced = model_pts[:, keep_model_points[:-1]]
+        assert(model_pts_reduced.shape[1] <= observed_pts.shape[1])
+        assert(all(torch.sum(C_reduced, dim=1) == 1.))
+        corresp_inds = C_reduced.nonzero()[:, 1]
+        observed_pts_reduced = observed_pts[:, corresp_inds]
+
+        # Get R and s by alternations: see "Orthogonal, but not Orthonormal, Procrustes Problems."
+        scaling = torch.eye(3).double()*0.2
+        model_pts_aligned = torch.t(torch.t(model_pts_reduced) - torch.mean(model_pts_reduced, dim=1))
+        observed_pts_aligned = torch.t(torch.t(observed_pts_reduced) - torch.mean(observed_pts_reduced, dim=1))
+
+        for k in range(50):
+            # Solve for rotation
+            U, S, V = torch.svd(
+                torch.mm(observed_pts_aligned,
+                         torch.mm(torch.t(model_pts_aligned), scaling)))
+            R = torch.mm(U, torch.t(V))
+            # Check det and flip if necessary
+            if(torch.det(R)) < 0:
+                flip_eye = torch.eye(3).double()
+                flip_eye[2, 2] = -1
+                R = torch.mm(U, torch.mm(flip_eye, torch.t(V)))
+            # And recalculate scaling
+            for i in range(3):
+                num = torch.sum(
+                    observed_pts_aligned *
+                    torch.mm(R[:, i].reshape(3, 1), model_pts_aligned[i, :].reshape(1, -1)))
+                denom = torch.sum(torch.pow(model_pts_aligned[i, :], 2.))
+                print("Num and denom: ", num, denom)
+                if torch.abs(num) > 0.01 and torch.abs(denom) > 0.01:
+                    scaling[i, i] = num / denom
+            print("Scaling: ", scaling)
+
+        t = (torch.mean(observed_pts_reduced, dim=1) - torch.mean(
+            torch.mm(R, torch.mm(scaling, model_pts_reduced)), dim=1)).reshape(-1, 1)
+        print("T = ", t)
+
+        return torch.mm(R, scaling), t
+
 
     def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.01):
         colors = np.ones((3, pts.shape[1]))
@@ -583,36 +596,81 @@ def sample_and_draw_pyro():
         vis[name].set_object(
             g.PointCloud(position=pts, color=colors, size=size))
 
+    def draw_corresp_with_meshcat(vis, name, pts_A, pts_B, C, size=0.01):
+        pts = np.zeros((3, 2*C.shape[1]))
+        print(C.shape, pts_A.shape, pts_B.shape)
+        assert(C.shape[0] == pts_A.shape[1] + 1)
+        assert(C.shape[1] == pts_B.shape[1])
+        for k in range(C.shape[1]):
+            nonzero = np.nonzero(C[:, k])
+            if len(nonzero) > 0 and nonzero[0] < pts_A.shape[1]:
+                pts[:, 2*k] = pts_A[:, nonzero[0]]
+                pts[:, 2*k+1] = pts_B[:, k]
+        vis[name].set_object(
+            g.LineSegments(
+                g.PointsGeometry(position=pts),
+                g.PointsMaterial(size=size)))
+
     def sample_box_from_observed_points(observed_keypoints_and_vals):
-        observed_keypoints = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
+        observed_pts = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
         observed_vals = torch.tensor(observed_keypoints_and_vals[3:, :]).double()
 
         # From the observed keypoints and values, sample correspondences and
         # a box pose.
 
-        # Start by randomly initializing a box
-        sampled_box = pyro.poutine.block(generate_single_box)()
+        vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
-        # Greedily correspond observed keypoints to the keypoints of that
-        # sampled box
+        # Start by randomly initializing a box
+        #sampled_box = pyro.poutine.block(generate_single_box)()
+        sampled_box = BoxWithLabel(
+            pose = torch.tensor([1., 0., 0., 0., 0., 0., 0.]).double(),
+            dimensions = torch.ones(3).double(),
+            label_face = "px",
+            label_uv = torch.ones(2).double()*0.5)
+        
+
         model_pts, model_vals = pyro.poutine.block(generate_keypoints_from_box_with_label)(sampled_box)
 
-        #observed_keypoints = model_pts
+        B = torch.eye(3).double()
+        t = torch.zeros(3, 1).double()
+        # Correspondence matrix: one in the corresponding column of a model point and its corresponded
+        # model point, plus one spare row for correspondence with "outlier"
+        C = torch.eye(n=(model_pts.shape[1] + 1), m=observed_pts.shape[1])
+
+        for k in range(10000):
+            print("*************")
+            print("Orig C: ", C)
+            print("Orig B: ", B)
+            print("Orig t: ", t)
+            C = sample_correspondences(
+                B, t, C, model_pts, model_vals,
+                observed_pts, observed_vals)
+            print("Sampled C: ", C)
+            B, t = sample_transform_given_correspondences(
+                B, t, C, model_pts, observed_pts)
+            print("B: ", B)
+            print("t: ", t)
+            
+            model_pts_tf = torch.mm(B, model_pts) + t
+            
+            draw_pts_with_meshcat(vis, "fitting/observed", 
+                                  observed_pts.detach().numpy(),
+                                  val_channel=0, vals=observed_vals.detach().numpy())
+            draw_pts_with_meshcat(vis, "fitting/fit", 
+                                  model_pts_tf.detach().numpy(),
+                                  val_channel=2, vals=model_vals.detach().numpy())
+            draw_corresp_with_meshcat(vis, "fitting/corresp",
+                model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+                C)
+
+            input()
+            
+
+        #observed_pts = model_pts
         #observed_vals = model_vals
         B, t, P, variance = run_affine_cpd_on_model_and_observed(
             model_pts.detach(), model_vals.detach(),
-            observed_keypoints.detach(), observed_vals.detach())
-        model_pts_tf = torch.mm(B, model_pts) + t
-
-        vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
-        
-        draw_pts_with_meshcat(vis, "fitting/observed", 
-                              observed_keypoints.detach().numpy(),
-                              val_channel=0, vals=observed_vals.detach().numpy())
-        draw_pts_with_meshcat(vis, "fitting/fit", 
-                              model_pts_tf.detach().numpy(),
-                              val_channel=2, vals=model_vals.detach().numpy())
-
+            observed_pts.detach(), observed_vals.detach())
         print("Aligned:")
         print("\tvariance: ", variance)
         print("\tB: ", B)
