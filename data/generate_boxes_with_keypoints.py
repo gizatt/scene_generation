@@ -387,6 +387,38 @@ def sample_and_draw_pyro():
         ).permute(2, 0, 1)
         return R.to(q.device)
 
+
+    def rotMatrixToQuaternion(R):
+        """
+        R = [3, 3]
+        From https://github.com/KieranWynn/pyquaternion/blob/master/pyquaternion/quaternion.py#L201
+        This code uses a modification of the algorithm described in:
+        https://d3cw3dd2w32x2b.cloudfront.net/wp-content/uploads/2015/01/matrix-to-quat.pdf
+        which is itself based on the method described here:
+        http://www.euclideanspace.com/maths/geometry/rotations/conversions/matrixToQuaternion/
+        Altered to work with the column vector convention instead of row vectors
+        """
+        q = torch.empty(4, dtype=R.dtype)
+        R = torch.t(R)
+        if R[2, 2] < 0:
+            if R[0, 0] > R[1, 1]:
+                t = 1 + R[0, 0] - R[1, 1] - R[2, 2]
+                q[:] = torch.tensor([R[1, 2]-R[2, 1],  t,  R[0, 1]+R[1, 0],  R[2, 0]+R[0, 2]])
+            else:
+                t = 1 - R[0, 0] + R[1, 1] - R[2, 2]
+                q[:] = torch.tensor([R[2, 0]-R[0, 2],  R[0, 1]+R[1, 0],  t,  R[1, 2]+R[2, 1]])
+        else:
+            if R[0, 0] < -R[1, 1]:
+                t = 1 - R[0, 0] - R[1, 1] + R[2, 2]
+                q[:] = torch.tensor([R[0, 1]-R[1, 0],  R[2, 0]+R[0, 2],  R[1, 2]+R[2, 1],  t])
+            else:
+                t = 1 + R[0, 0] + R[1, 1] + R[2, 2]
+                q[:] = torch.tensor([t,  R[1, 2]-R[2, 1],  R[2, 0]-R[0, 2],  R[0, 1]-R[1, 0]])
+
+        q = q * 0.5 / torch.sqrt(t)
+        return q
+
+
     def transParamsToHomMatrix(q, t):
         """q = [V, 4], t = [V,3]"""
         N = q.size(0)
@@ -415,59 +447,67 @@ def sample_and_draw_pyro():
         pts = torch.mm(tf_mat, torch.cat([pts, torch.ones(pts.shape[1]).double().reshape(1, -1)], dim=0))[:3, :]
         return pts, vals
 
-    # This is written as a model of observed data, not a generative model --
-    # i.e. I have a for-each-datapoint loop that associates each datapoint
-    # with its underlying true keypoint.
-    def model_keypoint_observations(keypoints, vals, observed_keypoints=None, observed_vals=None):
-        # Model the assignment of each observed datapoint with a keypoint
-        n_possible_keypoints = keypoints.shape[1]
-        assignment_probs = pyro.param(
-            "assignment_probs",
-            torch.ones(n_possible_keypoints).double(),
-            constraint=constraints.simplex)
-        #outlier_prob = pyro.param("outlier_prob", torch.ones(1)*0.2,
-        #                          constraint=constraints.unit_interval)
+    # Simple generative model of keypoints: assume a number of observed keypoints are
+    # drawn from a GMM with components from each keypoint plus an "outlier" component.
+    # The number of observed keypoints is drawn from an (uninformative) discrete
+    # uniform distribution. (Maybe something with infinite support would be better?)
+    def model_keypoint_observations_gmm(keypoints, vals):
+        print("Keypoints: ", keypoints)
+        print("Vals: ", vals)
+        max_num_keypoints = keypoints.shape[1] + 5
+        num_keypoints = pyro.sample(
+            "num_observed_keypoints_minus_one",
+            dist.Categorical(probs=torch.ones(max_num_keypoints).double())) + 1
 
-        n_observed_keypoints = observed_keypoints.shape[1]
-        # Assume each detected point is independent, choosing from among the
-        # possible keypoints / vals of this box plus being an outlier
-        with pyro.plate("detections", n_observed_keypoints):
-            assignment = pyro.sample(
-                "assignment",
-                dist.Categorical(assignment_probs),
-                infer={"enumerate":"sequential"})
-            #is_spurious = pyro.sample("outlier", dist.Bernoulli(outlier_prob),
-            #                          infer={"enumerate":"sequential"}).type(torch.ByteTensor)
+        print("observed %d keypoints this time " % num_keypoints)
 
-            # Ultimately model a keypoint observation as being normally distributed
-            # in 3D space as well as the value space, by stacking the two
-            augmented_keypoints = torch.cat([
-                keypoints[:, assignment], vals[0, assignment].reshape(-1, assignment.shape[0])], dim=0)
-            augmented_keypoints_obs = torch.cat([
-                observed_keypoints,
-                observed_vals.reshape(-1, observed_keypoints.shape[1])], dim=0)
-            keypoint_emission_scale = 0.01
-            #with pyro.poutine.mask(mask=is_spurious):
-            #    pyro.sample("spurious_observations",
-            #                dist.Normal(0., 1.).expand(augmented_keypoints_obs.shape).to_event(2),
-            #                obs=augmented_keypoints_obs)
-            #with pyro.poutine.mask(mask=is_spurious):
-            pyro.sample("real_observations",
-                        dist.Normal(augmented_keypoints_obs, keypoint_emission_scale).to_event(2),
-                        obs=augmented_keypoints_obs)
-        
+        keypoint_var = pyro.param(
+            "keypoint_var",
+            torch.tensor([0.2]).double(),
+            constraint=constraints.positive)
+        val_var = pyro.param(
+            "val_var",
+            torch.tensor([0.1]).double(),
+            constraint=constraints.positive)
+        outlier_var = pyro.param(
+            "outlier_var",
+            torch.tensor([1.0]).double(),
+            constraint=constraints.positive)
+        outlier_logit = pyro.param(
+            "outlier_weight",
+            torch.tensor([0.1]).double(),
+            constraint=constraints.positive)
 
+        # Make the maodel components
+        locs = torch.cat([keypoints, vals], dim=0)
+        scales = torch.cat([torch.ones(keypoints.shape).double()*keypoint_var,
+                            torch.ones(vals.shape).double()*val_var])
+        # Add the outlier component
+        locs = torch.cat([locs, torch.zeros(locs.shape[0], 1).double()], dim=1)
+        scales = torch.cat([scales, torch.ones(locs.shape[0], 1).double()*outlier_var], dim=1)
 
-    def conditioned_model(observed_keypoints_and_vals):
-        observed_keypoints = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
-        observed_vals = torch.tensor(observed_keypoints_and_vals[3:, :]).double()
+        # Component weights
+        component_probs = torch.cat([
+            torch.ones(keypoints.shape[1]).double(),
+            outlier_logit], dim=0)
+        component_probs = component_probs / torch.sum(component_probs)
+        component_logits = torch.log(component_probs / (1. - component_probs))
 
+        generation_dist = dist.MixtureOfDiagNormals(
+            locs=torch.t(locs),
+            coord_scale=torch.t(scales),
+            component_logits=component_logits)
+
+        observed_keypoints_and_vals = pyro.sample(
+            "observed_keypoints_and_vals", generation_dist)
+
+    def full_model():
         box = generate_single_box()
         label_origin, label_size = get_label_info_from_box_with_label(box)
         keypoints, vals = generate_keypoints_from_box_with_label(box)
-        model_keypoint_observations(keypoints, vals, observed_keypoints, observed_vals)
+        model_keypoint_observations_gmm(keypoints, vals)
 
-    def sample_correspondences(B, t, C, model_pts, model_vals,
+    def sample_correspondences(R, scaling, t, C, model_pts, model_vals,
                                observed_pts, observed_vals,
                                spatial_variance=0.1,
                                feature_variance=0.01,
@@ -486,9 +526,9 @@ def sample_and_draw_pyro():
         assert(len(model_vals.shape) == 2)
         D_feature = model_vals.shape[0]
         # Build the pairwise distance matrix in the complete feature space
-        def compute_pairwise_distances(B, t):
+        def compute_pairwise_distances(R, scaling, t):
             # Get affine transformation of the model points
-            transformed_model_pts = torch.mm(B, model_pts) + t
+            transformed_model_pts = torch.mm(R, torch.mm(scaling, model_pts)) + t
             # Concatenate both model and observed with their vals
             m_with_vals = torch.cat([transformed_model_pts, 100.*model_vals], dim=0)
             s_with_vals = torch.cat([observed_pts, 100.*observed_vals], dim=0)
@@ -499,7 +539,7 @@ def sample_and_draw_pyro():
             distances = torch.norm(m_expanded - s_expanded, dim=0)
             return distances
 
-        pairwise_distances = compute_pairwise_distances(B, t)
+        pairwise_distances = compute_pairwise_distances(R, scaling, t)
         # Translate into probabilities
         pairwise_distances[0:N_m, :] = (
             torch.exp(-pairwise_distances[0:N_m, :]/(2.*spatial_variance)) /
@@ -537,14 +577,15 @@ def sample_and_draw_pyro():
 
         return C
 
-    def sample_transform_given_correspondences(
-            B, t, C, model_pts, observed_pts):
+    def sample_transform_given_correspondences(C, model_pts, observed_pts):
         # Given the fixed correspondences, find an optimal translation t
         # and affine transform B to align the corresponded model and observed
         # points.
         # In the case of these boxes, I'm going to use a restricted class of
-        # affine transforms allowing scale but not skew, which I'll
-        # formulate
+        # affine transforms allowing scale but not skew: the full transform
+        # is R * scaling * model_points + t = observed points
+        # where scaling is a 3x3 diagonal matrix. As long as the model
+        # points are 
 
         # Reorder into only the relevant point pairs
         keep_model_points = C.sum(dim=1) != 0
@@ -572,22 +613,26 @@ def sample_and_draw_pyro():
                 flip_eye = torch.eye(3).double()
                 flip_eye[2, 2] = -1
                 R = torch.mm(U, torch.mm(flip_eye, torch.t(V)))
-            # And recalculate scaling
+
+            # Use a few steps of HMC for the remaining continuous parameters, to simulate
+            # drawing from the posterior of these paramaters conditions.
+            # (Parameters of interest: dimensions, label uv)
+
+            # Closed form scaling update:
             for i in range(3):
                 num = torch.sum(
                     observed_pts_aligned *
                     torch.mm(R[:, i].reshape(3, 1), model_pts_aligned[i, :].reshape(1, -1)))
                 denom = torch.sum(torch.pow(model_pts_aligned[i, :], 2.))
-                print("Num and denom: ", num, denom)
                 if torch.abs(num) > 0.01 and torch.abs(denom) > 0.01:
                     scaling[i, i] = num / denom
-            print("Scaling: ", scaling)
+            scaling = torch.clamp(scaling, 0.01, 1.0)
+
 
         t = (torch.mean(observed_pts_reduced, dim=1) - torch.mean(
             torch.mm(R, torch.mm(scaling, model_pts_reduced)), dim=1)).reshape(-1, 1)
-        print("T = ", t)
 
-        return torch.mm(R, scaling), t
+        return R, scaling, t
 
 
     def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.01):
@@ -631,27 +676,30 @@ def sample_and_draw_pyro():
 
         model_pts, model_vals = pyro.poutine.block(generate_keypoints_from_box_with_label)(sampled_box)
 
-        B = torch.eye(3).double()
+        R = torch.eye(3).double()
+        scaling = torch.eye(3).double()
         t = torch.zeros(3, 1).double()
         # Correspondence matrix: one in the corresponding column of a model point and its corresponded
         # model point, plus one spare row for correspondence with "outlier"
         C = torch.eye(n=(model_pts.shape[1] + 1), m=observed_pts.shape[1])
 
-        for k in range(10000):
+        for k in range(100):
             print("*************")
             print("Orig C: ", C)
-            print("Orig B: ", B)
+            print("Orig R: ", R)
+            print("Orig scaling: ", scaling)
             print("Orig t: ", t)
             C = sample_correspondences(
-                B, t, C, model_pts, model_vals,
+                R, scaling, t, C, model_pts, model_vals,
                 observed_pts, observed_vals)
             print("Sampled C: ", C)
-            B, t = sample_transform_given_correspondences(
-                B, t, C, model_pts, observed_pts)
-            print("B: ", B)
+            R, scaling, t = sample_transform_given_correspondences(
+                C, model_pts, observed_pts)
+            print("R: ", R)
+            print("scaling: ", scaling)
             print("t: ", t)
             
-            model_pts_tf = torch.mm(B, model_pts) + t
+            model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
             
             draw_pts_with_meshcat(vis, "fitting/observed", 
                                   observed_pts.detach().numpy(),
@@ -663,62 +711,37 @@ def sample_and_draw_pyro():
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
 
-            input()
+            # Compute score using the Pyro models
+            conditioned_model = pyro.poutine.condition(
+                full_model,
+                data={
+                    "box_xyz": t.squeeze(),
+                    "box_quat": rotMatrixToQuaternion(R),
+                    "box_dimensions": torch.diag(scaling),
+                    #"box_label_face": "px",
+                    #"box_label_uv": 
+                    "num_observed_keypoints_minus_one": torch.tensor([C.shape[1] - 1]),
+                    "observed_keypoints_and_vals": torch.t(torch.cat([observed_pts, observed_vals], dim=0))
+                })
+            print("Getting trace")
+            trace = pyro.poutine.trace(conditioned_model).get_trace()
+            print("Total Log prob sum: ", trace.log_prob_sum())
+            #or name, site in trace.nodes.items():
+            #   if site["type"] is "sample":
+            #       print("Name: ", name)
+            #       print("\tValue: ", site["value"])
+            #       print("\tlog prob sum: ", site["log_prob_sum"])
             
-
-        #observed_pts = model_pts
-        #observed_vals = model_vals
-        B, t, P, variance = run_affine_cpd_on_model_and_observed(
-            model_pts.detach(), model_vals.detach(),
-            observed_pts.detach(), observed_vals.detach())
-        print("Aligned:")
-        print("\tvariance: ", variance)
-        print("\tB: ", B)
-        print("\tt: ", t)
-        print("\tP: ", P)
+            input()
 
 
+    from pyro.contrib.autoguide import AutoGuideList, AutoDelta, AutoDiagonalNormal, AutoDiscreteParallel
+    from pyro.infer import SVI, Trace_ELBO, TraceEnum_ELBO
+    from pyro.optim import Adam
 
-    if 1:
-        from pyro.contrib.autoguide import AutoGuideList, AutoDelta, AutoDiagonalNormal, AutoDiscreteParallel
-        from pyro.infer import SVI, Trace_ELBO, TraceEnum_ELBO
-        from pyro.optim import Adam
+    observed_keypoints_and_vals = np.loadtxt("keypoints_obs.np")
+    print(sample_box_from_observed_points(observed_keypoints_and_vals))
 
-        observed_keypoints_and_vals = np.loadtxt("keypoints_obs.np")
-        print(sample_box_from_observed_points(observed_keypoints_and_vals))
-        sys.exit(0)
-
-        guide = AutoGuideList(conditioned_model)
-        discrete_sites = ["box_label_face", "assignment"]
-        guide.add(AutoDelta(
-            pyro.poutine.block(conditioned_model, hide=discrete_sites)))
-        #guide.add(AutoDiscreteParallel(
-        #    pyro.poutine.block(conditioned_model, expose=discrete_sites)))
-        optim = Adam({'lr': 0.1})
-        svi = SVI(conditioned_model, guide, optim, TraceEnum_ELBO())
-
-        for step in range(100):
-            loss = svi.step(observed_keypoints_and_vals)
-            print("%03d: %07.07f" % (step, loss))
-
-        for param_name in pyro.get_param_store().keys():
-            print("%s: " % param_name, pyro.param(param_name))
-        
-        
-    if 0:
-        from pyro.infer.mcmc import HMC
-        from pyro.infer.mcmc.api import MCMC
-        nuts_kernel = HMC(
-            conditioned_model,
-            max_plate_nesting=1,
-            target_accept_prob=0.8)
-        mcmc = MCMC(nuts_kernel,
-                    num_samples=10,
-                    warmup_steps=25,
-                    num_chains=1)
-        mcmc.run()
-        mcmc.summary(prob=0.5)
-        print(mcmc.get_samples())
 
 if __name__ == "__main__":
     #sample_and_draw_drake()
