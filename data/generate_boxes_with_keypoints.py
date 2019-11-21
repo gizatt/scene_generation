@@ -76,7 +76,8 @@ def generate_keypoints_from_box_with_label(box):
     # At make a point for the label origin
     label_origin, _ = get_label_info_from_box_with_label(box)
     pts = np.hstack([pts, label_origin[:, np.newaxis]])
-    vals = np.linspace(0., 1., pts.shape[1]).reshape(1, -1)
+    vals = np.zeros(pts.shape[1]).reshape(1, -1)
+    vals[0, -1] = 1.
     quat = box.pose[:4] / np.linalg.norm(box.pose[:4])
     pts = RigidTransform(p=box.pose[-3:], quaternion=Quaternion(quat)).multiply(pts)
     return pts, vals
@@ -103,11 +104,11 @@ def generate_mbp_sg_diagram(seed):
             np.random.uniform(0.1, 0.3),
             np.random.uniform(0.1, 0.3)
         ])
-        label_face = np.random.choice(['p', 'n']) + \
-                     np.random.choice(['x', 'y', 'z'])
-        label_uv = np.array([
-            np.random.uniform(0.2, 0.8),
-            np.random.uniform(0.2, 0.8)])
+        label_face = "px" #np.random.choice(['p', 'n']) + \
+                     #np.random.choice(['x', 'y', 'z'])
+        label_uv = np.array([0.5, 0.5]) #np.array([
+            #np.random.uniform(0.2, 0.8),
+            #np.random.uniform(0.2, 0.8)])
 
         boxes.append(
             BoxWithLabel(pose=pose, dimensions=dimensions,
@@ -278,13 +279,13 @@ def sample_and_draw_drake():
         if depths[k] < depth_im[u, v] + 1E-2:
             keep[k] = 1.
     keypoints_rendered_visible = keypoints_rendered[:, keep > 0]
-    vals_visible = vals[keep > 0]
+    vals_visible = vals[:, keep > 0]
 
     plt.figure()
     plt.imshow(depth_im, cmap='summer')
     plt.scatter(keypoints_rendered_visible[0, :],
                 keypoints_rendered_visible[1, :],
-                c=vals_visible, cmap="winter")
+                c=vals_visible[0, :], cmap="winter")
     plt.xlim(0, 640)
     plt.ylim(0, 480)
     plt.gca().invert_xaxis()
@@ -304,13 +305,10 @@ def sample_and_draw_pyro():
     import torch.distributions.constraints as constraints
 
     def generate_single_box(name="box"):
-        quat_mean = pyro.param("quat_mean", torch.zeros(4).double())
-        quat_scale = pyro.param(
-            "quat_scale", torch.ones(4).double(),
-            constraint=constraints.positive)
         quat = pyro.sample(
             name + "_quat",
-            dist.Normal(quat_mean, quat_scale).to_event(1)
+            dist.Uniform(torch.ones(4).double()*-1.01,
+                         torch.ones(4).double()*1.01).to_event(1)
         )
         quat = quat / torch.norm(quat)
 
@@ -440,7 +438,8 @@ def sample_and_draw_pyro():
         # At make a point for the label origin
         label_origin, _ = get_label_info_from_box_with_label(box)
         pts = torch.cat([pts, label_origin[:, np.newaxis]], dim=1)
-        vals = torch.linspace(0., 1., pts.shape[1]).double().reshape(1, -1)
+        vals = torch.zeros(pts.shape[1]).double().reshape(1, -1)
+        vals[0, -1] = 1.
         quat = box.pose[:4].reshape(1, -1)
         xyz = box.pose[-3:].reshape(1, -1)
         tf_mat = transParamsToHomMatrix(quat, xyz)[0]
@@ -463,19 +462,19 @@ def sample_and_draw_pyro():
 
         keypoint_var = pyro.param(
             "keypoint_var",
-            torch.tensor([0.2]).double(),
+            torch.tensor([0.01]).double(),
             constraint=constraints.positive)
         val_var = pyro.param(
             "val_var",
-            torch.tensor([0.1]).double(),
+            torch.tensor([0.01]).double(),
             constraint=constraints.positive)
         outlier_var = pyro.param(
             "outlier_var",
             torch.tensor([1.0]).double(),
             constraint=constraints.positive)
-        outlier_logit = pyro.param(
+        outlier_weight = pyro.param(
             "outlier_weight",
-            torch.tensor([0.1]).double(),
+            torch.tensor([0.01]).double(),
             constraint=constraints.positive)
 
         # Make the maodel components
@@ -489,14 +488,14 @@ def sample_and_draw_pyro():
         # Component weights
         component_probs = torch.cat([
             torch.ones(keypoints.shape[1]).double(),
-            outlier_logit], dim=0)
+            outlier_weight], dim=0)
         component_probs = component_probs / torch.sum(component_probs)
         component_logits = torch.log(component_probs / (1. - component_probs))
 
         generation_dist = dist.MixtureOfDiagNormals(
             locs=torch.t(locs),
             coord_scale=torch.t(scales),
-            component_logits=component_logits)
+            component_logits=component_logits).expand(num_keypoints)
 
         observed_keypoints_and_vals = pyro.sample(
             "observed_keypoints_and_vals", generation_dist)
@@ -509,9 +508,9 @@ def sample_and_draw_pyro():
 
     def sample_correspondences(R, scaling, t, C, model_pts, model_vals,
                                observed_pts, observed_vals,
-                               spatial_variance=0.1,
+                               spatial_variance=0.01,
                                feature_variance=0.01,
-                               num_mh_iters=1,
+                               num_mh_iters=5,
                                outlier_prob=0.01):
         # Given a fixed affine transform B, t of a set of model points,
         # a current correspondence set C, and the point sets,
@@ -594,15 +593,16 @@ def sample_and_draw_pyro():
         model_pts_reduced = model_pts[:, keep_model_points[:-1]]
         assert(model_pts_reduced.shape[1] <= observed_pts.shape[1])
         assert(all(torch.sum(C_reduced, dim=1) == 1.))
+        assert(torch.sum(keep_model_points) > 0)
         corresp_inds = C_reduced.nonzero()[:, 1]
         observed_pts_reduced = observed_pts[:, corresp_inds]
 
         # Get R and s by alternations: see "Orthogonal, but not Orthonormal, Procrustes Problems."
-        scaling = torch.eye(3).double()*0.2
+        scaling = torch.eye(3).double()*0.5
         model_pts_aligned = torch.t(torch.t(model_pts_reduced) - torch.mean(model_pts_reduced, dim=1))
         observed_pts_aligned = torch.t(torch.t(observed_pts_reduced) - torch.mean(observed_pts_reduced, dim=1))
 
-        for k in range(50):
+        for k in range(10):
             # Solve for rotation
             U, S, V = torch.svd(
                 torch.mm(observed_pts_aligned,
@@ -627,7 +627,6 @@ def sample_and_draw_pyro():
                 if torch.abs(num) > 0.01 and torch.abs(denom) > 0.01:
                     scaling[i, i] = num / denom
             scaling = torch.clamp(scaling, 0.01, 1.0)
-
 
         t = (torch.mean(observed_pts_reduced, dim=1) - torch.mean(
             torch.mm(R, torch.mm(scaling, model_pts_reduced)), dim=1)).reshape(-1, 1)
@@ -666,15 +665,25 @@ def sample_and_draw_pyro():
         vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
         # Start by randomly initializing a box
-        #sampled_box = pyro.poutine.block(generate_single_box)()
-        sampled_box = BoxWithLabel(
-            pose = torch.tensor([1., 0., 0., 0., 0., 0., 0.]).double(),
-            dimensions = torch.ones(3).double(),
-            label_face = "px",
-            label_uv = torch.ones(2).double()*0.5)
-        
-
-        model_pts, model_vals = pyro.poutine.block(generate_keypoints_from_box_with_label)(sampled_box)
+        site_values = {
+            "box_xyz": torch.zeros(3).double(),
+            "box_quat": torch.tensor([1., 0., 0., 0.]).double(),
+            "box_dimensions": torch.ones(3).double(),
+            "box_label_face": torch.tensor([0]).long(),
+            "box_label_uv": torch.tensor([0.5, 0.5]).double(),
+            "num_observed_keypoints_minus_one": torch.tensor([observed_pts.shape[1] - 1]).long(),
+            "observed_keypoints_and_vals": torch.t(torch.cat([observed_pts, observed_vals], dim=0))
+        }
+        def sample_model_pts_and_vals():
+            box = generate_single_box()
+            label_origin, label_size = get_label_info_from_box_with_label(box)
+            keypoints, vals = generate_keypoints_from_box_with_label(box)
+            return keypoints, vals
+        model_pts, model_vals = pyro.poutine.block(
+            pyro.poutine.condition(
+                sample_model_pts_and_vals,
+                data=site_values
+            ))()
 
         R = torch.eye(3).double()
         scaling = torch.eye(3).double()
@@ -683,24 +692,108 @@ def sample_and_draw_pyro():
         # model point, plus one spare row for correspondence with "outlier"
         C = torch.eye(n=(model_pts.shape[1] + 1), m=observed_pts.shape[1])
 
+        best_score = -1000.
+        best_params = None
         for k in range(100):
-            print("*************")
-            print("Orig C: ", C)
-            print("Orig R: ", R)
-            print("Orig scaling: ", scaling)
-            print("Orig t: ", t)
+            print("*******ITER %03d*******" % k)
+
+            # Regenerate model-frame model points and values given current guesses
+            # of some key latents
+            model_pts, model_vals = pyro.poutine.block(
+                        pyro.poutine.condition(
+                            sample_model_pts_and_vals,
+                            data={
+                                "box_xyz": torch.zeros(3).double(),
+                                "box_xyz": torch.zeros(3).double(),
+                                "box_quat": torch.tensor([1., 0., 0., 0.]).double(),
+                                "box_dimensions": torch.ones(3).double(),
+                                "box_label_face": site_values["box_label_face"],
+                                "box_label_uv": site_values["box_label_uv"]
+                            }
+                        ))()
+
             C = sample_correspondences(
                 R, scaling, t, C, model_pts, model_vals,
                 observed_pts, observed_vals)
-            print("Sampled C: ", C)
-            R, scaling, t = sample_transform_given_correspondences(
-                C, model_pts, observed_pts)
-            print("R: ", R)
-            print("scaling: ", scaling)
-            print("t: ", t)
+            if torch.sum(C[:-1, :]) > 0: # Skip transform if there are no non-outlier corresps
+                R, scaling, t = sample_transform_given_correspondences(
+                    C, model_pts, observed_pts)
+            site_values["box_xyz"] = t.squeeze().detach()
+            site_values["box_quat"] = rotMatrixToQuaternion(R).detach()
+            #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+            site_values["box_dimensions"] = torch.diag(scaling).detach()
+
+            # Additionally, do gradient descent on the continuous params
+           #gd_site_names = ["box_xyz", "box_quat", "box_dimensions"]
+           #for gd_k in range(10):
+           #    for site_name in gd_site_names:
+           #        site_values[site_name].requires_grad = True
+           #        if site_values[site_name].grad is not None:
+           #            site_values[site_name].grad.data.zero_()
+           #        print(site_values[site_name].grad)
+           #    # Compute score using the Pyro models
+           #    conditioned_model = pyro.poutine.condition(
+           #        full_model,
+           #        data=site_values)
+           #    trace = pyro.poutine.trace(conditioned_model).get_trace()
+           #    lps = trace.log_prob_sum()
+           #    lps.backward()
+
+           #    print("vals after backward: ", site_values)
+           #    for site_name in gd_site_names:
+           #        print(site_name, ": ", site_values[site_name].grad)
+           #        site_values[site_name].data += site_values[site_name].grad * 0.001
+           #    site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
+           #    R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+           #    t = site_values["box_xyz"].reshape(-1, 1)
+
+
+           #    scaling = torch.diag(site_values["box_dimensions"])
+           #    model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
+           #    draw_pts_with_meshcat(vis, "fitting/observed", 
+           #                          observed_pts.detach().numpy(),
+           #                          val_channel=0, vals=observed_vals.detach().numpy())
+           #    draw_pts_with_meshcat(vis, "fitting/fit", 
+           #                          model_pts_tf.detach().numpy(),
+           #                          val_channel=2, vals=model_vals.detach().numpy())
+           #    draw_corresp_with_meshcat(vis, "fitting/corresp",
+           #        model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+           #        C)
+           #    input()
+
+            # Compute score using the Pyro models
+            conditioned_model = pyro.poutine.condition(
+                full_model,
+                data=site_values)
+            trace = pyro.poutine.trace(conditioned_model).get_trace()
+            lps = trace.log_prob_sum()
+            lps.backward()
+
+            for name, site in trace.nodes.items():
+                if site["type"] is "sample":
+                    print("Name: ", name)
+                    print("\tValue: ", site["value"])
+                    print("\tlog prob sum: ", site["log_prob_sum"])
+            print("Total Log prob sum: ", lps)
             
+            if lps.item() > best_score:
+                best_score = lps.item()
+                best_params = (R, scaling, t, C)
+            
+
+            #drawn_points = torch.t(trace.nodes["observed_keypoints_and_vals"]["value"])
+            #print(trace.nodes["observed_keypoints_and_vals"])
+            #drawn_pts = drawn_points[:3, :]
+            #drawn_vals = drawn_points[3, :]
+            #draw_pts_with_meshcat(vis, "fitting/drawn", 
+            #                      drawn_pts.detach().numpy(),
+            #                      val_channel=1, vals=drawn_vals.detach().numpy())
+            
+
+            scaling = torch.diag(site_values["box_dimensions"])
+            R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+            t = site_values["box_xyz"].reshape(-1, 1)
             model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
-            
             draw_pts_with_meshcat(vis, "fitting/observed", 
                                   observed_pts.detach().numpy(),
                                   val_channel=0, vals=observed_vals.detach().numpy())
@@ -711,33 +804,26 @@ def sample_and_draw_pyro():
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
 
-            # Compute score using the Pyro models
-            conditioned_model = pyro.poutine.condition(
-                full_model,
-                data={
-                    "box_xyz": t.squeeze(),
-                    "box_quat": rotMatrixToQuaternion(R),
-                    "box_dimensions": torch.diag(scaling),
-                    #"box_label_face": "px",
-                    #"box_label_uv": 
-                    "num_observed_keypoints_minus_one": torch.tensor([C.shape[1] - 1]),
-                    "observed_keypoints_and_vals": torch.t(torch.cat([observed_pts, observed_vals], dim=0))
-                })
-            print("Getting trace")
-            trace = pyro.poutine.trace(conditioned_model).get_trace()
-            print("Total Log prob sum: ", trace.log_prob_sum())
-            #or name, site in trace.nodes.items():
-            #   if site["type"] is "sample":
-            #       print("Name: ", name)
-            #       print("\tValue: ", site["value"])
-            #       print("\tlog prob sum: ", site["log_prob_sum"])
-            
             input()
 
+        model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
+        draw_pts_with_meshcat(vis, "fitting/observed", 
+                              observed_pts.detach().numpy(),
+                              val_channel=0, vals=observed_vals.detach().numpy())
+        draw_pts_with_meshcat(vis, "fitting/fit", 
+                              model_pts_tf.detach().numpy(),
+                              val_channel=2, vals=model_vals.detach().numpy())
+        draw_corresp_with_meshcat(vis, "fitting/corresp",
+            model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+            best_params[3])
+        print("Best final score: ", best_score)
+        print("Best final params: ", best_params)
 
     from pyro.contrib.autoguide import AutoGuideList, AutoDelta, AutoDiagonalNormal, AutoDiscreteParallel
     from pyro.infer import SVI, Trace_ELBO, TraceEnum_ELBO
     from pyro.optim import Adam
+
+    #sample_and_draw_drake()
 
     observed_keypoints_and_vals = np.loadtxt("keypoints_obs.np")
     print(sample_box_from_observed_points(observed_keypoints_and_vals))
