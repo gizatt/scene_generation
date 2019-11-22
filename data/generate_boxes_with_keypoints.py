@@ -693,8 +693,9 @@ def sample_and_draw_pyro():
         C = torch.eye(n=(model_pts.shape[1] + 1), m=observed_pts.shape[1])
 
         best_score = -1000.
+        all_scores = []
         best_params = None
-        for k in range(100):
+        for k in range(500):
             print("*******ITER %03d*******" % k)
 
             # Regenerate model-frame model points and values given current guesses
@@ -723,43 +724,43 @@ def sample_and_draw_pyro():
             #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
             site_values["box_dimensions"] = torch.diag(scaling).detach()
 
-            # Additionally, do gradient descent on the continuous params
-           #gd_site_names = ["box_xyz", "box_quat", "box_dimensions"]
-           #for gd_k in range(10):
-           #    for site_name in gd_site_names:
-           #        site_values[site_name].requires_grad = True
-           #        if site_values[site_name].grad is not None:
-           #            site_values[site_name].grad.data.zero_()
-           #        print(site_values[site_name].grad)
-           #    # Compute score using the Pyro models
-           #    conditioned_model = pyro.poutine.condition(
-           #        full_model,
-           #        data=site_values)
-           #    trace = pyro.poutine.trace(conditioned_model).get_trace()
-           #    lps = trace.log_prob_sum()
-           #    lps.backward()
-
-           #    print("vals after backward: ", site_values)
-           #    for site_name in gd_site_names:
-           #        print(site_name, ": ", site_values[site_name].grad)
-           #        site_values[site_name].data += site_values[site_name].grad * 0.001
-           #    site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
-           #    R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
-           #    t = site_values["box_xyz"].reshape(-1, 1)
-
-
-           #    scaling = torch.diag(site_values["box_dimensions"])
-           #    model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
-           #    draw_pts_with_meshcat(vis, "fitting/observed", 
-           #                          observed_pts.detach().numpy(),
-           #                          val_channel=0, vals=observed_vals.detach().numpy())
-           #    draw_pts_with_meshcat(vis, "fitting/fit", 
-           #                          model_pts_tf.detach().numpy(),
-           #                          val_channel=2, vals=model_vals.detach().numpy())
-           #    draw_corresp_with_meshcat(vis, "fitting/corresp",
-           #        model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
-           #        C)
-           #    input()
+            ## Additionally, do gradient descent on the continuous params
+            gd_site_names = ["box_label_uv"]
+            for gd_k in range(10):
+                for site_name in gd_site_names:
+                    site_values[site_name].requires_grad = True
+                    if site_values[site_name].grad is not None:
+                        site_values[site_name].grad.data.zero_()
+                    print(site_values[site_name].grad)
+                # Compute score using the Pyro models
+                conditioned_model = pyro.poutine.condition(
+                    full_model,
+                    data=site_values)
+                trace = pyro.poutine.trace(conditioned_model).get_trace()
+                lps = trace.log_prob_sum()
+                lps.backward()
+#
+                print("vals after backward: ", site_values)
+                for site_name in gd_site_names:
+                    print(site_name, ": ", site_values[site_name].grad)
+                    site_values[site_name].data += site_values[site_name].grad * 0.001
+                site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
+                R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+                t = site_values["box_xyz"].reshape(-1, 1)
+#
+#
+                scaling = torch.diag(site_values["box_dimensions"])
+                model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
+                draw_pts_with_meshcat(vis, "fitting/observed", 
+                                      observed_pts.detach().numpy(),
+                                      val_channel=0, vals=observed_vals.detach().numpy())
+                draw_pts_with_meshcat(vis, "fitting/fit", 
+                                      model_pts_tf.detach().numpy(),
+                                      val_channel=2, vals=model_vals.detach().numpy())
+                draw_corresp_with_meshcat(vis, "fitting/corresp",
+                    model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+                    C)
+            #    input()
 
             # Compute score using the Pyro models
             conditioned_model = pyro.poutine.condition(
@@ -776,6 +777,7 @@ def sample_and_draw_pyro():
                     print("\tlog prob sum: ", site["log_prob_sum"])
             print("Total Log prob sum: ", lps)
             
+            all_scores.append(lps.detach().item())
             if lps.item() > best_score:
                 best_score = lps.item()
                 best_params = (R, scaling, t, C)
@@ -804,7 +806,7 @@ def sample_and_draw_pyro():
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
 
-            input()
+            #input()
 
         model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
         draw_pts_with_meshcat(vis, "fitting/observed", 
@@ -818,6 +820,10 @@ def sample_and_draw_pyro():
             best_params[3])
         print("Best final score: ", best_score)
         print("Best final params: ", best_params)
+
+        plt.figure()
+        plt.hist(all_scores)
+        plt.show()
 
     from pyro.contrib.autoguide import AutoGuideList, AutoDelta, AutoDiagonalNormal, AutoDiscreteParallel
     from pyro.infer import SVI, Trace_ELBO, TraceEnum_ELBO
