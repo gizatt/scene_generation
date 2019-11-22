@@ -5,6 +5,7 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import pickle
 import random
 import time
 import yaml
@@ -106,9 +107,9 @@ def generate_mbp_sg_diagram(seed):
         ])
         label_face = "px" #np.random.choice(['p', 'n']) + \
                      #np.random.choice(['x', 'y', 'z'])
-        label_uv = np.array([0.5, 0.5]) #np.array([
-            #np.random.uniform(0.2, 0.8),
-            #np.random.uniform(0.2, 0.8)])
+        label_uv = np.array([
+            np.random.uniform(0.2, 0.8),
+            np.random.uniform(0.2, 0.8)])
 
         boxes.append(
             BoxWithLabel(pose=pose, dimensions=dimensions,
@@ -244,7 +245,7 @@ def sample_and_draw_drake():
     simulator = Simulator(diagram, diagram_context)
     #simulator.set_target_realtime_rate(1.0)
     simulator.set_publish_every_time_step(False)
-    simulator.StepTo(1.0)
+    simulator.StepTo(5.0)
     qf = mbp.GetPositions(mbp_context).copy()
     # Final pose is statically stable, by assumption.
 
@@ -281,7 +282,9 @@ def sample_and_draw_drake():
     keypoints_rendered_visible = keypoints_rendered[:, keep > 0]
     vals_visible = vals[:, keep > 0]
 
-    plt.figure()
+    #plt.figure()
+    if plt.gcf():
+        plt.gca().clear()
     plt.imshow(depth_im, cmap='summer')
     plt.scatter(keypoints_rendered_visible[0, :],
                 keypoints_rendered_visible[1, :],
@@ -290,10 +293,36 @@ def sample_and_draw_drake():
     plt.ylim(0, 480)
     plt.gca().invert_xaxis()
 
+    # Save out the environment info and keypoint list
+    output_dict = {
+        "n_objects": len(boxes)
+    }
+    for k, box in enumerate(boxes):
+        ind_range = range(k*9,(k*9)+9)
+        these_keypoints = keypoints[:, ind_range]
+        these_vals = vals[:, ind_range]
+        these_keep = keep[ind_range] > 0
+        observed_keypoints = these_keypoints[:, these_keep]
+        observed_vals = these_vals[:, these_keep]
+        print("Saving observed keypoints and vals: ", observed_keypoints, observed_vals)
+        output_dict["obj_%04d" % k] = {
+            "class": "amazon_box",
+            "pose": box.pose.tolist(),
+            "dimensions": box.dimensions.tolist(),
+            "label_face": box.label_face,
+            "label_uv": box.label_uv.tolist(),
+            "observed_keypoints": pickle.dumps(observed_keypoints),
+            "observed_vals": pickle.dumps(observed_vals)
+        }
+    with open("box_observations.yaml", "a") as file:
+        yaml.dump({"env_%d" % (round(time.time() * 1000)):
+                   output_dict}, file)
+
     #print("Keypoints and vals in global frame: ", keypoints, vals)
     keypoints_and_vals_single = np.vstack([keypoints, vals])[:, :9]
-    np.savetxt("keypoints_obs.np", keypoints_and_vals_single[:, keep[:9] > 0])
-    plt.show()
+    #np.savetxt("keypoints_obs.np", keypoints_and_vals_single[:, keep[:9] > 0])
+    plt.pause(0.5)
+    #plt.show()
 
 
 def sample_and_draw_pyro():
@@ -690,7 +719,7 @@ def sample_and_draw_pyro():
         all_scores = []
         best_params = None
         all_params = []
-        for k in range(100):
+        for k in range(200):
             print("*******ITER %03d*******" % k)
 
             # Regenerate model-frame model points and values given current guesses
@@ -735,9 +764,9 @@ def sample_and_draw_pyro():
                 lps.backward()
 #
                 #print("vals after backward: ", site_values)
-                #for site_name in gd_site_names:
-                #    print(site_name, ": ", site_values[site_name].grad)
-                #    site_values[site_name].data += site_values[site_name].grad * 0.001
+                for site_name in gd_site_names:
+                    site_values[site_name].data += site_values[site_name].grad * 0.0001
+            site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
                 #site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
                 #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
                 #t = site_values["box_xyz"].reshape(-1, 1)
@@ -820,22 +849,35 @@ def sample_and_draw_pyro():
         print("Best final params: ", best_params)
 
         plt.figure()
-        plt.subplot(3, 1, 1)
+        plt.subplot(5, 1, 1)
         plt.hist(all_scores)
         plt.xlabel("llog")
         plt.ylabel("count")
 
         for k in range(3):
             x = np.array([params["box_dimensions"][k].item() for params in all_params])
-            plt.subplot(3, 3, 4+k)
+            plt.subplot(5, 3, 4+k)
             plt.hist(x)
             plt.xlabel("box dim %d" % k)
             plt.ylabel("count")
 
-            plt.subplot(3, 3, 7+k)
+            plt.subplot(5, 3, 7+k)
             plt.plot(x)
             plt.ylabel("box dim %d" % k)
             plt.xlabel("epoch")
+
+        for k in range(2):
+            x = np.array([params["box_label_uv"][k].item() for params in all_params])
+            plt.subplot(5, 2, 7+k)
+            plt.hist(x)
+            plt.xlabel("label uv %d" % k)
+            plt.ylabel("count")
+
+            plt.subplot(5, 2, 9+k)
+            plt.plot(x)
+            plt.ylabel("label uv %d" % k)
+            plt.xlabel("epoch")
+
 
         plt.tight_layout()
         plt.show()
@@ -844,12 +886,20 @@ def sample_and_draw_pyro():
     from pyro.infer import SVI, Trace_ELBO, TraceEnum_ELBO
     from pyro.optim import Adam
 
-    #sample_and_draw_drake()
+    with open("box_observations.yaml", "r") as file:
+        all_envs = yaml.load(file)
 
-    observed_keypoints_and_vals = np.loadtxt("keypoints_obs.np")
+    # Pick a box at random from the envs
+    observed_box_info = list(all_envs.values())[0]["obj_%04d" % 0]
+    observed_keypoints = pickle.loads(observed_box_info["observed_keypoints"])
+    observed_vals = pickle.loads(observed_box_info["observed_vals"])
+    print("Observed box info: ", observed_box_info)
+    print("Observed keypoints and vals: ", observed_keypoints, observed_vals)
+    observed_keypoints_and_vals = np.vstack([observed_keypoints, observed_vals])
+
     print(sample_box_from_observed_points(observed_keypoints_and_vals))
 
-
 if __name__ == "__main__":
-    #sample_and_draw_drake()
+    #for k in range(50):
+    #    sample_and_draw_drake()
     sample_and_draw_pyro()
