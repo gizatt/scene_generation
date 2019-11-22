@@ -451,14 +451,10 @@ def sample_and_draw_pyro():
     # The number of observed keypoints is drawn from an (uninformative) discrete
     # uniform distribution. (Maybe something with infinite support would be better?)
     def model_keypoint_observations_gmm(keypoints, vals):
-        print("Keypoints: ", keypoints)
-        print("Vals: ", vals)
         max_num_keypoints = keypoints.shape[1] + 5
         num_keypoints = pyro.sample(
             "num_observed_keypoints_minus_one",
             dist.Categorical(probs=torch.ones(max_num_keypoints).double())) + 1
-
-        print("observed %d keypoints this time " % num_keypoints)
 
         keypoint_var = pyro.param(
             "keypoint_var",
@@ -547,7 +543,6 @@ def sample_and_draw_pyro():
             torch.exp(-pairwise_distances[N_m:, :]/(2.*feature_variance)) /
             math.sqrt(2*np.pi*feature_variance))
 
-        print("Pairwise scores: ", pairwise_distances)
         # Augment with a row of the outlier probabilities
         pairwise_distances = torch.cat([pairwise_distances,
                                         torch.ones(1, N_s).double()*outlier_prob],
@@ -642,7 +637,6 @@ def sample_and_draw_pyro():
 
     def draw_corresp_with_meshcat(vis, name, pts_A, pts_B, C, size=0.01):
         pts = np.zeros((3, 2*C.shape[1]))
-        print(C.shape, pts_A.shape, pts_B.shape)
         assert(C.shape[0] == pts_A.shape[1] + 1)
         assert(C.shape[1] == pts_B.shape[1])
         for k in range(C.shape[1]):
@@ -695,7 +689,8 @@ def sample_and_draw_pyro():
         best_score = -1000.
         all_scores = []
         best_params = None
-        for k in range(500):
+        all_params = []
+        for k in range(100):
             print("*******ITER %03d*******" % k)
 
             # Regenerate model-frame model points and values given current guesses
@@ -726,12 +721,11 @@ def sample_and_draw_pyro():
 
             ## Additionally, do gradient descent on the continuous params
             gd_site_names = ["box_label_uv"]
-            for gd_k in range(10):
+            for gd_k in range(5):
                 for site_name in gd_site_names:
                     site_values[site_name].requires_grad = True
                     if site_values[site_name].grad is not None:
                         site_values[site_name].grad.data.zero_()
-                    print(site_values[site_name].grad)
                 # Compute score using the Pyro models
                 conditioned_model = pyro.poutine.condition(
                     full_model,
@@ -740,26 +734,26 @@ def sample_and_draw_pyro():
                 lps = trace.log_prob_sum()
                 lps.backward()
 #
-                print("vals after backward: ", site_values)
-                for site_name in gd_site_names:
-                    print(site_name, ": ", site_values[site_name].grad)
-                    site_values[site_name].data += site_values[site_name].grad * 0.001
-                site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
-                R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
-                t = site_values["box_xyz"].reshape(-1, 1)
+                #print("vals after backward: ", site_values)
+                #for site_name in gd_site_names:
+                #    print(site_name, ": ", site_values[site_name].grad)
+                #    site_values[site_name].data += site_values[site_name].grad * 0.001
+                #site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
+                #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+                #t = site_values["box_xyz"].reshape(-1, 1)
 #
 #
-                scaling = torch.diag(site_values["box_dimensions"])
-                model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
-                draw_pts_with_meshcat(vis, "fitting/observed", 
-                                      observed_pts.detach().numpy(),
-                                      val_channel=0, vals=observed_vals.detach().numpy())
-                draw_pts_with_meshcat(vis, "fitting/fit", 
-                                      model_pts_tf.detach().numpy(),
-                                      val_channel=2, vals=model_vals.detach().numpy())
-                draw_corresp_with_meshcat(vis, "fitting/corresp",
-                    model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
-                    C)
+                #scaling = torch.diag(site_values["box_dimensions"])
+                #model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
+                #draw_pts_with_meshcat(vis, "fitting/observed", 
+                #                      observed_pts.detach().numpy(),
+                #                      val_channel=0, vals=observed_vals.detach().numpy())
+                #draw_pts_with_meshcat(vis, "fitting/fit", 
+                #                      model_pts_tf.detach().numpy(),
+                #                      val_channel=2, vals=model_vals.detach().numpy())
+                #draw_corresp_with_meshcat(vis, "fitting/corresp",
+                #    model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+                #    C)
             #    input()
 
             # Compute score using the Pyro models
@@ -770,14 +764,18 @@ def sample_and_draw_pyro():
             lps = trace.log_prob_sum()
             lps.backward()
 
-            for name, site in trace.nodes.items():
-                if site["type"] is "sample":
-                    print("Name: ", name)
-                    print("\tValue: ", site["value"])
-                    print("\tlog prob sum: ", site["log_prob_sum"])
-            print("Total Log prob sum: ", lps)
+            #for name, site in trace.nodes.items():
+            #    if site["type"] is "sample":
+            #        print("Name: ", name)
+            #        print("\tValue: ", site["value"])
+            #        print("\tlog prob sum: ", site["log_prob_sum"])
+            print("\tTotal Log prob sum: ", lps.item())
             
             all_scores.append(lps.detach().item())
+            copied_dict = {}
+            for key in site_values.keys():
+                copied_dict[key] = site_values[key].clone().detach()
+            all_params.append(copied_dict)
             if lps.item() > best_score:
                 best_score = lps.item()
                 best_params = (R, scaling, t, C)
@@ -822,7 +820,24 @@ def sample_and_draw_pyro():
         print("Best final params: ", best_params)
 
         plt.figure()
+        plt.subplot(3, 1, 1)
         plt.hist(all_scores)
+        plt.xlabel("llog")
+        plt.ylabel("count")
+
+        for k in range(3):
+            x = np.array([params["box_dimensions"][k].item() for params in all_params])
+            plt.subplot(3, 3, 4+k)
+            plt.hist(x)
+            plt.xlabel("box dim %d" % k)
+            plt.ylabel("count")
+
+            plt.subplot(3, 3, 7+k)
+            plt.plot(x)
+            plt.ylabel("box dim %d" % k)
+            plt.xlabel("epoch")
+
+        plt.tight_layout()
         plt.show()
 
     from pyro.contrib.autoguide import AutoGuideList, AutoDelta, AutoDiagonalNormal, AutoDiscreteParallel
