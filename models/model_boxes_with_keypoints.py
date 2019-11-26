@@ -377,14 +377,13 @@ def draw_corresp_with_meshcat(vis, name, pts_A, pts_B, C, size=0.01):
             g.PointsGeometry(position=pts),
             g.PointsMaterial(size=size)))
 
-def sample_box_from_observed_points(observed_keypoints_and_vals):
+def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
+                                    vis=None, verbose=False):
     observed_pts = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
     observed_vals = torch.tensor(observed_keypoints_and_vals[3:, :]).double()
 
     # From the observed keypoints and values, sample correspondences and
     # a box pose.
-
-    vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
     # Start by randomly initializing a box
     site_values = {
@@ -418,8 +417,9 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
     all_scores = []
     best_params = None
     all_params = []
-    for k in range(200):
-        print("*******ITER %03d*******" % k)
+    for k in range(n_samples):
+        if verbose:
+            print("*******ITER %03d*******" % k)
 
         # Regenerate model-frame model points and values given current guesses
         # of some key latents
@@ -465,7 +465,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
 #
             #print("vals after backward: ", site_values)
             for site_name in gd_site_names:
-                site_values[site_name].data += site_values[site_name].grad * 0.0001
+                site_values[site_name].data += site_values[site_name].grad * 0.001
         site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
         site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
         R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
@@ -480,12 +480,13 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
         lps = trace.log_prob_sum()
         lps.backward()
 
-        #for name, site in trace.nodes.items():
-        #    if site["type"] is "sample":
-        #        print("Name: ", name)
-        #        print("\tValue: ", site["value"])
-        #        print("\tlog prob sum: ", site["log_prob_sum"])
-        print("\tTotal Log prob sum: ", lps.item())
+        if verbose:
+            #for name, site in trace.nodes.items():
+            #    if site["type"] is "sample":
+            #        print("Name: ", name)
+            #        print("\tValue: ", site["value"])
+            #        print("\tlog prob sum: ", site["log_prob_sum"])
+            print("\tTotal Log prob sum: ", lps.item())
 
         # TODO(gizatt): Accept/reject with something like MH?
         # Problem is that my "proposal distribution" is probably not
@@ -506,6 +507,20 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
         R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
         t = site_values["box_xyz"].reshape(-1, 1)
         model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
+
+        if vis is not None:
+            draw_pts_with_meshcat(vis, "fitting/observed", 
+                                  observed_pts.detach().numpy(),
+                                  val_channel=0, vals=observed_vals.detach().numpy())
+            draw_pts_with_meshcat(vis, "fitting/fit", 
+                                  model_pts_tf.detach().numpy(),
+                                  val_channel=2, vals=model_vals.detach().numpy())
+            draw_corresp_with_meshcat(vis, "fitting/corresp",
+                model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
+                C)
+
+    model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
+    if vis is not None:
         draw_pts_with_meshcat(vis, "fitting/observed", 
                               observed_pts.detach().numpy(),
                               val_channel=0, vals=observed_vals.detach().numpy())
@@ -514,18 +529,26 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
                               val_channel=2, vals=model_vals.detach().numpy())
         draw_corresp_with_meshcat(vis, "fitting/corresp",
             model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
-            C)
+            best_params[3])
 
-    model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
-    draw_pts_with_meshcat(vis, "fitting/observed", 
-                          observed_pts.detach().numpy(),
-                          val_channel=0, vals=observed_vals.detach().numpy())
-    draw_pts_with_meshcat(vis, "fitting/fit", 
-                          model_pts_tf.detach().numpy(),
-                          val_channel=2, vals=model_vals.detach().numpy())
-    draw_corresp_with_meshcat(vis, "fitting/corresp",
-        model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
-        best_params[3])
+    return all_scores, all_params, best_score, best_params
+
+
+if __name__ == "__main__":
+    with open("../data/box_observations.yaml", "r") as file:
+        all_envs = yaml.load(file)
+
+    vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
+
+    # Pick a box at random from the envs
+    observed_box_info = list(all_envs.values())[0]["obj_%04d" % 0]
+    observed_keypoints = pickle.loads(observed_box_info["observed_keypoints"])
+    observed_vals = pickle.loads(observed_box_info["observed_vals"])
+    observed_keypoints_and_vals = np.vstack([observed_keypoints, observed_vals])
+
+    all_scores, all_params, best_score, best_params = sample_box_from_observed_points(
+        observed_keypoints_and_vals, n_samples=100, vis=vis)
+
     print("Best final score: ", best_score)
     print("Best final params: ", best_params)
 
@@ -561,20 +584,3 @@ def sample_box_from_observed_points(observed_keypoints_and_vals):
 
     plt.tight_layout()
     plt.show()
-
-def sample_and_draw_pyro():
-    with open("../data/box_observations.yaml", "r") as file:
-        all_envs = yaml.load(file)
-
-    # Pick a box at random from the envs
-    observed_box_info = list(all_envs.values())[0]["obj_%04d" % 0]
-    observed_keypoints = pickle.loads(observed_box_info["observed_keypoints"])
-    observed_vals = pickle.loads(observed_box_info["observed_vals"])
-    print("Observed box info: ", observed_box_info)
-    print("Observed keypoints and vals: ", observed_keypoints, observed_vals)
-    observed_keypoints_and_vals = np.vstack([observed_keypoints, observed_vals])
-
-    print(sample_box_from_observed_points(observed_keypoints_and_vals))
-
-if __name__ == "__main__":
-    sample_and_draw_pyro()
