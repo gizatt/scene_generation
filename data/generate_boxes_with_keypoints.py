@@ -748,7 +748,8 @@ def sample_and_draw_pyro():
             #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
             site_values["box_dimensions"] = torch.diag(scaling).detach()
 
-            ## Additionally, do gradient descent on the continuous params
+            ## Additionally, do gradient descent on the remaining continuous params
+            # TODO(gizatt) Maybe make this proper HMC?
             gd_site_names = ["box_label_uv"]
             for gd_k in range(5):
                 for site_name in gd_site_names:
@@ -767,23 +768,10 @@ def sample_and_draw_pyro():
                 for site_name in gd_site_names:
                     site_values[site_name].data += site_values[site_name].grad * 0.0001
             site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
-                #site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
-                #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
-                #t = site_values["box_xyz"].reshape(-1, 1)
-#
-#
-                #scaling = torch.diag(site_values["box_dimensions"])
-                #model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
-                #draw_pts_with_meshcat(vis, "fitting/observed", 
-                #                      observed_pts.detach().numpy(),
-                #                      val_channel=0, vals=observed_vals.detach().numpy())
-                #draw_pts_with_meshcat(vis, "fitting/fit", 
-                #                      model_pts_tf.detach().numpy(),
-                #                      val_channel=2, vals=model_vals.detach().numpy())
-                #draw_corresp_with_meshcat(vis, "fitting/corresp",
-                #    model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
-                #    C)
-            #    input()
+            site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
+            R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+            t = site_values["box_xyz"].reshape(-1, 1)
+            scaling = torch.diag(site_values["box_dimensions"])
 
             # Compute score using the Pyro models
             conditioned_model = pyro.poutine.condition(
@@ -799,7 +787,13 @@ def sample_and_draw_pyro():
             #        print("\tValue: ", site["value"])
             #        print("\tlog prob sum: ", site["log_prob_sum"])
             print("\tTotal Log prob sum: ", lps.item())
-            
+
+            # TODO(gizatt): Accept/reject with something like MH?
+            # Problem is that my "proposal distribution" is probably not
+            # symmetric, so calculating a proper MH ratio won't be as simple
+            # as the likelihood ratio... for now, I'll stick to just importance
+            # sampling with this relatively arbitrary proposal.
+
             all_scores.append(lps.detach().item())
             copied_dict = {}
             for key in site_values.keys():
@@ -809,16 +803,6 @@ def sample_and_draw_pyro():
                 best_score = lps.item()
                 best_params = (R, scaling, t, C)
             
-
-            #drawn_points = torch.t(trace.nodes["observed_keypoints_and_vals"]["value"])
-            #print(trace.nodes["observed_keypoints_and_vals"])
-            #drawn_pts = drawn_points[:3, :]
-            #drawn_vals = drawn_points[3, :]
-            #draw_pts_with_meshcat(vis, "fitting/drawn", 
-            #                      drawn_pts.detach().numpy(),
-            #                      val_channel=1, vals=drawn_vals.detach().numpy())
-            
-
             scaling = torch.diag(site_values["box_dimensions"])
             R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
             t = site_values["box_xyz"].reshape(-1, 1)
@@ -832,8 +816,6 @@ def sample_and_draw_pyro():
             draw_corresp_with_meshcat(vis, "fitting/corresp",
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
-
-            #input()
 
         model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
         draw_pts_with_meshcat(vis, "fitting/observed", 
@@ -877,7 +859,6 @@ def sample_and_draw_pyro():
             plt.plot(x)
             plt.ylabel("label uv %d" % k)
             plt.xlabel("epoch")
-
 
         plt.tight_layout()
         plt.show()
