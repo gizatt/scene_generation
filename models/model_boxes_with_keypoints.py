@@ -321,7 +321,8 @@ def sample_transform_given_correspondences(C, model_pts, observed_pts):
     observed_pts_reduced = observed_pts[:, corresp_inds]
 
     # Get R and s by alternations: see "Orthogonal, but not Orthonormal, Procrustes Problems."
-    scaling = torch.eye(3).double()*0.5
+    # Draw initial scaling from our prior
+    scaling = torch.diag(dist.InverseGamma(pyro.param("dimensions_alpha"), pyro.param("dimensions_beta")).sample()).clone().detach()
     model_pts_aligned = torch.t(torch.t(model_pts_reduced) - torch.mean(model_pts_reduced, dim=1))
     observed_pts_aligned = torch.t(torch.t(observed_pts_reduced) - torch.mean(observed_pts_reduced, dim=1))
 
@@ -386,12 +387,14 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
     # a box pose.
 
     # Start by randomly initializing a box
+    random_box = pyro.poutine.block(generate_single_box)()
+
     site_values = {
-        "box_xyz": torch.zeros(3).double(),
-        "box_quat": torch.tensor([1., 0., 0., 0.]).double(),
-        "box_dimensions": torch.ones(3).double(),
-        "box_label_face": torch.tensor([0]).long(),
-        "box_label_uv": torch.tensor([0.5, 0.5]).double(),
+        "box_xyz": random_box.pose[-3:].clone().detach(),
+        "box_quat": random_box.pose[:4].clone().detach(),
+        "box_dimensions": random_box.dimensions.clone().detach(),
+        "box_label_face": torch.tensor([0]).long(), # TODO(gizatt) Should this vary?
+        "box_label_uv": random_box.label_uv.clone().detach(),
         "num_observed_keypoints_minus_one": torch.tensor([observed_pts.shape[1] - 1]).long(),
         "observed_keypoints_and_vals": torch.t(torch.cat([observed_pts, observed_vals], dim=0))
     }
@@ -493,16 +496,30 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
         # symmetric, so calculating a proper MH ratio won't be as simple
         # as the likelihood ratio... for now, I'll stick to just importance
         # sampling with this relatively arbitrary proposal.
+        if len(all_scores) > 0:
+            accept_threshold = dist.Uniform(
+                torch.tensor([0.]).double(),
+                torch.tensor([1.]).double()).sample()
+            mh_ratio = torch.exp((lps - all_scores[-1])/20.)
+            accept = mh_ratio >= accept_threshold
+        else:
+            accept = True
+        if accept:
+            all_scores.append(lps.detach().item())
+            copied_dict = {}
+            for key in site_values.keys():
+                copied_dict[key] = site_values[key].clone().detach()
+            all_params.append(copied_dict)
+            if lps.item() > best_score:
+                best_score = lps.item()
+                best_params = (R, scaling, t, C)
+        else:
+            all_scores.append(all_scores[-1])
+            all_params.append(all_params[-1])
+            for key in site_values.keys():
+                site_values[key] = all_params[-1][key].clone().detach()
+            
 
-        all_scores.append(lps.detach().item())
-        copied_dict = {}
-        for key in site_values.keys():
-            copied_dict[key] = site_values[key].clone().detach()
-        all_params.append(copied_dict)
-        if lps.item() > best_score:
-            best_score = lps.item()
-            best_params = (R, scaling, t, C)
-        
         scaling = torch.diag(site_values["box_dimensions"])
         R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
         t = site_values["box_xyz"].reshape(-1, 1)
@@ -540,45 +557,70 @@ if __name__ == "__main__":
 
     vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
-    # Pick a box at random from the envs
-    observed_box_info = list(all_envs.values())[0]["obj_%04d" % 0]
-    observed_keypoints = pickle.loads(observed_box_info["observed_keypoints"])
-    observed_vals = pickle.loads(observed_box_info["observed_vals"])
-    observed_keypoints_and_vals = np.vstack([observed_keypoints, observed_vals])
+    num_boxes_to_sample = 50
+    random.seed(42)
+    shuffled_envs = list(all_envs.values())
+    random.shuffle(shuffled_envs)
 
-    all_scores, all_params, best_score, best_params = sample_box_from_observed_points(
-        observed_keypoints_and_vals, n_samples=100, vis=vis)
+    all_scores = []
+    all_params = []
 
-    print("Best final score: ", best_score)
-    print("Best final params: ", best_params)
+    for env_k in range(num_boxes_to_sample):
+        print("Starting env %d" % env_k)
+        observed_box_info = shuffled_envs[env_k % len(shuffled_envs)]["obj_%04d" % 0]
+        observed_keypoints = pickle.loads(observed_box_info["observed_keypoints"])
+        observed_vals = pickle.loads(observed_box_info["observed_vals"])
+        observed_keypoints_and_vals = np.vstack([observed_keypoints, observed_vals])
+
+        print("Observed keypoints and vals: ", observed_keypoints_and_vals)
+        if observed_keypoints_and_vals.shape[1] == 0:
+            continue
+        these_scores, these_params, _, _ = sample_box_from_observed_points(
+            observed_keypoints_and_vals, n_samples=15, vis=vis)
+        all_scores += these_scores
+        all_params += these_params
 
     plt.figure()
     plt.subplot(5, 1, 1)
-    plt.hist(all_scores)
+    plt.plot(all_scores)
     plt.xlabel("llog")
     plt.ylabel("count")
 
+    def extract_data(param_name):
+        # Returns as shape [<param_dims>, num_samples]
+        return np.stack([params[param_name] for params in all_params], axis=-1)
+
+    box_dims_data = extract_data("box_dimensions")
+    prior_dists = [dist.InverseGamma(
+        pyro.param("dimensions_alpha")[k],
+        pyro.param("dimensions_beta")[k]) for k in range(3)]
     for k in range(3):
-        x = np.array([params["box_dimensions"][k].item() for params in all_params])
         plt.subplot(5, 3, 4+k)
-        plt.hist(x)
+        n, bins, _ = plt.hist(box_dims_data[k, :], normed=True, label="Hist")
+        x = torch.linspace(bins[0], bins[-1], 100)
+        prior_values = torch.exp(prior_dists[k].log_prob(x)).detach().numpy()
+        plt.plot(x, prior_values, "--", color="red", label="Prior")
         plt.xlabel("box dim %d" % k)
-        plt.ylabel("count")
+        plt.ylabel("weight")
 
         plt.subplot(5, 3, 7+k)
-        plt.plot(x)
+        plt.plot(box_dims_data[k, :])
         plt.ylabel("box dim %d" % k)
         plt.xlabel("epoch")
 
+    label_uv_data = extract_data("box_label_uv")
+    prior_dists = [dist.Uniform(0., 1.) for k in range(2)]
     for k in range(2):
-        x = np.array([params["box_label_uv"][k].item() for params in all_params])
         plt.subplot(5, 2, 7+k)
-        plt.hist(x)
+        n, bins, _ = plt.hist(label_uv_data[k, :], normed=True, label="Hist")
+        x = torch.linspace(bins[0], bins[-1], 100)
+        prior_values = torch.exp(prior_dists[k].log_prob(x)).detach().numpy()
+        plt.plot(x, prior_values, "--", color="red", label="Prior")
         plt.xlabel("label uv %d" % k)
         plt.ylabel("count")
 
         plt.subplot(5, 2, 9+k)
-        plt.plot(x)
+        plt.plot(label_uv_data[k, :])
         plt.ylabel("label uv %d" % k)
         plt.xlabel("epoch")
 
