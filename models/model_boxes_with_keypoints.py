@@ -593,6 +593,7 @@ if __name__ == "__main__":
 
     plt.figure()
     plt.subplot(5, 1, 1)
+    plt.title("Analysis of %d samples (%d runs)" % (len(all_scores), len(all_scores) / 25))
     plt.plot(all_scores)
     plt.xlabel("llog")
     plt.ylabel("count")
