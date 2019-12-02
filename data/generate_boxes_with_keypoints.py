@@ -87,7 +87,6 @@ def generate_mbp_sg_diagram(seed):
     np.random.seed(seed)
 
     # Build up a list of boxes with sizes and label placements
-    # TODO(gizatt): turn this into a yaml env, somehow?
     n_boxes = np.random.geometric(0.3) + 1
     boxes = []
     for box_i in range(n_boxes):
@@ -102,8 +101,8 @@ def generate_mbp_sg_diagram(seed):
         # Random dimensions
         dimensions = np.array([
             np.random.uniform(0.1, 0.3),
-            np.random.uniform(0.1, 0.3),
-            np.random.uniform(0.1, 0.3)
+            np.random.uniform(0.1, 0.5),
+            np.random.uniform(0.1, 0.7)
         ])
         label_face = "px" #np.random.choice(['p', 'n']) + \
                      #np.random.choice(['x', 'y', 'z'])
@@ -118,13 +117,13 @@ def generate_mbp_sg_diagram(seed):
 
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
-        builder, MultibodyPlant(time_step=0.005))
+        builder, MultibodyPlant(time_step=0.001))
 
     # Add ground
     world_body = mbp.world_body()
     ground_shape = Box(4., 4., 1.)
     ground_body = mbp.AddRigidBody("ground", SpatialInertia(
-        mass=10.0, p_PScm_E=np.array([0., 0., 0.]),
+        mass=100.0, p_PScm_E=np.array([0., 0., 0.]),
         G_SP_E=UnitInertia(1.0, 1.0, 1.0)))
     mbp.WeldFrames(world_body.body_frame(), ground_body.body_frame(),
                    RigidTransform(p=[0, 0, -0.5]))
@@ -137,7 +136,7 @@ def generate_mbp_sg_diagram(seed):
 
     for i, box in enumerate(boxes):
         body = mbp.AddRigidBody("box_{}".format(i), SpatialInertia(
-            mass=0.1, p_PScm_E=np.array([0., 0., 0.]),
+            mass=1.0, p_PScm_E=np.array([0., 0., 0.]),
             G_SP_E=UnitInertia(0.01, 0.01, 0.01)))
         body_box = Box(*box.dimensions)
         mbp.RegisterVisualGeometry(
@@ -325,6 +324,7 @@ def sample_and_draw_drake():
 
 
 if __name__ == "__main__":
-    for k in range(50):
+    for k in range(100):
         sample_and_draw_drake()
+        input()
     plt.show()
