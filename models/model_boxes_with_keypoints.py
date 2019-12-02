@@ -33,6 +33,7 @@ from scene_generation.data.generate_boxes_with_keypoints import (
     BoxWithLabel
 )
 
+index_to_label_map = ['px', 'py', 'pz', 'nx', 'ny', 'nz']
 
 def generate_single_box(name="box"):
     quat = pyro.sample(
@@ -61,11 +62,10 @@ def generate_single_box(name="box"):
     )
 
     face_weights = torch.ones(6).double() / 6.
-    possible_labels = ['px', 'py', 'pz', 'nx', 'ny', 'nz']
     label_face_ind = pyro.sample(name + "_label_face",
         dist.Categorical(face_weights),
         infer={"enumerate":"sequential"})
-    label_face = possible_labels[label_face_ind]
+    label_face = index_to_label_map[label_face_ind]
 
     # UV choices
     label_uv = pyro.sample(
@@ -203,7 +203,7 @@ def model_keypoint_observations_gmm(keypoints, vals):
         torch.tensor([0.01]).double(),
         constraint=constraints.positive)
 
-    # Make the maodel components
+    # Make the model components
     locs = torch.cat([keypoints, vals], dim=0)
     scales = torch.cat([torch.ones(keypoints.shape).double()*keypoint_var,
                         torch.ones(vals.shape).double()*val_var])
@@ -451,25 +451,37 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
         #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
         site_values["box_dimensions"] = torch.diag(scaling).detach()
 
-        ## Additionally, do gradient descent on the remaining continuous params
-        # TODO(gizatt) Maybe make this proper HMC?
-        gd_site_names = ["box_label_uv"]
-        for gd_k in range(5):
-            for site_name in gd_site_names:
-                site_values[site_name].requires_grad = True
-                if site_values[site_name].grad is not None:
-                    site_values[site_name].grad.data.zero_()
-            # Compute score using the Pyro models
-            conditioned_model = pyro.poutine.condition(
-                full_model,
-                data=site_values)
-            trace = pyro.poutine.trace(conditioned_model).get_trace()
-            lps = trace.log_prob_sum()
-            lps.backward()
-#
-            #print("vals after backward: ", site_values)
-            for site_name in gd_site_names:
-                site_values[site_name].data += site_values[site_name].grad * 0.01
+        # Now set box_label_face and box_label_uv to the maximum likelihood setting
+        # if there's an observed label keypoint.
+        # TODO(gizatt) This is a huge cludge. The label keypoints appear
+        # in the registration step as well as being just additional keypoints (with
+        # a different value, so they only get registered to the model's label keypoint).
+        # That and this seem like they might break / interact badly...
+        # but I want to see if this works first. This whole system needs a rewrite anyway
+        # once I find a config I'm OK with.
+        model_val = torch.tensor([1.])
+        observed_label_pt_index = (torch.norm(observed_vals - model_val, dim=0) < 0.01).nonzero()
+        if len(observed_label_pt_index) > 0:
+            observed_label_pt_index = observed_label_pt_index[0]
+            observed_label_pt = observed_pts[:, observed_label_pt_index]
+            # Reverse that point into body frame of the box
+            inverse_rot = torch.t(quaternionToRotMatrix(site_values["box_quat"].unsqueeze(0))[0, ...])
+            inverse_t = -torch.mm(inverse_rot, site_values["box_xyz"].reshape(3, 1))
+            observed_label_pt_body = (torch.mm(inverse_rot, observed_label_pt) + inverse_t).squeeze()
+            # Rescale into unit cube and assign it to a face based on the unit direction the ray most faces
+            observed_label_pt_body /= site_values["box_dimensions"]
+            face_ind = torch.argmax(torch.abs(observed_label_pt_body))
+            face_sign = observed_label_pt_body[face_ind] > 0.
+            face_string = "np"[face_sign] + "xyz"[face_ind]
+            if face_ind == 0:
+                uv = observed_label_pt_body[1:] + 0.5
+            elif face_ind == 1:
+                uv = observed_label_pt_body[[0, 2]] + 0.5
+            else:
+                uv = observed_label_pt_body[:2] + 0.5
+            site_values["box_label_face"] = torch.tensor(index_to_label_map.index(face_string)).long()
+            site_values["box_label_uv"] = uv
+
         site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
         site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
         R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
@@ -558,7 +570,7 @@ if __name__ == "__main__":
 
     vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
-    num_boxes_to_sample = 1
+    num_boxes_to_sample = 300
     #random.seed(42)
     shuffled_envs = list(all_envs.values())
     random.shuffle(shuffled_envs)
@@ -588,8 +600,6 @@ if __name__ == "__main__":
             all_params += new_params
     with open('all_scores_and_params.pickle', 'wb') as f:
         pickle.dump((all_scores, all_params), f)
-
-
 
     plt.figure()
     plt.subplot(5, 1, 1)
