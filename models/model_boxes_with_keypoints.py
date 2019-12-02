@@ -670,10 +670,4 @@ if __name__ == "__main__":
 
     plt.tight_layout()
 
-    # Basically uninformative to look at...
-    #fig = plt.figure()
-    #ax = fig.add_subplot(111, projection='3d')
-    #box_dims_data = extract_data("box_dimensions")
-    #ax.scatter(box_dims_data[0, :], box_dims_data[1, :], box_dims_data[2, :])
-
     plt.show()
