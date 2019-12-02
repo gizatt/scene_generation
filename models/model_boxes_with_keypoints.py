@@ -1,7 +1,9 @@
 import argparse
 from collections import namedtuple
 import datetime
+from functools import partial, reduce
 import math
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -431,7 +433,6 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
                         sample_model_pts_and_vals,
                         data={
                             "box_xyz": torch.zeros(3).double(),
-                            "box_xyz": torch.zeros(3).double(),
                             "box_quat": torch.tensor([1., 0., 0., 0.]).double(),
                             "box_dimensions": torch.ones(3).double(),
                             "box_label_face": site_values["box_label_face"],
@@ -468,7 +469,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
 #
             #print("vals after backward: ", site_values)
             for site_name in gd_site_names:
-                site_values[site_name].data += site_values[site_name].grad * 0.001
+                site_values[site_name].data += site_values[site_name].grad * 0.01
         site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
         site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
         R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
@@ -500,7 +501,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
             accept_threshold = dist.Uniform(
                 torch.tensor([0.]).double(),
                 torch.tensor([1.]).double()).sample()
-            mh_ratio = torch.exp((lps - all_scores[-1])/20.)
+            mh_ratio = torch.exp((lps - all_scores[-1])/10.)
             accept = mh_ratio >= accept_threshold
         else:
             accept = True
@@ -557,8 +558,8 @@ if __name__ == "__main__":
 
     vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
-    num_boxes_to_sample = 50
-    random.seed(42)
+    num_boxes_to_sample = 1
+    #random.seed(42)
     shuffled_envs = list(all_envs.values())
     random.shuffle(shuffled_envs)
 
@@ -576,9 +577,19 @@ if __name__ == "__main__":
         if observed_keypoints_and_vals.shape[1] == 0:
             continue
         these_scores, these_params, _, _ = sample_box_from_observed_points(
-            observed_keypoints_and_vals, n_samples=15, vis=vis)
-        all_scores += these_scores
-        all_params += these_params
+            observed_keypoints_and_vals, n_samples=50, vis=vis)
+        all_scores += these_scores[25:]
+        all_params += these_params[25:]
+
+    if os.path.exists('all_scores_and_params.pickle'):
+        with open('all_scores_and_params.pickle', 'rb') as f:
+            new_scores, new_params = pickle.load(f)
+            all_scores += new_scores
+            all_params += new_params
+    with open('all_scores_and_params.pickle', 'wb') as f:
+        pickle.dump((all_scores, all_params), f)
+
+
 
     plt.figure()
     plt.subplot(5, 1, 1)
@@ -590,32 +601,65 @@ if __name__ == "__main__":
         # Returns as shape [<param_dims>, num_samples]
         return np.stack([params[param_name] for params in all_params], axis=-1)
 
+    exp_vals = torch.exp(torch.tensor(all_scores).double())
     box_dims_data = extract_data("box_dimensions")
+
     prior_dists = [dist.InverseGamma(
         pyro.param("dimensions_alpha")[k],
         pyro.param("dimensions_beta")[k]) for k in range(3)]
+    gt_dists = [dist.Uniform(0.1, 0.3),
+                dist.Uniform(0.1, 0.5),
+                dist.Uniform(0.1, 0.7)]
+    hist_bins = np.arange(0., 2., 0.1)
+    # Plot each separately -- due to rotational symmetry, this is hard to interpret.
+    # (Could e.g. sort this by datapoint into a canonical increasing order, but that's
+    # not perfect.)
+    plt.subplot(5, 1, 2)
+    n, bins, _ = plt.hist(np.sum(box_dims_data, axis=0), normed=True, label="Hist", bins=hist_bins, log=False)
+    spacing = 0.01
+    x = torch.arange(bins[0]+1E-3, bins[-1], spacing)
+    prior_values = [torch.exp(prior_dists[k].log_prob(x)).detach().numpy() for k in range(3)]
+    gt_values = [torch.exp(gt_dists[k].log_prob(x)).detach().numpy() for k in range(3)]
+    def add_pdf(a, b):
+        # I think this only works if the left boundary of the PDF is 0?
+        return np.convolve(a, b, mode='full')[:x.shape[0]] * spacing
+    prior_values = reduce(add_pdf, prior_values)
+    gt_values = reduce(add_pdf, gt_values)
+    plt.plot(x, prior_values, "--", color="red", label="Prior")
+    plt.plot(x, gt_values, "--", color="lime", label="Ground truth")
+    plt.xlabel("sum of box dims")
+    plt.ylabel("weight")
+
+    prior_dists = [dist.InverseGamma(
+        pyro.param("dimensions_alpha")[k],
+        pyro.param("dimensions_beta")[k]) for k in range(3)]
+    gt_dists = [dist.Uniform(0.1, 0.3),
+                dist.Uniform(0.1, 0.5),
+                dist.Uniform(0.1, 0.7)]
+    hist_bins = np.arange(0., 1., 0.1)
     for k in range(3):
-        plt.subplot(5, 3, 4+k)
-        n, bins, _ = plt.hist(box_dims_data[k, :], normed=True, label="Hist")
+        plt.subplot(5, 3, 7+k)
+        n, bins, _ = plt.hist(box_dims_data[k, :], normed=True, label="Hist", bins=hist_bins, log=False)
         x = torch.linspace(bins[0], bins[-1], 100)
         prior_values = torch.exp(prior_dists[k].log_prob(x)).detach().numpy()
+        gt_values = torch.exp(gt_dists[k].log_prob(x)).detach().numpy()
         plt.plot(x, prior_values, "--", color="red", label="Prior")
+        plt.plot(x, gt_values, "--", color="lime", label="Ground Truth")
         plt.xlabel("box dim %d" % k)
         plt.ylabel("weight")
 
-        plt.subplot(5, 3, 7+k)
-        plt.plot(box_dims_data[k, :])
-        plt.ylabel("box dim %d" % k)
-        plt.xlabel("epoch")
-
     label_uv_data = extract_data("box_label_uv")
     prior_dists = [dist.Uniform(0., 1.) for k in range(2)]
+    gt_dists = [dist.Uniform(0.2, 0.8) for k in range(2)]
+    hist_bins = np.arange(0., 1., 0.1)
     for k in range(2):
         plt.subplot(5, 2, 7+k)
-        n, bins, _ = plt.hist(label_uv_data[k, :], normed=True, label="Hist")
+        n, bins, _ = plt.hist(label_uv_data[k, :], normed=True, label="Hist", bins=hist_bins, log=False)
         x = torch.linspace(bins[0], bins[-1], 100)
         prior_values = torch.exp(prior_dists[k].log_prob(x)).detach().numpy()
+        gt_values = torch.exp(gt_dists[k].log_prob(x)).detach().numpy()
         plt.plot(x, prior_values, "--", color="red", label="Prior")
+        plt.plot(x, gt_values, "--", color="lime", label="Ground Truth")
         plt.xlabel("label uv %d" % k)
         plt.ylabel("count")
 
@@ -625,4 +669,11 @@ if __name__ == "__main__":
         plt.xlabel("epoch")
 
     plt.tight_layout()
+
+    # Basically uninformative to look at...
+    #fig = plt.figure()
+    #ax = fig.add_subplot(111, projection='3d')
+    #box_dims_data = extract_data("box_dimensions")
+    #ax.scatter(box_dims_data[0, :], box_dims_data[1, :], box_dims_data[2, :])
+
     plt.show()
