@@ -132,116 +132,156 @@ def tile_box_with_texture(base_image, decal_image, corners, scale=(1.0, 1.0), ro
 if __name__ == "__main__":
 
     # attach to logger so trimesh messages will be printed to console
-   # trimesh.util.attach_to_log()
+    # trimesh.util.attach_to_log()
 
-    mesh = trimesh.load_mesh('/home/gizatt/data/cardboard_box_texturing/unit_box.obj')
-    
-    # Rescale the box.
-    scaling_amounts = np.array([1.0, 1.0, 0.5])
-    before_verts = mesh.vertices.copy()
-    for k in range(len(scaling_amounts)):
-        mesh.vertices[:, k] *= scaling_amounts[k]
+    sx = 1.
+    sy = 0.5
+    sz = 0.5
 
-    # Forward UV mapping: x, y, z = M(u, v)
-    # Spatial warping: xout, yout, zout = S(x, y, z)
-    # We want to figure out, for every point in UV space, what the partial derivatives
-    # in the U and V directions of the spatial warp function is.
-    # By the chain rule, \grad_{uv} M^-1(S(xyz) = \grad_{uv}M^-1(S(xyz)) * \grad_{xyz} S(xyz)
-    # i.e. hints that we should be projecting the local spatial warping Jacobian into the
-    # local tangent space of the UV map.
-    # (probably mixing my metaphors a bit, but maybe that gets the idea across).
+    # Hand-code generation of the box, so I can get the UV unwrapping
+    # correct and manually scaled.
+    # Intended unwrapping is:         
+    #                              v
+    #         +---------------------------------------->
     #
-    # We can evaluate that for the verts of each triangle, knowing that in our case
-    # \grad_{x,y,z}S(x,y,z) is the constant scale factor listed above, and build a map over
-    # UV space of the U and V derivatives at each pixel.
+    #              sz         sx       sz        sx
+    #    +    +----------------------------------------+
+    #    |    |          |         |                   |
+    #    |    |          |         |                   |
+    #    |  s |          |    +y   |                   |
+    #    |  z |          |         |                   |
+    #    |    |          |         |                   |
+    # u  |    +----------------------------------------+
+    #    |    |          |         |         |         |
+    #    |  s |    -x    |    +z   |    +x   |   -z    |
+    #    |  y |          |         |         |         |
+    #    |    |          |         |         |         |
+    #    |    +----------------------------------------+
+    #    |    |          |         |                   |
+    #    |  s |          |    -y   |                   |
+    #    |  z |          |         |                   |
+    #    |    |          |         |                   |
+    #    v    +----------------------------------------+
+    #
+    # (u vertical, v horizontal, sx/sy/sz labels indicate
+    # the width of each chunk)
 
-    def compute_triangle_area(a, b, c):
-        return 0.5 * np.linalg.norm(np.cross(a - c, b - c))
-    rescaling_by_face = []
-    for face in mesh.faces:
-        assert(len(face) == 3)
-        # [x y z]^T = A [u v 1]^T
-        # Solve with least squares, in case it's singular:
-        uvstack = np.vstack([mesh.visual.uv[v] for v in face]).T
-        uvstack = np.vstack([uvstack, np.ones(3)]).T
-        xyzstack = np.vstack([before_verts[v] for v in face])
-        A, _, _, _ = np.linalg.lstsq(uvstack, xyzstack)
-        # TODO(gizatt): Why can't I just solve this problem the other way around?
-        # I think because it's not well posed the other way around...?
-        J_minv = np.linalg.pinv(A[:2, :])
-        # Crush the zero entries
-        J_minv[np.abs(J_minv) < 1E-6] = 0.
-        # Normalize columns
-        J_minv /= np.linalg.norm(J_minv, axis=0)
+    verts = []
+    normals = []
+    faces = []
+    uvs = []
 
-        # Project our scaling into that
-        local_scaling = np.abs(scaling_amounts.dot(J_minv))
-        rescaling_by_face.append(local_scaling)
+    ### -X
+    u_lb = sz
+    v_lb = 0.
+    u_s = sy
+    v_s = sz
+    verts += [[-sx, sy, -sz],
+              [-sx, -sy, -sz],
+              [-sx, -sy, sz],
+              [-sx, sy, sz]]
+    normals += [[-1, 0., 0.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
 
-    # Finally, assuming that the UV mapping is one-to-one, a uv point [ui, vi] in the
-    # original UV map should correspond to a point [uo, vo] in a rescaled UV
-    # map, where uo (or vo) is the integral from 0 to ui (or vi) of the local scaling
-    # of the spatial surface area of the corresponding mesh faces.
-    # We'll approximate those integrals by drawing the rescalings into pixels of a
-    # 2D image and taking 1D cumulative sums in each direction.
-    u_scaling_image = np.ones((1024, 1024))
-    v_scaling_image = np.ones((1024, 1024))
-    for face, rescaling in zip(mesh.faces, rescaling_by_face):
-        # Get pixel region
-        uvs_before = np.vstack([mesh.visual.uv[v] for v in face])*u_scaling_image.shape
-        rr, cc = skimage.draw.polygon(uvs_before[:, 0], uvs_before[:, 1], u_scaling_image.shape)
-        u_scaling_image[rr, cc] = rescaling[0]
-        v_scaling_image[rr, cc] = rescaling[1]
-    plt.subplot(5, 1, 1)
-    plt.imshow(np.dstack([u_scaling_image, v_scaling_image, u_scaling_image*0.]))
-    integral_image_u = np.cumsum(u_scaling_image, axis=0) / u_scaling_image.shape[0]
-    integral_image_v = np.cumsum(v_scaling_image, axis=1) / v_scaling_image.shape[1]
-    #unit_integral_image = skimage.transform.integral.integral_image(np.ones(u_scaling_image.shape))
-    #integral_image_u = skimage.transform.integral.integral_image(u_scaling_image) / unit_integral_image
-    #integral_image_v = skimage.transform.integral.integral_image(v_scaling_image) / unit_integral_image
-    plt.subplot(5, 1, 2)
-    plt.imshow(integral_image_u)
-    plt.subplot(5, 1, 3)
-    plt.imshow(integral_image_v)
+    ### +X
+    u_lb = sz
+    v_lb = sz + sx
+    u_s = sy
+    v_s = sz
+    verts += [[sx, sy, sz],
+              [sx, -sy, sz],
+              [sx, -sy, -sz],
+              [sx, sy, -sz]]
+    normals += [[1, 0., 0.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
 
-    plt.subplot(5, 1, 4)
-    uv_map_image = np.zeros((1024, 1024))
-    for k, face in enumerate(mesh.faces):
-        uvs = np.vstack([mesh.visual.uv[v] for v in face])*uv_map_image.shape
-        rr, cc = skimage.draw.polygon(uvs[:, 0], uvs[:, 1], uv_map_image.shape)
-        uv_map_image[rr, cc] = k + 1
-    plt.imshow(uv_map_image)
+    ### -Y
+    u_lb = sz + sy
+    v_lb = sz
+    u_s = sz
+    v_s = sx
+    verts += [[-sx, -sy, sz],
+              [-sx, -sy, -sz],
+              [sx, -sy, -sz],
+              [sx, -sy, sz]]
+    normals += [[0., -1., 0.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
 
-    # Finally, rescale all of the uv coordinates in place using those mappings.
-    for k, uv_i in enumerate(mesh.visual.uv):
-        coords = np.round(uv_i * u_scaling_image.shape)
-        coords = np.clip(coords, np.zeros(2), np.array(u_scaling_image.shape) - 1).astype(int)
-        print("UV i: ", uv_i)
-        print("Final coords: ", coords)
-        mesh.visual.uv[k] = np.array([integral_image_u[coords[0], coords[1]],
-                                      integral_image_v[coords[0], coords[1]]])
+    ### +Y
+    u_lb = 0.
+    v_lb = sz
+    u_s = sz
+    v_s = sx
+    verts += [[-sx, sy, -sz],
+              [-sx, sy, sz],
+              [sx, sy, sz],
+              [sx, sy, -sz]]
+    normals += [[0., 1., 0.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
 
-    uv_map_image = np.zeros((1024, 1024))
-    for k, face in enumerate(mesh.faces):
-        uvs = np.vstack([mesh.visual.uv[v] for v in face])*uv_map_image.shape
-        rr, cc = skimage.draw.polygon(uvs[:, 0], uvs[:, 1], uv_map_image.shape)
-        uv_map_image[rr, cc] = k + 1
-    plt.subplot(5, 1, 5)
-    plt.imshow(uv_map_image)
-    plt.show()
-    
-    #out_image = np.zeros((1024, 1024))
-    #Xi, Yi = np.meshgrid(range(out_image.shape[0]), range(out_image.shape[1]))
-    #print(Xi, Yi)
-    #print(Xi.shape)
-    #interp = scipy.interpolate.RectBivariateSpline(range(out_image.shape[0]), range(out_image.shape[1]), uv_map_image)
-    #Xo = out_image.shape[0] * integral_image_u
-    #Yo = out_image.shape[1] * integral_image_v
-    #warped_out_image = interp(Xo, Yo, grid=False)
-    #plt.subplot(5, 1, 5)
-    #plt.imshow(uv_map_image)
-    #plt.show()
+    ### -Z
+    u_lb = sz
+    v_lb = sz + sx + sz
+    u_s = sy
+    v_s = sx
+    verts += [[sx, sy, -sz],
+              [sx, -sy, -sz],
+              [-sx, -sy, -sz],
+              [-sx, sy, -sz]]
+    normals += [[0., 0., -1.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
 
+    ### +Z
+    u_lb = sz
+    v_lb = sz
+    u_s = sy
+    v_s = sx
+    verts += [[-sx, sy, sz],
+              [-sx, -sy, sz],
+              [sx, -sy, sz],
+              [sx, sy, sz]]
+    normals += [[0., 0., 1.] * 4]
+    uvs += [[u_lb, v_lb],
+            [u_lb + u_s, v_lb],
+            [u_lb + u_s, v_lb + v_s],
+            [u_lb, v_lb + v_s]]
+    faces += [range(len(verts)-4, len(verts))]
+
+
+    verts = np.array(verts)
+    faces = np.array(faces)
+    normals = np.array(normals)
+    uvs = np.array(uvs)
+    uvs[:, 0] /= 3.
+    uvs[:, 1] /= 4.
+    print(verts.shape, faces.shape, normals.shape, uvs.shape)
+    mesh = trimesh.Trimesh(
+        vertices=verts,
+        faces=faces,
+        vertex_normals=normals,
+        visual=trimesh.visual.texture.TextureVisuals(uv=uvs),
+        process=False, # Processing / validation removes duplicate verts, ruining our UV mapping
+        validate=False)
     print("Mesh verts: ", mesh.vertices)
     print("Mesh normals: ", mesh.vertex_normals)
     print("Mesh faces: ", mesh.faces)
@@ -249,13 +289,21 @@ if __name__ == "__main__":
     #print("Mesh visual faces: ", mesh.visual.faces)
     print("Mesh visual UVs: ", mesh.visual.uv)
 
+    uv_map_image = np.zeros((1024, 1024))
+    for k, face in enumerate(mesh.faces):
+        uvs = np.vstack([mesh.visual.uv[v] for v in face])*uv_map_image.shape
+        rr, cc = skimage.draw.polygon(uvs[:, 0], uvs[:, 1], uv_map_image.shape)
+        uv_map_image[rr, cc] = k + 1
+    plt.imshow(uv_map_image)
+    plt.show()
+
+
     # Generate a base texture for the box using a cardboard texture
     baseColorTexture = np.zeros((2048, 2048, 3), dtype=np.uint8)
 
     # Fill the base color map with the cardboard texture
     #cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :3]
     cardboard_texture = np.array(PIL.Image.open("/home/gizatt/Downloads/grid.jpg"))
-    print(cardboard_texture)
     tile_box_with_texture(baseColorTexture, cardboard_texture, np.array([[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
                           scale=[1., 1.], rotation=0.0)
     
