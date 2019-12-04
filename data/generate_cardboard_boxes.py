@@ -2,6 +2,7 @@ import lxml.etree as et
 import skimage.draw
 import skimage.transform
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
 import trimesh
 from trimesh.constants import log
@@ -206,7 +207,7 @@ def tile_box_with_texture(base_image, decal_image, corners, scale=(1.0, 1.0), ro
     # Rescale the declar first
     scaling = np.ones(3)
     scaling[:2] = scale
-    decal_image_scaled = scipy.ndimage.zoom(decal_image, scaling, mode='constant', order=0)
+    decal_image_scaled = scipy.ndimage.zoom(decal_image, scaling, mode='wrap', order=0)
 
     print("Zoomed shape: ", decal_image_scaled.shape)
 
@@ -233,17 +234,10 @@ if __name__ == "__main__":
     # trimesh.util.attach_to_log()
 
     sx = 1.
-    sy = 0.5
+    sy = 3.0
     sz = 0.5
     mesh = generated_scaled_box_with_uvs(sx, sy, sz)
 
-    #uv_map_image = np.zeros((1024, 1024))
-    #for k, face in enumerate(mesh.faces):
-    #    uvs = np.vstack([mesh.visual.uv[v] for v in face])*uv_map_image.shape
-    #    rr, cc = skimage.draw.polygon(uvs[:, 0], uvs[:, 1], uv_map_image.shape)
-    #    uv_map_image[rr, cc] = k + 1
-    #plt.imshow(uv_map_image)
-    #plt.show()
 
     print("Here1")
 
@@ -251,20 +245,22 @@ if __name__ == "__main__":
     baseColorTexture = np.zeros((2048, 2048, 3), dtype=np.uint8)
 
     # Fill the base color map with the cardboard texture
-    print("Here2")
     cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :3]
-    print("Here3")
     #cardboard_texture = np.array(PIL.Image.open("/home/gizatt/Downloads/grid.jpg"))
     tile_box_with_texture(baseColorTexture, cardboard_texture, np.array([[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
                           scale=[0.1, 0.1], rotation=0.0)
-    print("Here4")
-
+    
+    # Draw the completed texture, with the UV map overlayed
     plt.figure()
-    plt.subplot(2, 1, 1)
-    plt.imshow(cardboard_texture)
-    plt.subplot(2, 1, 2)
     plt.imshow(baseColorTexture)
+    for k, face in enumerate(mesh.faces):
+        uvs = np.vstack([mesh.visual.uv[v] for v in face])*baseColorTexture.shape[:2]
+        patch = patches.Polygon(
+            uvs, fill=False, linewidth=1.0, linestyle="--",
+            edgecolor=plt.cm.jet(float(k) / len(mesh.faces)))
+        plt.gca().add_patch(patch)
     plt.show()
+
 
 
     baseColorTexture = PIL.Image.fromarray(baseColorTexture)
