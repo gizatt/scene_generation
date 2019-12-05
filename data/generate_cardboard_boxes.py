@@ -1,3 +1,4 @@
+from collections import namedtuple
 import lxml.etree as et
 import skimage.draw
 import skimage.transform
@@ -20,7 +21,8 @@ import os
 
 import numpy as np
 
-def generated_scaled_box_with_uvs(sx, sy, sz):
+def generate_scaled_box_with_uvs(sx, sy, sz):
+    # sx, sy, and sz are *half* widths of faces
     # Hand-code generation of the box, so I can get the UV unwrapping
     # correct and manually scaled.
     # Intended unwrapping is:         
@@ -256,9 +258,9 @@ if __name__ == "__main__":
     # attach to logger so trimesh messages will be printed to console
     # trimesh.util.attach_to_log()
 
-    sx, sy, sz = np.random.uniform(low=0.2, high=0.6, size=(3,))
+    sx, sy, sz = np.random.uniform(low=0.1, high=0.25, size=(3,))
     print("Box shape: ", sx, sy, sz)
-    mesh, box_uvs_by_face, box_uv_scale_factor = generated_scaled_box_with_uvs(sx, sy, sz)
+    mesh, box_uvs_by_face, box_uv_scale_factor = generate_scaled_box_with_uvs(sx, sy, sz)
     print("Box uv scale factor: ", box_uv_scale_factor)
 
     # Generate a base texture for the box using a cardboard texture
@@ -266,10 +268,103 @@ if __name__ == "__main__":
 
     # Fill the base color map with the cardboard texture
     cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :4]
-    #cardboard_texture = np.array(PIL.Image.open("/home/gizatt/Downloads/grid.jpg"))
     tile_box_with_texture(baseColorTexture, cardboard_texture, np.array([[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
                           scale=[0.1, 0.1])
-    #sys.exit()
+    #cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/maxresdefault.jpg"))
+    #cardboard_texture = np.concatenate([cardboard_texture, 255*np.ones([cardboard_texture.shape[0], cardboard_texture.shape[1], 1])], axis=2)
+    #cardboard_texture = np.array(PIL.Image.open("/home/gizatt/Downloads/grid.jpg"))
+    #tile_box_with_texture(baseColorTexture, cardboard_texture, np.array([[0., 0.], [1., 0.], [1., 1.], [0., 1.]]),
+    #                      number_of_tiles=[1, 1])
+    
+    LabelGenInfo = namedtuple('label_generation_info', field_names=[
+        'type', # A key from type_to_path
+        'faces', # list of string from [px, nx, py, ny, pz, nz]
+        'uv_sampler', # callable to sample uv location on face
+        'rotation_sampler', # callable to sample rotation
+        'width_in_meters', # float
+        'occurance_prob_per_face' # 0 to 1 float or list of floats
+    ])
+
+    type_to_path = {
+        'bar_code_printed': '/home/gizatt/data/cardboard_box_texturing/textures/bar_code_decal_1.png',
+        'bar_code_sticker': '/home/gizatt/data/cardboard_box_texturing/textures/bar_code_sticker_decal_1.png',
+        'recycleable_printed': '/home/gizatt/data/cardboard_box_texturing/textures/recycleable_decal.png',
+        'sticker_bounds_printed': '/home/gizatt/data/cardboard_box_texturing/textures/sticker_placement_decal.png'
+    }
+
+    def random_mostly_on_face():
+        return np.random.uniform([0.05, 0.05], [0.95, 0.95])
+    def random_axis_aligned_rotation():
+        return np.random.randint(4)*np.pi/2. + np.random.randn()*0.025
+
+    possible_labels_pre_tape = [
+        LabelGenInfo(
+            type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=0.5),
+        LabelGenInfo(
+            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.05, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.05, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='recycleable_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=1.0),
+    ]
+
+    possible_labels_post_tape = [
+        LabelGenInfo(
+            type='bar_code_sticker', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=0.8),
+    ]
+
+    def handle_label(label):
+        for k, face in enumerate(label.faces):
+            if isinstance(label.occurance_prob_per_face, list):
+                occurance_prob_for_this_face = label.occurance_prob_per_face[k]
+            else:
+                occurance_prob_for_this_face = label.occurance_prob_per_face
+            if np.random.random() < occurance_prob_for_this_face:
+                rotation = label.rotation_sampler()
+                uv_loc = label.uv_sampler()
+                print("Applying label of type %s on %s at %f, %f" % (label.type, face, uv_loc[0], uv_loc[1]))
+                assert(label.type in type_to_path.keys())
+                sticker_texture = np.array(PIL.Image.open(type_to_path[label.type]))
+                u_scale = label.width_in_meters / box_uv_scale_factor
+                v_scale = u_scale * sticker_texture.shape[1] / sticker_texture.shape[0]
+                corners_pre_rotation = np.array([[-u_scale/2., -v_scale/2.],
+                                                      [u_scale/2., -v_scale/2.],
+                                                      [u_scale/2., v_scale/2.],
+                                                      [-u_scale/2., v_scale/2.]])
+                rotmat = np.array([[np.cos(rotation), -np.sin(rotation)], [np.sin(rotation), np.cos(rotation)]])
+                uv_bounds = box_uvs_by_face[face]
+                offset = uv_loc * (np.max(uv_bounds, axis=0) - np.min(uv_bounds, axis=0)) + np.min(uv_bounds, axis=0)
+                offset = np.array([offset[1], offset[0]]) # why???
+
+                corners = np.dot(rotmat, corners_pre_rotation.T).T + offset
+                scaling = np.ones(2) * (baseColorTexture.shape[1] * v_scale) / sticker_texture.shape[1]
+                print("Sticker at corners: ", corners)
+                tile_box_with_texture(baseColorTexture, sticker_texture, corners, scale=scaling,
+                                      number_of_tiles=[1, 1])
+    
+    for label in possible_labels_pre_tape:
+        handle_label(label)
+
     # Apply a strip of tape with some noise along the long tile direction
     for k in range(1):
         possible_tape_textures = [
@@ -298,33 +393,8 @@ if __name__ == "__main__":
         tile_box_with_texture(baseColorTexture, tape_texture, corners, scale=scaling,
                               number_of_tiles=[tape_uv_length*tape_texture.shape[1]/(tape_uv_width*tape_texture.shape[0]), 1.])
 
-    for k in range(5):
-        # Apply other labels totally randomly
-        possible_labels = [
-            '/home/gizatt/data/cardboard_box_texturing/textures/bar_code_decal_1.png',
-            #'/home/gizatt/data/cardboard_box_texturing/textures/bar_code_sticker_decal_1.png',
-            '/home/gizatt/data/cardboard_box_texturing/textures/recycleable_decal.png',
-            '/home/gizatt/data/cardboard_box_texturing/textures/sticker_placement_decal.png',
-        ]
-        sticker_texture = np.array(PIL.Image.open(random.choice(possible_labels)))
-        u_scale = np.random.uniform(0.02, 0.15)
-        v_scale = u_scale * sticker_texture.shape[1] / sticker_texture.shape[0]
-        corners_pre_rotation = np.array([[-u_scale/2., -v_scale/2.],
-                                              [u_scale/2., -v_scale/2.],
-                                              [u_scale/2., v_scale/2.],
-                                              [-u_scale/2., v_scale/2.]])
-        rotation = np.random.randint(4)*np.pi/2. + np.random.randn()*0.05
-        rotmat = np.array([[np.cos(rotation), -np.sin(rotation)], [np.sin(rotation), np.cos(rotation)]])
-        # Stick it randomly on a random face
-        uv_bounds = random.choice(list(box_uvs_by_face.values()))
-        offset = random.uniform(np.min(uv_bounds, axis=0), np.max(uv_bounds, axis=0))
-        offset = np.array([offset[1], offset[0]]) # why???
-
-        corners = np.dot(rotmat, corners_pre_rotation.T).T + offset
-        scaling = np.ones(2) * (baseColorTexture.shape[1] * v_scale) / sticker_texture.shape[1]
-        print("Sticker at corners: ", corners)
-        tile_box_with_texture(baseColorTexture, sticker_texture, corners, scale=scaling,
-                              number_of_tiles=[1, 1])
+    for label in possible_labels_post_tape:
+        handle_label(label)
 
     # Draw the completed texture, with the UV map overlayed
     plt.figure()
@@ -335,9 +405,8 @@ if __name__ == "__main__":
             uvs, fill=False, linewidth=1.0, linestyle="--",
             edgecolor=plt.cm.jet(float(k) / len(mesh.faces)))
         plt.gca().add_patch(patch)
-    plt.show()
-
-
-    baseColorTexture = PIL.Image.fromarray(baseColorTexture)
+    
+    plt.pause(0.5)
+    baseColorTexture = PIL.Image.fromarray(np.flipud(baseColorTexture))
     mesh.visual.material = trimesh.visual.material.PBRMaterial(baseColorTexture=baseColorTexture)
     mesh.show()
