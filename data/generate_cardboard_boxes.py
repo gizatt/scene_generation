@@ -11,15 +11,16 @@ from trimesh.constants import log
 from shapely.geometry import Point, Polygon
 from shapely.ops import triangulate
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 import scipy
 import scipy.interpolate
+import string
 import cv2
 import time
 import sys
-
 import os
 
-import numpy as np
 
 def generate_scaled_box_with_uvs(sx, sy, sz):
     # sx, sy, and sz are *half* widths of faces
@@ -333,6 +334,24 @@ if __name__ == "__main__":
             width_in_meters=.04, occurance_prob_per_face=0.8),
     ]
 
+    def apply_sticker(sticker_texture, width, rotation, uv_loc, face):
+        u_scale = width / box_uv_scale_factor
+        v_scale = u_scale * sticker_texture.shape[1] / sticker_texture.shape[0]
+        corners_pre_rotation = np.array([[-u_scale/2., -v_scale/2.],
+                                          [u_scale/2., -v_scale/2.],
+                                          [u_scale/2., v_scale/2.],
+                                          [-u_scale/2., v_scale/2.]])
+        rotmat = np.array([[np.cos(rotation), -np.sin(rotation)], [np.sin(rotation), np.cos(rotation)]])
+        uv_bounds = box_uvs_by_face[face]
+        offset = uv_loc * (np.max(uv_bounds, axis=0) - np.min(uv_bounds, axis=0)) + np.min(uv_bounds, axis=0)
+        offset = np.array([offset[1], offset[0]]) # why???
+
+        corners = np.dot(rotmat, corners_pre_rotation.T).T + offset
+        scaling = np.ones(2) * (baseColorTexture.shape[1] * v_scale) / sticker_texture.shape[1]
+        print("Sticker at corners: ", corners)
+        tile_box_with_texture(baseColorTexture, sticker_texture, corners, scale=scaling,
+                              number_of_tiles=[1, 1])
+
     def handle_label(label):
         for k, face in enumerate(label.faces):
             if isinstance(label.occurance_prob_per_face, list):
@@ -345,25 +364,33 @@ if __name__ == "__main__":
                 print("Applying label of type %s on %s at %f, %f" % (label.type, face, uv_loc[0], uv_loc[1]))
                 assert(label.type in type_to_path.keys())
                 sticker_texture = np.array(PIL.Image.open(type_to_path[label.type]))
-                u_scale = label.width_in_meters / box_uv_scale_factor
-                v_scale = u_scale * sticker_texture.shape[1] / sticker_texture.shape[0]
-                corners_pre_rotation = np.array([[-u_scale/2., -v_scale/2.],
-                                                      [u_scale/2., -v_scale/2.],
-                                                      [u_scale/2., v_scale/2.],
-                                                      [-u_scale/2., v_scale/2.]])
-                rotmat = np.array([[np.cos(rotation), -np.sin(rotation)], [np.sin(rotation), np.cos(rotation)]])
-                uv_bounds = box_uvs_by_face[face]
-                offset = uv_loc * (np.max(uv_bounds, axis=0) - np.min(uv_bounds, axis=0)) + np.min(uv_bounds, axis=0)
-                offset = np.array([offset[1], offset[0]]) # why???
-
-                corners = np.dot(rotmat, corners_pre_rotation.T).T + offset
-                scaling = np.ones(2) * (baseColorTexture.shape[1] * v_scale) / sticker_texture.shape[1]
-                print("Sticker at corners: ", corners)
-                tile_box_with_texture(baseColorTexture, sticker_texture, corners, scale=scaling,
-                                      number_of_tiles=[1, 1])
+                apply_sticker(sticker_texture, label.width_in_meters, rotation, uv_loc, face)
+                
     
     for label in possible_labels_pre_tape:
         handle_label(label)
+
+    # Write some random things on the box
+    # Ref https://pythonprogramming.altervista.org/make-an-image-with-text-with-python/
+    for k in range(5):
+        face = random.choice(["px", "nx", "py", "nx", "pz", "nz"])
+        string_length = np.random.randint(10) + 2
+        text = ''.join(random.choice(string.ascii_letters + string.digits)
+                       for i in range(string_length))
+        # Render text to image
+        font_size = 100
+        fnt = PIL.ImageFont.truetype(
+            random.choice(['arial.ttf', 'comic.ttf']), font_size)
+        text_image = PIL.Image.new(mode = "RGBA", size = (int(font_size/2)*len(text),font_size+50))
+        draw = PIL.ImageDraw.Draw(text_image)
+        # draw text
+        text_color = random.choice([
+            (0, 0, 0),
+            tuple(np.random.randint(255, size=3).tolist())])
+        draw.text((10,10), text, font=fnt, fill=text_color)
+        apply_sticker(np.array(text_image), width=np.random.uniform(0.01, 0.05),
+                      rotation=random_axis_aligned_rotation(), uv_loc=random_mostly_on_face(),
+                      face=face)
 
     # Apply a strip of tape with some noise along the long tile direction
     for k in range(1):
