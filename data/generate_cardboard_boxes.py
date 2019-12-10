@@ -256,6 +256,34 @@ def tile_box_with_texture(
     fill_box_with_texture(base_image, decal_full, corners)
     print("\tDid tiling in %f seconds" % (time.time() - start_time))
 
+
+def generate_perlin_noise_2d(shape, res):
+    # from https://pvigier.github.io/2018/06/13/perlin-noise-numpy.html
+    def f(t):
+        return 6*t**5 - 15*t**4 + 10*t**3
+    
+    delta = (res[0] / shape[0], res[1] / shape[1])
+    d = (shape[0] // res[0], shape[1] // res[1])
+    grid = np.mgrid[0:res[0]:delta[0],0:res[1]:delta[1]].transpose(1, 2, 0) % 1
+    # Gradients
+    angles = 2*np.pi*np.random.rand(res[0]+1, res[1]+1)
+    gradients = np.dstack((np.cos(angles), np.sin(angles)))
+    g00 = gradients[0:-1,0:-1].repeat(d[0], 0).repeat(d[1], 1)
+    g10 = gradients[1:,0:-1].repeat(d[0], 0).repeat(d[1], 1)
+    g01 = gradients[0:-1,1:].repeat(d[0], 0).repeat(d[1], 1)
+    g11 = gradients[1:,1:].repeat(d[0], 0).repeat(d[1], 1)
+    # Ramps
+    n00 = np.sum(grid * g00, 2)
+    n10 = np.sum(np.dstack((grid[:,:,0]-1, grid[:,:,1])) * g10, 2)
+    n01 = np.sum(np.dstack((grid[:,:,0], grid[:,:,1]-1)) * g01, 2)
+    n11 = np.sum(np.dstack((grid[:,:,0]-1, grid[:,:,1]-1)) * g11, 2)
+    # Interpolation
+    t = f(grid)
+    n0 = n00*(1-t[:,:,0]) + t[:,:,0]*n10
+    n1 = n01*(1-t[:,:,0]) + t[:,:,0]*n11
+    return np.sqrt(2)*((1-t[:,:,1])*n0 + t[:,:,1]*n1)
+
+
 if __name__ == "__main__":
 
     # attach to logger so trimesh messages will be printed to console
@@ -308,26 +336,26 @@ if __name__ == "__main__":
             uv_sampler = random_mostly_on_face,
             rotation_sampler = random_axis_aligned_rotation,
             width_in_meters=.04, occurance_prob_per_face=1.0),
-        LabelGenInfo(
-            type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-            uv_sampler = random_mostly_on_face,
-            rotation_sampler = random_axis_aligned_rotation,
-            width_in_meters=.04, occurance_prob_per_face=0.5),
-        LabelGenInfo(
-            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-            uv_sampler = random_mostly_on_face,
-            rotation_sampler = random_axis_aligned_rotation,
-            width_in_meters=.05, occurance_prob_per_face=1.0),
-        LabelGenInfo(
-            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-            uv_sampler = random_mostly_on_face,
-            rotation_sampler = random_axis_aligned_rotation,
-            width_in_meters=.05, occurance_prob_per_face=1.0),
-        LabelGenInfo(
-            type='recycleable_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-            uv_sampler = random_mostly_on_face,
-            rotation_sampler = random_axis_aligned_rotation,
-            width_in_meters=.04, occurance_prob_per_face=1.0),
+        #LabelGenInfo(
+        #    type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+        #    uv_sampler = random_mostly_on_face,
+        #    rotation_sampler = random_axis_aligned_rotation,
+        #    width_in_meters=.04, occurance_prob_per_face=0.5),
+        #LabelGenInfo(
+        #    type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+        #    uv_sampler = random_mostly_on_face,
+        #    rotation_sampler = random_axis_aligned_rotation,
+        #    width_in_meters=.05, occurance_prob_per_face=1.0),
+        #LabelGenInfo(
+        #    type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+        #    uv_sampler = random_mostly_on_face,
+        #    rotation_sampler = random_axis_aligned_rotation,
+        #    width_in_meters=.05, occurance_prob_per_face=1.0),
+        #LabelGenInfo(
+        #    type='recycleable_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+        #    uv_sampler = random_mostly_on_face,
+        #    rotation_sampler = random_axis_aligned_rotation,
+        #    width_in_meters=.04, occurance_prob_per_face=1.0),
     ]
 
     possible_labels_post_tape = [
@@ -379,7 +407,7 @@ if __name__ == "__main__":
 
     # Write some random things on the box
     # Ref https://pythonprogramming.altervista.org/make-an-image-with-text-with-python/
-    for k in range(5):
+    for k in range(2):
         face = random.choice(["px", "nx", "py", "nx", "pz", "nz"])
         string_length = np.random.randint(10) + 2
         text = ''.join(random.choice(string.ascii_letters + string.digits)
@@ -439,7 +467,7 @@ if __name__ == "__main__":
 
     # Draw the completed texture, with the UV map overlayed
     plt.figure()
-    plt.subplot(2, 1, 1)
+    plt.subplot(3, 1, 1)
     plt.imshow(baseColorTexture)
     for k, face in enumerate(mesh.faces):
         uvs = np.vstack([mesh.visual.uv[v] for v in face])*baseColorTexture.shape[:2]
@@ -447,22 +475,52 @@ if __name__ == "__main__":
             uvs, fill=False, linewidth=1.0, linestyle="--",
             edgecolor=plt.cm.jet(float(k) / len(mesh.faces)))
         plt.gca().add_patch(patch)
-    plt.subplot(2, 1, 2)
-    metallicRoughnessTexture = metallicRoughnessTexture[:, :, 0]
+    plt.subplot(3, 1, 2)
+    metallicRoughnessTexture = 255 - metallicRoughnessTexture[:, :, 0]
     plt.imshow(metallicRoughnessTexture)
-    
+    plt.subplot(3, 1, 3)
+
+    normal_rotation_scale = np.random.uniform(0., np.pi/4)
+    normalTexture = np.stack(
+        [generate_perlin_noise_2d(
+        shape=(texture_size, texture_size),
+        res=(int(texture_size/32), int(texture_size/32))) for k in range(2)],
+        axis=-1) * normal_rotation_scale
+    # In each channel, represents the rotation of 
+    normalTexture = np.stack(
+        [
+            np.sin(normalTexture[:, :, 0]) * np.cos(normalTexture[:, :, 1]),
+            np.sin(normalTexture[:, :, 0]) * np.sin(normalTexture[:, :, 1]),
+            np.cos(normalTexture[:, :, 0])
+        ], axis=2
+    )
+    normalTexture = (normalTexture*255/2. + 255/2.).astype(np.uint8)
+    plt.imshow(normalTexture)
+    plt.show()
     plt.pause(0.5)
+
+
     baseColorTexture = PIL.Image.fromarray(np.flipud(baseColorTexture))
     metallicRoughnessTexture = PIL.Image.fromarray(np.flipud(metallicRoughnessTexture))
+    normalTexture = PIL.Image.fromarray(normalTexture)
     mesh.visual.material = trimesh.visual.material.PBRMaterial(
         baseColorTexture=baseColorTexture,
-        metallicRoughnessTexture=metallicRoughnessTexture)
+        metallicRoughnessTexture=metallicRoughnessTexture,
+        normalTexture=normalTexture)
+
+    def save_im_as_jpg(im, path):
+        if im.mode in ('RGBA', 'LA'):
+            fill_color = 'black'
+            background = PIL.Image.new(im.mode[:-1], im.size, fill_color)
+            background.paste(im, im.split()[-1])
+            im = background
+        im.save(path)
 
     # Save out the generated box and textures
     with open("cardboard_boxes/box.obj", "w") as f:
         f.write(export_obj(mesh))
-    baseColorTexture.save("cardboard_boxes/color.png")
-    metallicRoughnessTexture.save("cardboard_boxes/specular.png")
+    save_im_as_jpg(baseColorTexture, "cardboard_boxes/box_col.jpg")
+    save_im_as_jpg(metallicRoughnessTexture, "cardboard_boxes/box_rgh.jpg")
 
     scene = trimesh.scene.scene.Scene()
     scene.add_geometry(mesh)
