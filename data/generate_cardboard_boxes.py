@@ -21,6 +21,8 @@ import time
 import sys
 import os
 
+from trimesh_export_obj_with_uv import export_obj
+
 
 def generate_scaled_box_with_uvs(sx, sy, sz):
     # sx, sy, and sz are *half* widths of faces
@@ -264,8 +266,10 @@ if __name__ == "__main__":
     mesh, box_uvs_by_face, box_uv_scale_factor = generate_scaled_box_with_uvs(sx, sy, sz)
     print("Box uv scale factor: ", box_uv_scale_factor)
 
-    # Generate a base texture for the box using a cardboard texture
-    baseColorTexture = np.zeros((2048, 2048, 4), dtype=np.uint8)
+    texture_size = 2048
+    baseColorTexture = np.zeros((texture_size, texture_size, 4), dtype=np.uint8)
+    metallicRoughnessTexture = np.zeros((texture_size, texture_size, 4), dtype=np.uint8)
+    metallicRoughnessTexture[..., -1] = 255
 
     # Fill the base color map with the cardboard texture
     cardboard_texture = np.array(PIL.Image.open("/home/gizatt/data/cardboard_box_texturing/textures/cardboard_tileable_1.png"))[:, :, :4]
@@ -334,7 +338,7 @@ if __name__ == "__main__":
             width_in_meters=.04, occurance_prob_per_face=0.8),
     ]
 
-    def apply_sticker(sticker_texture, width, rotation, uv_loc, face):
+    def apply_sticker(destination_texture, sticker_texture, width, rotation, uv_loc, face):
         u_scale = width / box_uv_scale_factor
         v_scale = u_scale * sticker_texture.shape[1] / sticker_texture.shape[0]
         corners_pre_rotation = np.array([[-u_scale/2., -v_scale/2.],
@@ -347,9 +351,9 @@ if __name__ == "__main__":
         offset = np.array([offset[1], offset[0]]) # why???
 
         corners = np.dot(rotmat, corners_pre_rotation.T).T + offset
-        scaling = np.ones(2) * (baseColorTexture.shape[1] * v_scale) / sticker_texture.shape[1]
+        scaling = np.ones(2) * (destination_texture.shape[1] * v_scale) / sticker_texture.shape[1]
         print("Sticker at corners: ", corners)
-        tile_box_with_texture(baseColorTexture, sticker_texture, corners, scale=scaling,
+        tile_box_with_texture(destination_texture, sticker_texture, corners, scale=scaling,
                               number_of_tiles=[1, 1])
 
     def handle_label(label):
@@ -364,7 +368,10 @@ if __name__ == "__main__":
                 print("Applying label of type %s on %s at %f, %f" % (label.type, face, uv_loc[0], uv_loc[1]))
                 assert(label.type in type_to_path.keys())
                 sticker_texture = np.array(PIL.Image.open(type_to_path[label.type]))
-                apply_sticker(sticker_texture, label.width_in_meters, rotation, uv_loc, face)
+                apply_sticker(baseColorTexture, sticker_texture, label.width_in_meters, rotation, uv_loc, face)
+                roughness_im = sticker_texture * 0
+                roughness_im[sticker_texture[..., -1] > 0] = 255
+                apply_sticker(metallicRoughnessTexture, roughness_im, label.width_in_meters, rotation, uv_loc, face)
                 
     
     for label in possible_labels_pre_tape:
@@ -388,9 +395,16 @@ if __name__ == "__main__":
             (0, 0, 0),
             tuple(np.random.randint(255, size=3).tolist())])
         draw.text((10,10), text, font=fnt, fill=text_color)
-        apply_sticker(np.array(text_image), width=np.random.uniform(0.01, 0.05),
-                      rotation=random_axis_aligned_rotation(), uv_loc=random_mostly_on_face(),
-                      face=face)
+        width = np.random.uniform(0.01, 0.05)
+        rotation = random_axis_aligned_rotation()
+        uv_loc = random_mostly_on_face()
+        apply_sticker(baseColorTexture,
+                      np.array(text_image), width=width, rotation=rotation, uv_loc=uv_loc, face=face)
+        roughness_im = np.array(text_image) * 0
+        roughness_im[np.sum(roughness_im, axis=2)] = 255
+        apply_sticker(metallicRoughnessTexture,
+                      roughness_im, width=width, rotation=rotation, uv_loc=uv_loc, face=face)
+
 
     # Apply a strip of tape with some noise along the long tile direction
     for k in range(1):
@@ -419,12 +433,13 @@ if __name__ == "__main__":
         scaling = np.ones(2) * (baseColorTexture.shape[1] * tape_uv_width) / tape_texture.shape[1]
         tile_box_with_texture(baseColorTexture, tape_texture, corners, scale=scaling,
                               number_of_tiles=[tape_uv_length*tape_texture.shape[1]/(tape_uv_width*tape_texture.shape[0]), 1.])
-
+        tile_box_with_texture(metallicRoughnessTexture, np.ones((10, 10, 4))*255, corners)
     for label in possible_labels_post_tape:
         handle_label(label)
 
     # Draw the completed texture, with the UV map overlayed
     plt.figure()
+    plt.subplot(2, 1, 1)
     plt.imshow(baseColorTexture)
     for k, face in enumerate(mesh.faces):
         uvs = np.vstack([mesh.visual.uv[v] for v in face])*baseColorTexture.shape[:2]
@@ -432,8 +447,24 @@ if __name__ == "__main__":
             uvs, fill=False, linewidth=1.0, linestyle="--",
             edgecolor=plt.cm.jet(float(k) / len(mesh.faces)))
         plt.gca().add_patch(patch)
+    plt.subplot(2, 1, 2)
+    metallicRoughnessTexture = metallicRoughnessTexture[:, :, 0]
+    plt.imshow(metallicRoughnessTexture)
     
     plt.pause(0.5)
     baseColorTexture = PIL.Image.fromarray(np.flipud(baseColorTexture))
-    mesh.visual.material = trimesh.visual.material.PBRMaterial(baseColorTexture=baseColorTexture)
-    mesh.show()
+    metallicRoughnessTexture = PIL.Image.fromarray(np.flipud(metallicRoughnessTexture))
+    mesh.visual.material = trimesh.visual.material.PBRMaterial(
+        baseColorTexture=baseColorTexture,
+        metallicRoughnessTexture=metallicRoughnessTexture)
+
+    # Save out the generated box and textures
+    with open("cardboard_boxes/box.obj", "w") as f:
+        f.write(export_obj(mesh))
+    baseColorTexture.save("cardboard_boxes/color.png")
+    metallicRoughnessTexture.save("cardboard_boxes/specular.png")
+
+    scene = trimesh.scene.scene.Scene()
+    scene.add_geometry(mesh)
+    trimesh.scene.lighting.autolight(scene)
+    scene.show()
