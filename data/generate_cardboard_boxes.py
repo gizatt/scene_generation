@@ -336,26 +336,26 @@ if __name__ == "__main__":
             uv_sampler = random_mostly_on_face,
             rotation_sampler = random_axis_aligned_rotation,
             width_in_meters=.04, occurance_prob_per_face=1.0),
-        #LabelGenInfo(
-        #    type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-        #    uv_sampler = random_mostly_on_face,
-        #    rotation_sampler = random_axis_aligned_rotation,
-        #    width_in_meters=.04, occurance_prob_per_face=0.5),
-        #LabelGenInfo(
-        #    type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-        #    uv_sampler = random_mostly_on_face,
-        #    rotation_sampler = random_axis_aligned_rotation,
-        #    width_in_meters=.05, occurance_prob_per_face=1.0),
-        #LabelGenInfo(
-        #    type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-        #    uv_sampler = random_mostly_on_face,
-        #    rotation_sampler = random_axis_aligned_rotation,
-        #    width_in_meters=.05, occurance_prob_per_face=1.0),
-        #LabelGenInfo(
-        #    type='recycleable_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
-        #    uv_sampler = random_mostly_on_face,
-        #    rotation_sampler = random_axis_aligned_rotation,
-        #    width_in_meters=.04, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='bar_code_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=0.5),
+        LabelGenInfo(
+            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.05, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='sticker_bounds_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.05, occurance_prob_per_face=1.0),
+        LabelGenInfo(
+            type='recycleable_printed', faces=['py', 'ny', 'px', 'nx', 'pz', 'nz'],
+            uv_sampler = random_mostly_on_face,
+            rotation_sampler = random_axis_aligned_rotation,
+            width_in_meters=.04, occurance_prob_per_face=1.0),
     ]
 
     possible_labels_post_tape = [
@@ -481,10 +481,11 @@ if __name__ == "__main__":
     plt.subplot(3, 1, 3)
 
     normal_rotation_scale = np.random.uniform(0., np.pi/4)
+    res_factor = 2**np.random.randint(10)
     normalTexture = np.stack(
         [generate_perlin_noise_2d(
         shape=(texture_size, texture_size),
-        res=(int(texture_size/32), int(texture_size/32))) for k in range(2)],
+        res=(int(texture_size/res_factor), int(texture_size/res_factor))) for k in range(2)],
         axis=-1) * normal_rotation_scale
     # In each channel, represents the rotation of 
     normalTexture = np.stack(
