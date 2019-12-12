@@ -54,7 +54,7 @@ from blender_server.drake_blender_visualizer.blender_visualizer import (
 class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
     def __init__(self,
                  depth_camera_properties,
-                 draw_timestep=0.033333,
+                 draw_timestep=0.1,
                  out_dir=None):
         LeafSystem.__init__(self)
         self.set_name('image viz')
@@ -102,13 +102,13 @@ if __name__ == "__main__":
 
     d = "cardboard_boxes"
     candidate_model_files = [
-        os.path.join(d, o, "box.sdf") for o in os.listdir(d) 
+        os.path.abspath(os.path.join(d, o, "box.sdf")) for o in os.listdir(d) 
         if os.path.isdir(os.path.join(d ,o))
     ]
 
     #np.random.seed(42)
     #random.seed(42)
-    for scene_iter in range(1):
+    for scene_iter in range(10):
         try:
             builder = DiagramBuilder()
             mbp, scene_graph = AddMultibodyPlantSceneGraph(
@@ -132,9 +132,10 @@ if __name__ == "__main__":
 
             parser = Parser(mbp, scene_graph)
 
-            n_objects = np.random.randint(1, 3)
+            n_objects = np.random.randint(2, 5)
             poses = []  # [quat, pos]
             classes = []
+            material_overrides = []
             for k in range(n_objects):
                 model_name = "model_%d" % k
                 model_ind = np.random.randint(0, len(candidate_model_files))
@@ -146,12 +147,16 @@ if __name__ == "__main__":
                     [np.random.uniform(-0.1, 0.1),
                      np.random.uniform(-0.1, 0.1),
                      np.random.uniform(0.1, 0.2)]])
+                material_overrides.append(
+                    (".*model_%d.*" % k,
+                     {"material_type": "CC0_texture",
+                      "path": candidate_model_files[model_ind][:-4]}))
             mbp.Finalize()
 
             visualizer = builder.AddSystem(MeshcatVisualizer(
                 scene_graph,
                 zmq_url="tcp://127.0.0.1:6000",
-                draw_period=0.001))
+                draw_period=0.01))
             builder.Connect(scene_graph.get_pose_bundle_output_port(),
                             visualizer.get_input_port(0))
 
@@ -164,27 +169,38 @@ if __name__ == "__main__":
             cam_tf_base = Isometry3(quaternion=cam_quat_base,
                                     translation=cam_trans_base)
             # Rotate camera around origin
-            cam_additional_rotation = Isometry3(quaternion=RollPitchYaw(0., 0., 0*np.random.uniform(0., np.pi*2.)).ToQuaternion(),
+            cam_additional_rotation = Isometry3(quaternion=RollPitchYaw(0., 0., np.random.uniform(0., np.pi*2.)).ToQuaternion(),
                                                 translation=[0, 0, 0])
             cam_tf_base = cam_additional_rotation.multiply(cam_tf_base)
             cam_tfs = [cam_tf_base]
 
             offset_quat_base = RollPitchYaw(0., 0., 0.).ToQuaternion().wxyz()
-            os.system("mkdir -p /tmp/ycb_scene_%03d" % scene_iter)
+            out_dir = "/home/gizatt/data/generated_cardboard_envs/scene_%03d/" % scene_iter
+            os.system("mkdir -p %s" % out_dir)
+
+            # Add materials for ground
+            material_overrides.append(
+                (".*ground.*",
+                 {"material_type": "CC0_texture",
+                  "path": 
+                    random.choice(["/home/gizatt/tools/blender_server/data/test_pbr_mats/Wood15/Wood15",
+                                   "/home/gizatt/tools/blender_server/data/test_pbr_mats/Wood08/Wood08",
+                                   "/home/gizatt/tools/blender_server/data/test_pbr_mats/Metal09/Metal09",
+                                   "/home/gizatt/tools/blender_server/data/test_pbr_mats/Metal26/Metal26"])}))
             blender_color_cam = builder.AddSystem(BlenderColorCamera(
                 scene_graph,
-                draw_period=0.03333,
+                draw_period=0.25,
                 camera_tfs=cam_tfs,
                 zmq_url="tcp://127.0.0.1:5556",
-                env_map_path="/home/gizatt/tools/blender_server/data/env_maps/aerodynamics_workshop_4k.hdr",
-                material_overrides=[
-                    (".*ground.*",
-                        {"material_type": "CC0_texture",
-                         "path": "/home/gizatt/tools/blender_server/data/test_pbr_mats/Wood15/Wood15"}),
-                ],
-                global_transform=Isometry3(), #translation=[0, 0, 0],
-                                           #quaternion=Quaternion(offset_quat_base)),
-                out_prefix="/tmp/ycb_scene_%03d/" % scene_iter
+                env_map_path=random.choice(
+                    ["/home/gizatt/tools/blender_server/data/env_maps/aerodynamics_workshop_4k.hdr",
+                     "/home/gizatt/tools/blender_server/data/env_maps/cave_wall_4k.hdr",
+                     "/home/gizatt/tools/blender_server/data/env_maps/lab_from_phone.jpg",
+                     "/home/gizatt/tools/blender_server/data/env_maps/small_hangar_01_4k.hdr"]),
+                material_overrides=material_overrides,
+                global_transform=Isometry3(translation=[0, 0, 0],
+                                           quaternion=Quaternion(offset_quat_base)),
+                out_prefix=out_dir
             ))
             builder.Connect(scene_graph.get_pose_bundle_output_port(),
                             blender_color_cam.get_input_port(0))
@@ -216,7 +232,7 @@ if __name__ == "__main__":
 
             camera_viz = builder.AddSystem(RgbAndDepthAndLabelImageVisualizer(
                 depth_camera_properties=depth_camera_properties, 
-                draw_timestep=0.0333, out_dir="/tmp/ycb_scene_%03d" % scene_iter))
+                draw_timestep=0.25, out_dir=out_dir))
             builder.Connect(camera.color_image_output_port(),
                             camera_viz.get_input_port(0))
             builder.Connect(camera.depth_image_16U_output_port(),
@@ -295,23 +311,23 @@ if __name__ == "__main__":
             q0_proj = result.GetSolution(q_dec)
             mbp.SetPositions(mbp_context, q0_proj)
             q0_initial = q0_proj.copy()
-            simulator.StepTo(5.0)
+            simulator.StepTo(1.0)
             q0_final = mbp.GetPositions(mbp_context).copy()
 
-            #output_dict = {"n_objects": len(poses)}
-            #for k in range(len(poses)):
-            #    offset = k*7
-            #    pose = q0[(offset):(offset+7)]
-            #    output_dict["obj_%04d" % k] = {
-            #        "class": classes[k],
-            #        "pose": pose.tolist()
-            #    }
-            #with open("tabletop_arrangements.yaml", "a") as file:
-            #    yaml.dump({"env_%d" % int(round(time.time() * 1000)):
-            #               output_dict},
-            #              file)
+            output_dict = {"n_objects": len(poses)}
+            for k in range(len(poses)):
+                offset = k*7
+                pose = q0[(offset):(offset+7)]
+                output_dict["obj_%04d" % k] = {
+                    "class": classes[k],
+                    "pose": pose.tolist()
+                }
+            with open(os.path.join(out_dir, "object_poses.yaml", "w")) as file:
+                yaml.dump({"env_%d" % int(round(time.time() * 1000)):
+                           output_dict},
+                          file)
 #
-            time.sleep(500.0)
+            time.sleep(1.0)
 
         except Exception as e:
             print("Unhandled exception ", e)
