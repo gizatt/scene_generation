@@ -347,7 +347,7 @@ if __name__ == "__main__":
     mesh, box_uvs_by_face, box_uv_scale_factor, box_verts_by_face, box_normals_by_face = generate_scaled_box_with_uvs(sx, sy, sz)
     print("Box uv scale factor: ", box_uv_scale_factor)
 
-    texture_size = 512
+    texture_size = 2048
     baseColorTexture = np.zeros((texture_size, texture_size, 4), dtype=np.uint8)
     metallicRoughnessTexture = np.zeros((texture_size, texture_size, 4), dtype=np.uint8)
     metallicRoughnessTexture[..., -1] = 255
@@ -628,7 +628,7 @@ if __name__ == "__main__":
         metallicRoughnessTexture=metallicRoughnessTexture,
         normalTexture=normalTexture)
 
-    def save_im_as_jpg(im, path):
+    def save_im_flattened(im, path):
         if im.mode in ('RGBA', 'LA'):
             fill_color = 'black'
             background = PIL.Image.new(im.mode[:-1], im.size, fill_color)
@@ -639,11 +639,24 @@ if __name__ == "__main__":
     # Save out the generated box and textures
     with open(os.path.join(out_dir, "box.obj"), "w") as f:
         f.write(export_obj(mesh))
-    save_im_as_jpg(baseColorTexture, os.path.join(out_dir, "box_col.jpg"))
-    save_im_as_jpg(metallicRoughnessTexture, os.path.join(out_dir, "box_rgh.jpg"))
-    save_im_as_jpg(normalTexture, os.path.join(out_dir, "box_nrm.jpg"))
+    save_im_flattened(baseColorTexture, os.path.join(out_dir, "box_col.jpg"))
+    save_im_flattened(baseColorTexture, os.path.join(out_dir, "box.png")) # for texturing in drake
+    save_im_flattened(metallicRoughnessTexture, os.path.join(out_dir, "box_rgh.jpg"))
+    save_im_flattened(normalTexture, os.path.join(out_dir, "box_nrm.jpg"))
 
+    with open("prime_box_sdf_template.xml", "r") as f:
+        prime_box_sdf_template_string = f.read()
+    out_sdf_string = prime_box_sdf_template_string.format(
+        mass=str(mesh.mass),
+        ixx=str(mesh.moment_inertia[0, 0]),
+        iyy=str(mesh.moment_inertia[1, 1]),
+        izz=str(mesh.moment_inertia[2, 2]),
+        mesh_path="box.obj",
+        sx=sx*2, sy=sy*2, sz=sz*2,
+        link_name="box_link")
+    with open(os.path.join(out_dir, "box.sdf"), "w") as f:
+        f.write(out_sdf_string)
     scene = trimesh.scene.scene.Scene()
     scene.add_geometry(mesh)
     trimesh.scene.lighting.autolight(scene)
-    scene.show()
+    #scene.show()
