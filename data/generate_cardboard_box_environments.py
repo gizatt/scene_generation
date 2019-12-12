@@ -59,7 +59,7 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         LeafSystem.__init__(self)
         self.set_name('image viz')
         self.timestep = draw_timestep
-        self._DeclarePeriodicPublish(draw_timestep, 0.0)
+        self._DeclarePeriodicPublish(draw_timestep, 0.)
         
         self.rgb_image_input_port = \
             self._DeclareAbstractInputPort("rgb_image_input_port",
@@ -79,6 +79,10 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         plt.draw()
 
     def _DoPublish(self, context, event):
+        LeafSystem.DoPublish(self, context, event)
+        if context.get_time() <= 1E-3:
+            return
+
         rgb_image = self.EvalAbstractInput(context, 0).get_value()
         depth_image = self.EvalAbstractInput(context, 1).get_value()
         label_image = self.EvalAbstractInput(context, 2).get_value()
@@ -132,7 +136,7 @@ if __name__ == "__main__":
 
             parser = Parser(mbp, scene_graph)
 
-            n_objects = np.random.randint(2, 5)
+            n_objects = np.random.randint(3, 10)
             poses = []  # [quat, pos]
             classes = []
             material_overrides = []
@@ -153,25 +157,26 @@ if __name__ == "__main__":
                       "path": candidate_model_files[model_ind][:-4]}))
             mbp.Finalize()
 
-            visualizer = builder.AddSystem(MeshcatVisualizer(
-                scene_graph,
-                zmq_url="tcp://127.0.0.1:6000",
-                draw_period=0.01))
-            builder.Connect(scene_graph.get_pose_bundle_output_port(),
-                            visualizer.get_input_port(0))
+            #visualizer = builder.AddSystem(MeshcatVisualizer(
+            #    scene_graph,
+            #    zmq_url="tcp://127.0.0.1:6000",
+            #    draw_period=0.01))
+            #builder.Connect(scene_graph.get_pose_bundle_output_port(),
+            #                visualizer.get_input_port(0))
 
             ## BLENDER SERVER STUFF
+            cam_trans_base = np.array([0., 0., np.random.uniform(0.7, 1.5)])
+            # Rotate randomly around z axis
             cam_quat_base = RollPitchYaw(
-                68.*np.pi/180.,
-                0.*np.pi/180,
-                38.6*np.pi/180.).ToQuaternion()
-            cam_trans_base = np.array([0.47, -0.54, 0.31])
+                0., 0., np.random.uniform(0., np.pi*2.)).ToQuaternion()
             cam_tf_base = Isometry3(quaternion=cam_quat_base,
                                     translation=cam_trans_base)
-            # Rotate camera around origin
-            cam_additional_rotation = Isometry3(quaternion=RollPitchYaw(0., 0., np.random.uniform(0., np.pi*2.)).ToQuaternion(),
-                                                translation=[0, 0, 0])
-            cam_tf_base = cam_additional_rotation.multiply(cam_tf_base)
+            # Rotate that camera away from vertical by up to pi/2
+            cam_tf_base = Isometry3(quaternion=RollPitchYaw(np.random.uniform(-np.pi/2, np.pi/2), 0., 0.).ToQuaternion(),
+                                    translation=[0, 0, 0]).multiply(cam_tf_base)
+            # And then rotate again around z axis
+            cam_tf_base = Isometry3(quaternion=RollPitchYaw(0., 0., np.random.uniform(-np.pi/2, np.pi/2)).ToQuaternion(),
+                                    translation=[0, 0, 0]).multiply(cam_tf_base)
             cam_tfs = [cam_tf_base]
 
             offset_quat_base = RollPitchYaw(0., 0., 0.).ToQuaternion().wxyz()
@@ -189,7 +194,7 @@ if __name__ == "__main__":
                                    "/home/gizatt/tools/blender_server/data/test_pbr_mats/Metal26/Metal26"])}))
             blender_color_cam = builder.AddSystem(BlenderColorCamera(
                 scene_graph,
-                draw_period=0.25,
+                draw_period=1.0,
                 camera_tfs=cam_tfs,
                 zmq_url="tcp://127.0.0.1:5556",
                 env_map_path=random.choice(
@@ -226,13 +231,13 @@ if __name__ == "__main__":
             parent_frame_id = scene_graph.world_frame_id()
             # Above origin facing straight down
             camera = builder.AddSystem(
-                RgbdSensor(parent_frame_id, new_cam_tf, depth_camera_properties, show_window=True))
+                RgbdSensor(parent_frame_id, new_cam_tf, depth_camera_properties, show_window=False))
             builder.Connect(scene_graph.get_query_output_port(),
                             camera.query_object_input_port())
 
             camera_viz = builder.AddSystem(RgbAndDepthAndLabelImageVisualizer(
                 depth_camera_properties=depth_camera_properties, 
-                draw_timestep=0.25, out_dir=out_dir))
+                draw_timestep=1.0, out_dir=out_dir))
             builder.Connect(camera.color_image_output_port(),
                             camera_viz.get_input_port(0))
             builder.Connect(camera.depth_image_16U_output_port(),
@@ -287,7 +292,7 @@ if __name__ == "__main__":
                 visualizer.Publish(context)
                 #print("Here")
 
-            prog.AddVisualizationCallback(vis_callback, q_dec)
+            #prog.AddVisualizationCallback(vis_callback, q_dec)
             prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
 
             ik.AddMinimumDistanceConstraint(0.001, threshold_distance=1.0)
@@ -311,7 +316,7 @@ if __name__ == "__main__":
             q0_proj = result.GetSolution(q_dec)
             mbp.SetPositions(mbp_context, q0_proj)
             q0_initial = q0_proj.copy()
-            simulator.StepTo(1.0)
+            simulator.StepTo(1.1)
             q0_final = mbp.GetPositions(mbp_context).copy()
 
             output_dict = {"n_objects": len(poses)}
@@ -322,12 +327,12 @@ if __name__ == "__main__":
                     "class": classes[k],
                     "pose": pose.tolist()
                 }
-            with open(os.path.join(out_dir, "object_poses.yaml", "w")) as file:
+            with open(os.path.join(out_dir, "object_poses.yaml"), "w") as file:
                 yaml.dump({"env_%d" % int(round(time.time() * 1000)):
                            output_dict},
                           file)
 #
-            time.sleep(1.0)
+            time.sleep(1)
 
         except Exception as e:
             print("Unhandled exception ", e)
