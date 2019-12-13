@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import PIL
@@ -30,6 +31,12 @@ from pydrake.multibody.plant import (
 )
 
 from pydrake.forwarddiff import gradient
+from pydrake.geometry.render import (
+    DepthCameraProperties,
+    RenderLabel,
+    MakeRenderEngineVtk,
+    RenderEngineVtkParams,
+)
 from pydrake.multibody.parsing import Parser
 from pydrake.multibody.inverse_kinematics import InverseKinematics
 import pydrake.solvers.mathematicalprogram as mp
@@ -42,7 +49,6 @@ from pydrake.systems.framework import AbstractValue, DiagramBuilder, LeafSystem,
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.systems.rendering import PoseBundle
 from pydrake.systems.sensors import RgbdSensor, Image, PixelType, PixelFormat
-from pydrake.geometry.render import DepthCameraProperties, MakeRenderEngineVtk, RenderEngineVtkParams
 
 import matplotlib.pyplot as plt
 
@@ -50,6 +56,28 @@ from blender_server.drake_blender_visualizer.blender_visualizer import (
     BlenderColorCamera,
     BlenderLabelCamera
 )
+
+reserved_labels = [
+    RenderLabel.kDoNotRender,
+    RenderLabel.kDontCare,
+    RenderLabel.kEmpty,
+    RenderLabel.kUnspecified,
+]
+
+def colorize_labels(image):
+    """Colorizes labels."""
+    # TODO(eric.cousineau): Revive and use Kuni's palette.
+    cc = mpl.colors.ColorConverter()
+    color_cycle = plt.rcParams["axes.prop_cycle"]
+    colors = np.array([cc.to_rgb(c["color"]) for c in color_cycle])
+    bg_color = [0, 0, 0]
+    image = np.squeeze(image)
+    background = np.zeros(image.shape[:2], dtype=bool)
+    for label in reserved_labels:
+        background |= image == int(label)
+    color_image = colors[image % len(colors)]
+    color_image[background] = bg_color
+    return color_image
 
 class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
     def __init__(self,
@@ -59,16 +87,16 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         LeafSystem.__init__(self)
         self.set_name('image viz')
         self.timestep = draw_timestep
-        self._DeclarePeriodicPublish(draw_timestep, 0.)
+        self.DeclarePeriodicPublish(draw_timestep, 0.)
         
         self.rgb_image_input_port = \
-            self._DeclareAbstractInputPort("rgb_image_input_port",
+            self.DeclareAbstractInputPort("rgb_image_input_port",
                                    AbstractValue.Make(Image[PixelType.kRgba8U](640, 480, 3)))
         self.depth_image_input_port = \
-            self._DeclareAbstractInputPort("depth_image_input_port",
+            self.DeclareAbstractInputPort("depth_image_input_port",
                                    AbstractValue.Make(Image[PixelType.kDepth16U](640, 480, 3)))
         self.label_image_input_port = \
-            self._DeclareAbstractInputPort("label_image_input_port",
+            self.DeclareAbstractInputPort("label_image_input_port",
                                    AbstractValue.Make(Image[PixelType.kLabel16I](640, 480, 1)))
         self.fig = plt.figure()
         self.ax = plt.gca()
@@ -78,25 +106,30 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         self.depth_far = depth_camera_properties.z_far
         plt.draw()
 
-    def _DoPublish(self, context, event):
+    def DoPublish(self, context, event):
         LeafSystem.DoPublish(self, context, event)
         if context.get_time() <= 1E-3:
             return
 
-        rgb_image = self.EvalAbstractInput(context, 0).get_value()
-        depth_image = self.EvalAbstractInput(context, 1).get_value()
-        label_image = self.EvalAbstractInput(context, 2).get_value()
+        rgb_image = self.EvalAbstractInput(context, 0).get_value().data
+        depth_image = self.EvalAbstractInput(context, 1).get_value().data
+        label_image = self.EvalAbstractInput(context, 2).get_value().data
 
-        rgb_image = np.frombuffer(rgb_image.data, dtype=np.uint8).reshape(rgb_image.shape, order='C')
+        print("Shapes: ", rgb_image.shape, depth_image.shape, label_image.shape)
+        #rgb_image = np.frombuffer(rgb_image.data, dtype=np.uint8).reshape(rgb_image.shape, order='C')
         PIL.Image.fromarray(rgb_image, mode='RGBA').save(os.path.join(self.out_dir, "00_%08d_drake_col.png" % self.iter_count))
 
-        depth_image = np.frombuffer(depth_image.data, dtype=np.uint16).reshape(depth_image.shape, order='C').astype(np.int32)
+        #depth_image = np.frombuffer(depth_image.data, dtype=np.uint16).reshape(depth_image.shape, order='C').astype(np.int32)
         depth_image = ((depth_image.astype(float) / 2**16) * (self.depth_far - self.depth_near) + self.depth_near)*1000
         depth_image = depth_image.astype(np.int32)
         PIL.Image.fromarray(depth_image[:, :, 0], mode='I').save(os.path.join(self.out_dir, "00_%08d_drake_depth.png" % self.iter_count))
 
-        label_image = np.frombuffer(label_image.data, dtype=np.int16).reshape(label_image.shape, order='C').astype(np.int32)
-        PIL.Image.fromarray(label_image[:, :, 0], mode='I').save(os.path.join(self.out_dir, "00_%08d_drake_label.png" % self.iter_count))
+        #label_image = np.frombuffer(label_image.data, dtype=np.int16).reshape(label_image.shape, order='C').astype(np.int32)
+        print("Min and max labels: ", np.min(label_image), np.max(label_image))
+        PIL.Image.fromarray(label_image[:, :, 0].astype(np.int32), mode='I').save(os.path.join(self.out_dir, "00_%08d_drake_label.png" % self.iter_count))
+        colored_label_image = (colorize_labels(label_image)*255).astype(np.int8)
+        print("Colored label image size: ", colored_label_image.shape)
+        PIL.Image.fromarray(colored_label_image, mode='RGB').save(os.path.join(self.out_dir, "00_%08d_drake_label_colored.png" % self.iter_count))
 
         self.iter_count += 1
 
@@ -112,7 +145,7 @@ if __name__ == "__main__":
 
     #np.random.seed(42)
     #random.seed(42)
-    for scene_iter in range(10):
+    for scene_iter in range(1):
         try:
             builder = DiagramBuilder()
             mbp, scene_graph = AddMultibodyPlantSceneGraph(
