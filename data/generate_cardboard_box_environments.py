@@ -328,6 +328,7 @@ if __name__ == "__main__":
                                    "/home/gizatt/tools/blender_server/data/test_pbr_mats/Metal26/Metal26"])}))
             blender_color_cam = BlenderColorCamera(
                 scene_graph,
+                save_scene=True,
                 draw_period=args.sim_time,
                 camera_tfs=cam_tfs,
                 zmq_url="tcp://127.0.0.1:5556",
@@ -349,8 +350,6 @@ if __name__ == "__main__":
                     scene_graph.get_pose_bundle_output_port().Eval(sg_context)))
             blender_color_cam.load() # How do I do this through drake systems?
             blender_color_cam.Publish(cam_context)
-
-            print("Starting Drake camera renders")
 
             # Add and render equivalent cameras on Drake side
             for camera_k in range(args.num_cameras):
