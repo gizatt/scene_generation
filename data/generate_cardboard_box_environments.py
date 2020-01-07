@@ -79,6 +79,24 @@ def colorize_labels(image):
     color_image[background] = bg_color
     return color_image
 
+def matrix_to_dict(mat):
+    return {
+        "cols": mat.shape[1],
+        "rows": mat.shape[0],
+        "data": mat.flatten().tolist()
+    }
+def make_camera_calibration_dict(color_camera_info):
+    K = color_camera_info.intrinsic_matrix()
+    return {
+        "camera_matrix": matrix_to_dict(K),
+        "projection_matrix": matrix_to_dict(np.hstack([K, np.zeros((3, 1))])),
+        "rectification_matrix": matrix_to_dict(np.eye(3)),
+        "distortion_model": "plump_bob",
+        "distortion_coefficients": matrix_to_dict(np.zeros((1, 5))),
+        "image_width": color_camera_info.width(),
+        "image_height": color_camera_info.height(),
+    }
+
 class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
     def __init__(self,
                  depth_camera_properties,
@@ -153,7 +171,6 @@ if __name__ == "__main__":
 
     out_dir = args.output_dir
     os.system("mkdir -p %s" % out_dir)
-
     assert(os.path.exists(args.cardboard_boxes_dir))
     d = args.cardboard_boxes_dir
     candidate_model_files = [
@@ -352,6 +369,7 @@ if __name__ == "__main__":
             blender_color_cam.Publish(cam_context)
 
             # Add and render equivalent cameras on Drake side
+            color_camera_info_list = []
             for camera_k in range(args.num_cameras):
                 rendering_builder = DiagramBuilder()
                 # Rotate cam to get it from blender +y up, +x right, -z forward
@@ -373,6 +391,7 @@ if __name__ == "__main__":
                 # Above origin facing straight down
                 camera = rendering_builder.AddSystem(
                     RgbdSensor(parent_frame_id, new_cam_tf, depth_camera_properties, show_window=False))
+                color_camera_info_list.append(camera.color_camera_info())
                 rendering_builder.ExportInput(camera.query_object_input_port(), "camera_query_object_input")
 
                 camera_viz = rendering_builder.AddSystem(RgbAndDepthAndLabelImageVisualizer(
@@ -404,6 +423,7 @@ if __name__ == "__main__":
                     "rgb_image_filename": "%02d_%08d.jpg" % (camera_k, 0),
                     "label_image_filename": "%02d_%08d_drake_label.png" % (camera_k, 0),
                     "depth_image_filename": "%02d_%08d_drake_depth.png" % (camera_k, 0),
+                    "calibration": make_camera_calibration_dict(color_camera_info_list[camera_k]),
                 }
                 cam_info_list.append(camera_info_dict)
 
