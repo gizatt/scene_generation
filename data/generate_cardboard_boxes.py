@@ -198,6 +198,7 @@ def generate_scaled_box_with_uvs(sx, sy, sz):
         validate=False)
     return mesh, uvs_by_face, uv_scale_factor, verts_by_face, normals_by_face
 
+
 def convert_mesh_uv_to_xyz(mesh, uvs):
     # For each uv, decide the face it lives on
     # (todo(gizatt) for large meshes, rendering a discretized uv-to-face mapping
@@ -225,11 +226,11 @@ def convert_mesh_uv_to_xyz(mesh, uvs):
         # form this uv coordinate as a linear combination of the first three face UVs
         # and then use that same linear combination of the face verts to get the
         # xyz position
-        uv_dir_1 = (face_uvs[1, :] - face_uvs[0, :]) / np.linalg.norm([face_uvs[1, :] - face_uvs[0, :]])
-        uv_dir_2 = (face_uvs[2, :] - face_uvs[0, :]) / np.linalg.norm([face_uvs[2, :] - face_uvs[0, :]])
-        c1, c2 = np.dot(np.linalg.inv(np.vstack([uv_dir_1, uv_dir_2])), uv - face_uvs[0])
-        xyz_dir_1 = (face_xyzs[1, :] - face_xyzs[0, :]) / np.linalg.norm([face_xyzs[1, :] - face_xyzs[0, :]])
-        xyz_dir_2 = (face_xyzs[2, :] - face_xyzs[0, :]) / np.linalg.norm([face_xyzs[2, :] - face_xyzs[0, :]])
+        uv_dir_1 = (face_uvs[1, :] - face_uvs[0, :])
+        uv_dir_2 = (face_uvs[2, :] - face_uvs[0, :])
+        c1, c2 = np.dot(np.linalg.inv(np.vstack([uv_dir_1, uv_dir_2]).T), uv - face_uvs[0, :])
+        xyz_dir_1 = (face_xyzs[1, :] - face_xyzs[0, :])
+        xyz_dir_2 = (face_xyzs[2, :] - face_xyzs[0, :])
         xyzs[k, :] = xyz_dir_1*c1 + xyz_dir_2*c2 + face_xyzs[0, :]
         normals[k, :] = mesh.vertex_normals[face[0]]
     return xyzs, normals, faces
@@ -342,6 +343,7 @@ if __name__ == "__main__":
     # attach to logger so trimesh messages will be printed to console
     # trimesh.util.attach_to_log()
 
+    scene = trimesh.scene.scene.Scene()
     sx, sy, sz = np.random.uniform(low=0.1, high=0.25, size=(3,))
     print("Box shape: ", sx, sy, sz)
     mesh, box_uvs_by_face, box_uv_scale_factor, box_verts_by_face, box_normals_by_face = generate_scaled_box_with_uvs(sx, sy, sz)
@@ -449,7 +451,10 @@ if __name__ == "__main__":
                               number_of_tiles=[1, 1])
         
         # Calculate world frame corners and normal, too
-        world_corners, world_normals, world_faces = convert_mesh_uv_to_xyz(mesh, np.vstack([corners, np.mean(corners, axis=0)]))
+        # But remember to flip the coordinates back around
+        uvs_to_convert = np.vstack([corners, np.mean(corners, axis=0)])
+        uvs_to_convert = np.roll(uvs_to_convert, shift=1, axis=1)
+        world_corners, world_normals, world_faces = convert_mesh_uv_to_xyz(mesh, uvs_to_convert)
         return world_corners, world_normals, world_faces
 
     def handle_label(label):
@@ -479,6 +484,9 @@ if __name__ == "__main__":
                     'center_normal': sticker_normals[-1, :].tolist(),
                     'center_face': sticker_faces[-1].tolist()
                 })
+
+                # Draw alittle blob in the scene indicating
+                #scene.add_geometry(trimesh.primitives.Sphere(radius=0.02, center=sticker_corners[-1, :]))
                 
     
     for label in possible_labels_pre_tape:
@@ -486,7 +494,7 @@ if __name__ == "__main__":
 
     # Write some random things on the box
     # Ref https://pythonprogramming.altervista.org/make-an-image-with-text-with-python/
-    for k in range(2):
+    for k in range(4):
         face = random.choice(["px", "nx", "py", "nx", "pz", "nz"])
         string_length = np.random.randint(10) + 2
         text = ''.join(random.choice(string.ascii_letters + string.digits)
@@ -514,7 +522,7 @@ if __name__ == "__main__":
 
 
     # Apply a strip of tape with some noise along the long tile direction
-    for k in range(1):
+    for k in range(2):
         possible_tape_textures = [
             "/home/gizatt/data/cardboard_box_texturing/textures/amazon_prime_tape_tileable.png",
             "/home/gizatt/data/cardboard_box_texturing/textures/tape_sample.png",
@@ -656,7 +664,6 @@ if __name__ == "__main__":
         link_name="box_link")
     with open(os.path.join(out_dir, "box.sdf"), "w") as f:
         f.write(out_sdf_string)
-    scene = trimesh.scene.scene.Scene()
     scene.add_geometry(mesh)
     trimesh.scene.lighting.autolight(scene)
     #scene.show()
