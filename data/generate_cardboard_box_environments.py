@@ -3,7 +3,7 @@ import datetime
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-import PIL
+import PIL, PIL.ImageDraw
 import os
 import random
 import time
@@ -85,6 +85,9 @@ def matrix_to_dict(mat):
         "rows": mat.shape[0],
         "data": mat.flatten().tolist()
     }
+def dict_to_matrix(d):
+    return np.array(d["data"]).reshape(d["rows"], d["cols"])
+
 def make_camera_calibration_dict(color_camera_info):
     K = color_camera_info.intrinsic_matrix()
     return {
@@ -96,6 +99,27 @@ def make_camera_calibration_dict(color_camera_info):
         "image_width": color_camera_info.width(),
         "image_height": color_camera_info.height(),
     }
+
+def generate_keypoints_for_box(sticker_info_dict, pose):
+    # First generate the 3D keypoints in body frame
+    scale = np.array(sticker_info_dict["scale"])*2.
+    pts = np.array([[-1., -1., -1., -1, 1., 1., 1., 1.],
+                    [-1., -1., 1., 1., -1., -1., 1., 1.],
+                    [-1., 1., -1., 1., -1., 1., -1., 1.]])
+    pts = (pts.T * scale).T / 2.
+    values = np.zeros((1, 8))
+
+    for applied_sticker in sticker_info_dict["all_applied_stickers"]:
+        if applied_sticker["type"] == "bar_code_sticker":
+            pts = np.vstack([pts.T, np.array(applied_sticker["center_xyz"])]).T
+            values = np.hstack([values, np.ones((1, 1))])
+
+    # Transform pts to world frame
+    quat_elements = pose[:4]
+    quat_elements /= np.linalg.norm(quat_elements)
+    tf = RigidTransform(p=pose[-3:], quaternion=Quaternion(quat_elements))
+    #pts = tf.multiply(pts)
+    return np.vstack([pts, values])
 
 class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
     def __init__(self,
@@ -116,14 +140,11 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         self.label_image_input_port = \
             self.DeclareAbstractInputPort("label_image_input_port",
                                    AbstractValue.Make(Image[PixelType.kLabel16I](640, 480, 1)))
-        self.fig = plt.figure()
-        self.ax = plt.gca()
         self.out_prefix = out_prefix
         self.iter_count = 0
         self.depth_near = depth_camera_properties.z_near
         self.depth_far = depth_camera_properties.z_far
-        plt.draw()
-
+        
     def DoPublish(self, context, event):
         LeafSystem.DoPublish(self, context, event)
         if context.get_time() <= 1E-3:
@@ -138,7 +159,7 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
         PIL.Image.fromarray(rgb_image, mode='RGBA').save(self.out_prefix + "%08d_drake_col.png" % self.iter_count)
 
         #depth_image = np.frombuffer(depth_image.data, dtype=np.uint16).reshape(depth_image.shape, order='C').astype(np.int32)
-        depth_image = ((depth_image.astype(float) / 2**16) * (self.depth_far - self.depth_near) + self.depth_near)*1000
+        #depth_image = ((depth_image.astype(np.int32) / 2**16) * (self.depth_far - self.depth_near) + self.depth_near)*1000
         depth_image = depth_image.astype(np.int32)
         PIL.Image.fromarray(depth_image[:, :, 0], mode='I').save(self.out_prefix + "%08d_drake_depth.png" % self.iter_count)
 
@@ -149,6 +170,63 @@ class RgbAndDepthAndLabelImageVisualizer(LeafSystem):
 
         print("Saved to ", self.out_prefix + "%08d_drake_label_colored.png" % self.iter_count)
         self.iter_count += 1
+
+
+def sanity_check_keypoint_visibility(scene_info_file, show_duration=0.):
+    ''' For each camera listed in the scene info file, draws
+    the visible keypoints for each object over the color image.
+
+    If show_duration is 0 (default), no images will be plotted for review
+    (though they'll still be saved). If it's negative, a plot will open
+    and block until it is closed. If it's positive, it'll be shown for that
+    duration before the script moves on.'''
+    this_dir = os.path.split(scene_info_file)[0]
+    with open(scene_info_file, "r") as f:
+        scene_info_dict = yaml.load(f, Loader=yaml.FullLoader)
+    for env_info in list(scene_info_dict.values()):
+        for camera_calib_dict in env_info["cameras"]:
+            K = dict_to_matrix(camera_calib_dict["calibration"]["camera_matrix"])
+            pose = np.array(camera_calib_dict["pose"])
+            tf = RigidTransform(p=pose[-3:], quaternion=Quaternion(pose[:4]))
+            depth_pil = PIL.Image.open(os.path.join(this_dir, camera_calib_dict["depth_image_filename"]))
+            depth_image = np.asarray(depth_pil)
+            color_pil = PIL.Image.open(os.path.join(this_dir, camera_calib_dict["rgb_image_filename"]))
+            drawer = PIL.ImageDraw.Draw(color_pil)
+            for object_k in range(env_info["n_objects"]):
+                obj_dict = env_info["obj_%04d" % object_k]
+                obj_pose = np.array(obj_dict["pose"])
+                quat_part = obj_pose[:4]
+                quat_part /= np.linalg.norm(quat_part)
+                keypoints = dict_to_matrix(obj_dict["keypoints"])
+                # Transform keypoints to camera frame, and then camera image coordinates.
+                keypoints_world = RigidTransform(p=obj_pose[-3:], quaternion=Quaternion(quat_part)).multiply(keypoints[:3, :])
+                keypoints_cam = tf.inverse().multiply(keypoints_world[:, :])
+                keypoints_im = K.dot(keypoints_cam)
+                keypoints_im = keypoints_im / keypoints_im[2, :]
+                # Get the depth value at each point from the depth image,
+                # and use it to decide the visibility of each keypoint from
+                # the camera.
+                visibility = np.zeros(keypoints.shape[1])
+                for keypoint_k in range(keypoints.shape[1]):
+                    u, v = keypoints_im[:2, keypoint_k].astype(int)
+                    z = keypoints_cam[2, keypoint_k]
+                    if u >= 0 and u < depth_image.shape[1] and \
+                        v >= 0 and v < depth_image.shape[0]:
+                        if z < float(depth_image[v, u])/1000. + 1E-2:
+                            visibility[keypoint_k] = 1.
+                            color = (255, int(255*keypoints[3, keypoint_k]), 0)
+                            drawer.ellipse([u-5, v-5, u+5, v+5], outline=color, fill=None)
+                        else:
+                            drawer.ellipse([u-2, v-2, u+2, v+2], outline='blue', fill=None)
+            color_pil.save(os.path.join(
+                this_dir,
+                camera_calib_dict["rgb_image_filename"][:-4] + "_with_keypoints.png"))
+            if show_duration != 0:
+                plt.imshow(color_pil)
+                if show_duration < 0:
+                    plt.show()
+                elif show_duration > 0:
+                    plt.pause(0.1)
 
 
 if __name__ == "__main__":
@@ -204,6 +282,7 @@ if __name__ == "__main__":
 
             n_objects = np.random.randint(3, 10)
             poses = []  # [quat, pos]
+            sticker_infos = []
             classes = []
             label_indices = []
             material_overrides = []
@@ -212,6 +291,9 @@ if __name__ == "__main__":
                 model_ind = np.random.randint(0, len(candidate_model_files))
                 class_path = candidate_model_files[model_ind]
                 classes.append(class_path)
+                # Load the info yaml file for this box, which will be right next to it.
+                with open(os.path.join(os.path.split(class_path)[0], "info.yaml"), "r") as f:
+                    sticker_infos.append(yaml.load(f, Loader=yaml.FullLoader))
                 model_index = parser.AddModelFromFile(class_path, model_name=model_name)
                 poses.append([
                     RollPitchYaw(np.random.uniform(0., 2.*np.pi, size=3)).ToQuaternion().wxyz(),
@@ -310,13 +392,13 @@ if __name__ == "__main__":
             mbp.SetPositions(mbp_context, q0_proj)
             q0_initial = q0_proj.copy()
             simulator.StepTo(args.sim_time + 0.1)
-            q0_final = mbp.GetPositions(mbp_context).copy()
+            qf = mbp.GetPositions(mbp_context).copy()
 
             ## RENDERING STUFF
             rendering_builder = DiagramBuilder()
             cam_tfs = []
             for camera_k in range(args.num_cameras):
-                cam_trans_base = np.array([0., 0., np.random.uniform(0.7, 1.5)])
+                cam_trans_base = np.array([0., 0., np.random.uniform(1.0, 1.5)])
                 # Rotate randomly around z axis
                 cam_quat_base = RollPitchYaw(
                     0., 0., np.random.uniform(0., np.pi*2.)).ToQuaternion()
@@ -377,6 +459,7 @@ if __name__ == "__main__":
                 cam_tf_base = cam_tfs[camera_k]
                 new_rot = cam_tf_base.matrix()[:3, :3].dot(RollPitchYaw([np.pi, 0., 0.]).ToRotationMatrix().matrix())
                 new_cam_tf = RigidTransform(R=RotationMatrix(new_rot), p=cam_tf_base.translation())
+                cam_tfs[camera_k] =  new_cam_tf
 
                 # Blender is using 90* FOV along the long dimension (width)
                 # Find equivalent aspect ratio along vertical dim (y)
@@ -416,7 +499,7 @@ if __name__ == "__main__":
 
             cam_info_list = []
             for camera_k in range(args.num_cameras):
-                pose = np.hstack([cam_tfs[camera_k].quaternion().wxyz(),
+                pose = np.hstack([cam_tfs[camera_k].rotation().ToQuaternion().wxyz(),
                                   cam_tfs[camera_k].translation()]).tolist()
                 camera_info_dict = {
                     "pose": pose,
@@ -433,17 +516,22 @@ if __name__ == "__main__":
             }
             for k in range(len(poses)):
                 offset = k*7
-                pose = q0[(offset):(offset+7)]
+                pose = qf[(offset):(offset+7)]
+                keypoints = generate_keypoints_for_box(sticker_infos[k], pose)
                 output_dict["obj_%04d" % k] = {
                     "class": "prime_box",
                     "sdf": classes[k],
                     "pose": pose.tolist(),
-                    "label_index": label_indices[k]
+                    "label_index": label_indices[k],
+                    "keypoints": matrix_to_dict(keypoints)
                 }
-            with open(os.path.join(out_dir_iter, "scene_info.yaml"), "a") as file:
+
+            with open(os.path.join(out_dir_iter, "scene_info.yaml"), "w") as file:
                 yaml.dump({"env_%d" % int(round(time.time() * 1000)):
                            output_dict},
                           file)
+            sanity_check_keypoint_visibility(os.path.join(out_dir_iter, "scene_info.yaml"),
+                                             show_duration=0.)
 
         except Exception as e:
             print("Unhandled exception ", e)
