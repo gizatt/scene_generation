@@ -261,7 +261,7 @@ class MugShelfLevel(IndependentSetNode):
 
         # Mug production
         mean_init = torch.tensor([0., 0., 0.])
-        var_init = torch.tensor([0.1, 0.05, 0.005])
+        var_init = torch.tensor([0.1, 0.1, 0.005])
         
         # Pretty specific prior on mean and variance
         mean_prior_variance = torch.tensor([0.03, 0.03, 0.01])

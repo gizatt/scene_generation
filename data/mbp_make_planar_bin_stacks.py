@@ -9,12 +9,14 @@ import yaml
 import sys
 
 import pydrake
+from pydrake.autodiffutils import AutoDiffXd
 from pydrake.common import FindResourceOrThrow
 from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
 from pydrake.geometry import (
     Box,
     HalfSpace,
     SceneGraph,
+    SceneGraph_,
     Sphere
 )
 from pydrake.math import RigidTransform
@@ -36,8 +38,9 @@ from pydrake.multibody.parsing import Parser
 from pydrake.multibody.inverse_kinematics import InverseKinematics
 from pydrake.solvers.ipopt import (IpoptSolver)
 from pydrake.solvers.mathematicalprogram import MathematicalProgram, Solve
+from pydrake.multibody.optimization import StaticEquilibriumProblem
 from pydrake.systems.analysis import Simulator
-from pydrake.systems.framework import DiagramBuilder
+from pydrake.systems.framework import AbstractValue, BasicVector, DiagramBuilder, LeafSystem
 from pydrake.systems.meshcat_visualizer import MeshcatVisualizer
 from pydrake.systems.rendering import PoseBundle
 
@@ -50,7 +53,9 @@ def RegisterVisualAndCollisionGeometry(
                                   friction)
 
 
-def generate_example():
+def generate_mbp_sg_diagram(seed):
+    np.random.seed(seed)
+
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=0.005))
@@ -124,29 +129,29 @@ def generate_example():
                 damping=0.)
             mbp.AddJoint(body_joint_theta)
 
-            if (obj_i == n_bodies_per_stack[stack_i] - 1) and np.random.random() > 0.5:
-                radius = np.random.uniform(0.05, 0.15)
-                color = np.array([0.25, 0.5, np.random.uniform(0.5, 0.8), 1.0])
-                body_shape = Sphere(radius)
-                output_dict["obj_%04d" % k] = {
-                    "class": "2d_sphere",
-                    "params": [radius],
-                    "params_names": ["radius"],
-                    "color": color.tolist(),
-                    "pose": [0, 0, 0]
-                }
-            else:
-                length = np.random.uniform(0.1, 0.3)
-                height = np.random.uniform(0.1, 0.3)
-                body_shape = Box(length, 0.25, height)
-                color = np.array([0.5, 0.25, np.random.uniform(0.5, 0.8), 1.0])
-                output_dict["obj_%04d" % k] = {
-                    "class": "2d_box",
-                    "params": [height, length],
-                    "params_names": ["height", "length"],
-                    "color": color.tolist(),
-                    "pose": [0, 0, 0]
-                }
+            #if (obj_i == n_bodies_per_stack[stack_i] - 1) and np.random.random() > 0.5:
+            radius = np.random.uniform(0.05, 0.15)
+            color = np.array([0.25, 0.5, np.random.uniform(0.5, 0.8), 1.0])
+            body_shape = Sphere(radius)
+            output_dict["obj_%04d" % k] = {
+                "class": "2d_sphere",
+                "params": [radius],
+                "params_names": ["radius"],
+                "color": color.tolist(),
+                "pose": [0, 0, 0]
+            }
+            #else:
+            #    length = np.random.uniform(0.1, 0.3)
+            #    height = np.random.uniform(0.1, 0.3)
+            #    body_shape = Box(length, 0.25, height)
+            #    color = np.array([0.5, 0.25, np.random.uniform(0.5, 0.8), 1.0])
+            #    output_dict["obj_%04d" % k] = {
+            #        "class": "2d_box",
+            #        "params": [height, length],
+            #        "params_names": ["height", "length"],
+            #        "color": color.tolist(),
+            #        "pose": [0, 0, 0]
+            #    }
 
             RegisterVisualAndCollisionGeometry(
                 mbp, body, RigidTransform(), body_shape, "body_{}".format(k),
@@ -154,17 +159,25 @@ def generate_example():
             k += 1
 
     mbp.Finalize()
+    return builder, mbp, scene_graph, n_bodies_per_stack
+
+def generate_example():
+    seed = int(time.time()*1000*1000) % 2**32
+    builder, mbp, scene_graph, n_bodies_per_stack = generate_mbp_sg_diagram(seed)
+    n_bodies = sum(n_bodies_per_stack)
+    n_stacks = len(n_bodies_per_stack)
 
     visualizer = builder.AddSystem(MeshcatVisualizer(
         scene_graph,
         zmq_url="tcp://127.0.0.1:6000"))
+    visualizer.load()
     builder.Connect(scene_graph.get_pose_bundle_output_port(),
                     visualizer.get_input_port(0))
 
-    plt.gca().clear()
-    visualizer = builder.AddSystem(PlanarSceneGraphVisualizer(scene_graph, ylim=[-0.5, 1.0], ax=plt.gca()))
-    builder.Connect(scene_graph.get_pose_bundle_output_port(),
-                    visualizer.get_input_port(0))
+    #plt.gca().clear()
+    #visualizer = builder.AddSystem(PlanarSceneGraphVisualizer(scene_graph, ylim=[-0.5, 1.0], ax=plt.gca()))
+    #builder.Connect(scene_graph.get_pose_bundle_output_port(),
+    #                visualizer.get_input_port(0))
     diagram = builder.Build()
 
     diagram_context = diagram.CreateDefaultContext()
@@ -174,7 +187,6 @@ def generate_example():
         scene_graph, diagram_context)
 
     q0 = mbp.GetPositions(mbp_context).copy()
-
     body_i = 0
     for stack_i in range(n_stacks):
         stack_base_location = np.random.uniform(-0.85, 0.85)
@@ -185,11 +197,18 @@ def generate_example():
             q0[body_z_index] = 0.3 * obj_i + 0.3
             body_i += 1
 
-    ik = InverseKinematics(mbp, mbp_context)
-    q_dec = ik.q()
-    prog = ik.prog()
+    # Create the static equilibrium projection problem
+    # Re-generate MBP and SG, this time for conversion to AD
+    builder_ad, mbp_ad, _, _ = generate_mbp_sg_diagram(seed)
+    diagram_ad = builder_ad.Build().ToAutoDiffXd()
+    mbp_ad = diagram_ad.GetSubsystemByName(mbp_ad.get_name())
+    diagram_ad_context = diagram_ad.CreateDefaultContext()
+    mbp_ad_context = diagram_ad.GetMutableSubsystemContext(mbp_ad, diagram_ad_context)
+    se_problem = StaticEquilibriumProblem(mbp_ad, mbp_ad_context, set())
+    prog = se_problem.get_mutable_prog()
+    q_dec = se_problem.q_vars()
 
-    constraint = ik.AddMinimumDistanceConstraint(0.01)
+    #constraint = ik.AddMinimumDistanceConstraint(0.01)
     prog.AddQuadraticErrorCost(np.eye(q0.shape[0])*1.0, q0, q_dec)
     for obj_i in range(n_bodies):
         body_x_index = mbp.GetJointByName("body_{}_x".format(obj_i)).position_start()
@@ -200,9 +219,22 @@ def generate_example():
     mbp.SetPositions(mbp_context, q0)
 
     prog.SetInitialGuess(q_dec, q0)
+
+    def vis_callback(x):
+        print("Callback with ", x)
+        vis_diagram_context = diagram.CreateDefaultContext()
+        mbp.SetPositions(diagram.GetMutableSubsystemContext(mbp, vis_diagram_context), x)
+        pose_bundle = scene_graph.get_pose_bundle_output_port().Eval(diagram.GetMutableSubsystemContext(scene_graph, vis_diagram_context))
+        context = visualizer.CreateDefaultContext()
+        context.FixInputPort(0, AbstractValue.Make(pose_bundle))
+        visualizer.Publish(context)
+    prog.AddVisualizationCallback(vis_callback, q_dec)
+            
     print("Solving")
     print("Initial guess: ", q0)
+    t_start = time.time()
     result = Solve(prog)
+    print("Solved in %f seconds" % (time.time() - t_start))
     print(result)
     print(result.get_solver_id().name())
     q0_proj = result.GetSolution(q_dec)
@@ -214,21 +246,21 @@ def generate_example():
     #    mbp.get_actuation_input_port().get_index(), np.zeros(
     #        mbp.get_actuation_input_port().size()))
 
-    simulator = Simulator(diagram, diagram_context)
-    simulator.set_target_realtime_rate(1.0)
-    simulator.set_publish_every_time_step(False)
-    simulator.StepTo(5.0)
-
-    # Update poses in output dict
-    qf = mbp.GetPositions(mbp_context).copy().tolist()
-    for k in range(n_bodies):
-        x_index = mbp.GetJointByName("body_{}_x".format(k)).position_start()
-        z_index = mbp.GetJointByName("body_{}_z".format(k)).position_start()
-        t_index = mbp.GetJointByName("body_{}_theta".format(k)).position_start()
-
-        pose = [qf[x_index], qf[z_index], qf[t_index]]
-        output_dict["obj_%04d" % k]["pose"] = pose
-    return output_dict
+    #simulator = Simulator(diagram, diagram_context)
+    #simulator.set_target_realtime_rate(1.0)
+    #simulator.set_publish_every_time_step(False)
+    #simulator.StepTo(5.0)
+#
+    ## Update poses in output dict
+    #qf = mbp.GetPositions(mbp_context).copy().tolist()
+    #for k in range(n_bodies):
+    #    x_index = mbp.GetJointByName("body_{}_x".format(k)).position_start()
+    #    z_index = mbp.GetJointByName("body_{}_z".format(k)).position_start()
+    #    t_index = mbp.GetJointByName("body_{}_theta".format(k)).position_start()
+#
+    #    pose = [qf[x_index], qf[z_index], qf[t_index]]
+    #    output_dict["obj_%04d" % k]["pose"] = pose
+    #return output_dict
 
 
 if __name__ == "__main__":

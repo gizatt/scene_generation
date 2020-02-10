@@ -406,14 +406,17 @@ def draw_parse_tree(parse_tree, ax=None, label_score=False, label_name=False, co
         if label_score or color_by_score:
             score_of_node = scores_by_node[node].item()
             score_of_children = sum(scores_by_node[child] for child in parse_tree.successors(node))
-            if label_score:
-                label_str += ": %2.02f / %2.02f" % (score_of_node, score_of_children)
+            if not isinstance(node, TerminalNode):
+                if label_name and label_score:
+                    label_str += ": "
+                if label_score:
+                    label_str += "%2.02f / %2.02f" % (score_of_node, score_of_children)
         if label_name != "":
             label_dict[node] = label_str
     if color_by_score:
         colors = np.array([max(-1000., scores_by_node[node].item()) for node in pruned_tree.nodes]) 
-        colors -= min(colors)
-        colors /= max(colors)
+        #colors -= min(colors)
+        #colors /= max(colors)
     elif len(node_class_to_color_dict.keys()) > 0:
         colors = []
         for node in pruned_tree.nodes:

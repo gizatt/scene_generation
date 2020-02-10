@@ -548,6 +548,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
             draw_corresp_with_meshcat(vis, "fitting/corresp",
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
+            input()
 
     model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
     if vis is not None:
@@ -560,7 +561,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
         draw_corresp_with_meshcat(vis, "fitting/corresp",
             model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
             best_params[3])
-
+        input()
     return all_scores, all_params, best_score, best_params
 
 
@@ -570,7 +571,7 @@ if __name__ == "__main__":
 
     vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
 
-    num_boxes_to_sample = 300
+    num_boxes_to_sample = 1
     #random.seed(42)
     shuffled_envs = list(all_envs.values())
     random.shuffle(shuffled_envs)

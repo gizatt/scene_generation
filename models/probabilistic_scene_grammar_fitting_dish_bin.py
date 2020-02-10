@@ -41,8 +41,6 @@ if __name__ == "__main__":
 
     # CONFIGURATION STUFF
     root_node_type = DishBin
-    output_dir = "../data/dish_bins/icra_runs/test/1/"
-    os.system("mkdir -p %s" % output_dir)
 
 
     root_node = root_node_type()
@@ -55,25 +53,27 @@ if __name__ == "__main__":
     print("%d test examples" % len(test_dataset))
 
     
-    #plt.figure().set_size_inches(15, 10)
-    ##parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(4)]
-    #parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=4, num_attempts=5)
-    #print("Parsed %d trees" % len(parse_trees))
-    ##print("*****************\n0: ", parse_trees[0].nodes)
-    ##print("*****************\n1: ", parse_trees[1].nodes)
-    ###print("*****************\n2: ", parse_trees[2].nodes)
-    ###print("*****************\n3: ", parse_trees[3].nodes)
-    #for k in range(4):
-    #    yaml_env = convert_tree_to_yaml_env(parse_trees[k])
-    #    DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
-    #    draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
-    #    print(parse_trees[k].get_total_log_prob())
-    #    input("Press enter to continue...")
-    #    
-    ##plt.show()
-    #sys.exit(0)
+    plt.figure().set_size_inches(15, 10)
+    #parse_trees = [guess_parse_tree_from_yaml(test_dataset[k], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=2, num_attempts=5, verbose=True)[0] for k in range(4)]
+    parse_trees = guess_parse_trees_batch_async(test_dataset[:4], root_node_type=root_node_type, guide_gvs=hyper_parse_tree.get_global_variable_store(), outer_iterations=4, num_attempts=5)
+    print("Parsed %d trees" % len(parse_trees))
+    #print("*****************\n0: ", parse_trees[0].nodes)
+    #print("*****************\n1: ", parse_trees[1].nodes)
+    ##print("*****************\n2: ", parse_trees[2].nodes)
+    ##print("*****************\n3: ", parse_trees[3].nodes)
+    for k in range(4):
+        yaml_env = convert_tree_to_yaml_env(parse_trees[k])
+        DrawYamlEnvironment(yaml_env, base_environment_type="dish_bin", alpha=0.5)
+        draw_parse_tree_meshcat(parse_trees[k], color_by_score=True)
+        print(parse_trees[k].get_total_log_prob())
+        input("Press enter to continue...")
+        
+    #plt.show()
+    sys.exit(0)
 
-    use_writer = True
+    use_writer = False
+    output_dir = "../data/dish_bins/icra_runs/test/1/"
+    os.system("mkdir -p %s" % output_dir)
 
     log_dir = output_dir + "fixed_elbo_" + datetime.datetime.now().strftime(
         "%Y-%m-%d-%H-%m-%s")
