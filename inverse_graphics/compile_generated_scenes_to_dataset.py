@@ -375,7 +375,15 @@ if __name__ == '__main__':
     config = RawSyntheticSceneDatabaseConfig()
     config.data_root = "/home/gizatt/data/generated_cardboard_envs"
     config.scene_group_list_filepath = os.path.join(
-        config.data_root, "scene_groups_mini.txt")
+        config.data_root, "scene_groups_train.txt")
     db = RawSyntheticSceneDatabase(config)
     db.compile_generated_scenes_to_dataset(
         output_filename=os.path.join(config.data_root, "train.json"))
+
+    config = RawSyntheticSceneDatabaseConfig()
+    config.data_root = "/home/gizatt/data/generated_cardboard_envs"
+    config.scene_group_list_filepath = os.path.join(
+        config.data_root, "scene_groups_test.txt")
+    db = RawSyntheticSceneDatabase(config)
+    db.compile_generated_scenes_to_dataset(
+        output_filename=os.path.join(config.data_root, "test.json"))
