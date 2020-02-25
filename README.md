@@ -27,8 +27,7 @@ the install from source is pretty painless since it's close to pure
 Python.
 
 ## Contents
-- `data`: Many data generation utilities and their generated datasets,
-related to many projects.
+- `data`: Many data generation utilities and their generated datasets.
   - `generate_cardboard_boxes.py`: Generates cardboard box meshes, textures, + SDFs.
   - `generate_cardboard_box_environments.py`: Loads random arrangements of boxes,
   simulates them, and renders labeled images from different perspecties into
@@ -43,3 +42,5 @@ and success distribution is.
 - `notebooks`: Tons of jupyter notebooks for various experiments. Mostly a sandbox.
 
 - `sandbox`: Stuff I don't want to sort right now.
+
+- `inverse_graphics`: Analysis-by-synthetis VI approach project subfolder.
