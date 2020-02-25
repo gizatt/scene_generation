@@ -256,9 +256,9 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("num_scenes", type=int, help="Number of scenes to generate.")
-    parser.add_argument("-i", "--cardboard_boxes_dir", type=str,
-                        help="Directory containing box models.",
-                        default="cardboard_boxes")
+    parser.add_argument("-i", "--data_dir", type=str,
+                        help="Directory containing a subdir 'cardboard_boxes' containing box model folders.",
+                        default="~/data/generated_cardboard_envs")
     parser.add_argument("-n", "--num_cameras", type=int,
                         help="Number of simultaneous camera views.",
                         default=3)
@@ -272,8 +272,8 @@ if __name__ == "__main__":
 
     out_dir = args.output_dir
     os.system("mkdir -p %s" % out_dir)
-    assert(os.path.exists(args.cardboard_boxes_dir))
-    d = args.cardboard_boxes_dir
+    assert(os.path.exists(args.data_dir) and os.path.exists(os.path.join(args.data_dir, 'cardboard_boxes')))
+    d = os.path.join(args.data_dir, 'cardboard_boxes')
     candidate_model_files = [
         os.path.abspath(os.path.join(d, o, "box.sdf")) for o in os.listdir(d) 
         if os.path.isdir(os.path.join(d ,o))
@@ -305,7 +305,7 @@ if __name__ == "__main__":
 
             n_objects = np.random.randint(3, 10)
             poses = []  # [quat, pos]
-            sticker_infos = []
+            object_info_dicts = []
             classes = []
             label_indices = []
             material_overrides = []
@@ -313,10 +313,10 @@ if __name__ == "__main__":
                 model_name = "model_%d" % k
                 model_ind = np.random.randint(0, len(candidate_model_files))
                 class_path = candidate_model_files[model_ind]
-                classes.append(class_path)
+                classes.append(os.path.relpath(class_path, args.data_dir))
                 # Load the info yaml file for this box, which will be right next to it.
                 with open(os.path.join(os.path.split(class_path)[0], "info.yaml"), "r") as f:
-                    sticker_infos.append(yaml.load(f, Loader=yaml.FullLoader))
+                    object_info_dicts.append(yaml.load(f, Loader=yaml.FullLoader))
                 model_index = parser.AddModelFromFile(class_path, model_name=model_name)
                 poses.append([
                     RollPitchYaw(np.random.uniform(0., 2.*np.pi, size=3)).ToQuaternion().wxyz(),
@@ -523,12 +523,14 @@ if __name__ == "__main__":
             # Finally, format the output scene_info yaml for this scene.
             objects_info_dict = {}
             for k in range(len(poses)):
-                keypoints = generate_keypoints_for_box(sticker_infos[k])
+                keypoints = generate_keypoints_for_box(object_info_dicts[k])
                 objects_info_dict["obj_%04d" % k] = {
                     "class": "prime_box",
                     "sdf": classes[k],
                     "label_index": label_indices[k],
-                    "keypoints": matrix_to_dict(keypoints)
+                    "keypoints": matrix_to_dict(keypoints),
+                    "parameters": object_info_dicts[k]["scale"],
+                    "parameter_names": ["scale_x", "scale_y", "scale_z"]
                 }
 
             cameras_info_dict = {}
