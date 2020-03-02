@@ -58,6 +58,8 @@ from blender_server.drake_blender_visualizer.blender_visualizer import (
     BlenderLabelCamera
 )
 
+from scene_generation.utils.type_convert import matrix_to_dict, dict_to_matrix
+
 '''
 scene_info.yaml formatting:
 
@@ -106,14 +108,6 @@ def colorize_labels(image):
     color_image[background] = bg_color
     return color_image
 
-def matrix_to_dict(mat):
-    return {
-        "cols": mat.shape[1],
-        "rows": mat.shape[0],
-        "data": mat.flatten().tolist()
-    }
-def dict_to_matrix(d):
-    return np.array(d["data"]).reshape(d["rows"], d["cols"])
 
 def make_camera_calibration_dict(color_camera_info):
     K = color_camera_info.intrinsic_matrix()
