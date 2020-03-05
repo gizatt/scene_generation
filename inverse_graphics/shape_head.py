@@ -15,17 +15,17 @@ def shape_rcnn_loss(shape_estimate, instances, loss_weight=1.0):
     """
     Compute the voxel prediction loss defined in the Mesh R-CNN paper.
     Args:
-        pred_voxel_logits (Tensor): A tensor of shape (B, D) for batch size B
+        shape_estimate (Tensor): A tensor of shape (B, D) for batch size B
             and # of shape parameters D.
         instances (list[Instances]): A list of N Instances, where N is the number of images
             in the batch. These instances are in 1:1
-            correspondence with the pred_voxel_logits. The ground-truth labels (class, box, mask,
+            correspondence with the shape_estimate. The ground-truth labels (class, box, mask,
             ...) associated with each instance are stored in fields.
         loss_weight (float): A float to multiply the loss with.
     Returns:
         shape_loss (Tensor): A scalar tensor containing the loss.
     """
-    total_num_voxels = pred_voxel_logits.size(0)
+    total_num_shape_estimates = shape_estimate.size(0)
     num_shape_params = shape_estimate.size(1)
     
     # Gather up shape params from the list of Instances objects
@@ -38,9 +38,8 @@ def shape_rcnn_loss(shape_estimate, instances, loss_weight=1.0):
     if len(all_gt_shape_params) == 0:
         return 0.
 
-    gt_shape_params = cat(gt_shape_params, dim=0)
+    gt_shape_params = cat(all_gt_shape_params, dim=0)
     assert gt_shape_params.numel() > 0, gt_shape_params.shape
-    gt_shape_params = gt_shape_params[:, 0]
 
     shape_loss = F.mse_loss(
         shape_estimate, gt_shape_params, reduction="mean"

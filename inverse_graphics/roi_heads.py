@@ -27,6 +27,8 @@ class XenRCNNROIHeads(StandardROIHeads):
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__(cfg, input_shape)
         assert(cfg.MODEL.ROI_HEADS.NUM_CLASSES == 1)
+        self.with_mask = cfg.MODEL.ROI_HEADS.WITH_MASK_HEAD
+        self.shape_loss_weight = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_WEIGHT
         self.shared_pooler_shape = self._init_pooler(cfg, input_shape)
         self.shape_head = build_shape_head(cfg, self.shared_pooler_shape)
         #self.pose_xyz_head = build_pose_xyz_head(cfg, self.shared_pooler_shape)
@@ -75,15 +77,18 @@ class XenRCNNROIHeads(StandardROIHeads):
 
         if self.training:
             losses = self._forward_box(features, proposals)
+
+            if self.with_mask:
+                losses.update(self._forward_mask(features, proposals))
+
             # During training the (fully labeled) proposals used by the box head are
             # used by the shape and pose heads.
 
             # Compute shared features + proposal boxes
             features = [features[f] for f in self.in_features]
-            proposals, _ = select_foreground_proposals(instances, self.num_classes)
+            proposals, _ = select_foreground_proposals(proposals, self.num_classes)
             proposal_boxes = [x.proposal_boxes for x in proposals]
             shared_features = self.shared_pooler(features, proposal_boxes)
-
             losses.update(self._forward_shape(shared_features, proposals))
             #losses.update(self._forward_pose_xyz(shared_features, proposals))
             #losses.update(self._forward_pose_rpy(shared_features, proposals))
@@ -113,6 +118,9 @@ class XenRCNNROIHeads(StandardROIHeads):
         """
         assert not self.training
         assert instances[0].has("pred_boxes") # TODO(gizatt) and anything else?
+
+        if self.with_mask:
+            instances = self._forward_mask(features, instances)
 
         # Compute shared features.
         features = [features[f] for f in self.in_features]

@@ -13,7 +13,10 @@ from fvcore.common.timer import Timer
 from detectron2.data import detection_utils as utils
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.data import transforms as T
-from detectron2.structures import Boxes, BoxMode, Instances, PolygonMasks, polygons_to_bitmask
+from detectron2.structures import (
+    BitMasks, Boxes, BoxMode, Instances,
+    PolygonMasks, polygons_to_bitmask
+)
 from fvcore.common.file_io import PathManager, file_lock
 
 from scene_generation.utils.type_convert import dict_to_matrix
@@ -222,7 +225,7 @@ def annotations_to_instances(annos, image_size):
 
     if len(annos) and "segmentation" in annos[0]:
         masks = [obj["segmentation"] for obj in annos]
-        target.gt_masks = torch.stack(masks, dim=0)
+        target.gt_masks = BitMasks(torch.stack(masks))
 
     # camera calibration
     # if len(annos) and "camera_calibration" in annos[0]:
