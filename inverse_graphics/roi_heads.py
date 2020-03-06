@@ -29,6 +29,9 @@ class XenRCNNROIHeads(StandardROIHeads):
         assert(cfg.MODEL.ROI_HEADS.NUM_CLASSES == 1)
         self.with_mask = cfg.MODEL.ROI_HEADS.WITH_MASK_HEAD
         self.shape_loss_weight = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_WEIGHT
+        self.shape_loss_norm = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_NORM
+        self.pose_loss_weight = cfg.MODEL.ROI_HEADS.POSE_LOSS_WEIGHT
+        self.pose_loss_norm = cfg.MODEL.ROI_HEADS.POSE_LOSS_NORM
         self.shared_pooler_shape = self._init_pooler(cfg, input_shape)
         self.shape_head = build_shape_head(cfg, self.shared_pooler_shape)
         #self.pose_xyz_head = build_pose_xyz_head(cfg, self.shared_pooler_shape)
@@ -172,7 +175,9 @@ class XenRCNNROIHeads(StandardROIHeads):
             losses = {}
             shape_estimate = self.shape_head(features)
             loss_shape = shape_rcnn_loss(
-                shape_estimate, instances, loss_weight=self.shape_loss_weight
+                shape_estimate, instances,
+                loss_weight=self.shape_loss_weight,
+                loss_type=self.shape_loss_norm
             )
             losses.update({"loss_shape": loss_shape})
             return losses

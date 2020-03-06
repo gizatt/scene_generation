@@ -11,9 +11,9 @@ from torch.nn import functional as F
 ROI_SHAPE_HEAD_REGISTRY = Registry("ROI_SHAPE_HEAD")
 
 
-def shape_rcnn_loss(shape_estimate, instances, loss_weight=1.0):
+def shape_rcnn_loss(shape_estimate, instances, loss_weight=1.0, loss_type="l1"):
     """
-    Compute the voxel prediction loss defined in the Mesh R-CNN paper.
+    Compute the shape prediction loss.
     Args:
         shape_estimate (Tensor): A tensor of shape (B, D) for batch size B
             and # of shape parameters D.
@@ -41,9 +41,17 @@ def shape_rcnn_loss(shape_estimate, instances, loss_weight=1.0):
     gt_shape_params = cat(all_gt_shape_params, dim=0)
     assert gt_shape_params.numel() > 0, gt_shape_params.shape
 
-    shape_loss = F.mse_loss(
-        shape_estimate, gt_shape_params, reduction="mean"
-    )
+    if loss_type == "l1":
+        shape_loss = F.l1_loss(
+            shape_estimate, gt_shape_params, reduction="mean"
+        )
+    elif loss_type == "l2":
+        shape_loss = F.mse_loss(
+            shape_estimate, gt_shape_params, reduction="mean"
+        )
+    else:
+        raise NotImplementedError("Unrecognized loss type: ", loss_type)
+
     shape_loss = shape_loss * loss_weight
     return shape_loss
 
