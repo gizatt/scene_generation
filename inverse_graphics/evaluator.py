@@ -309,7 +309,7 @@ def instances_to_xencoco_json(instances, img_id):
 
     has_pose = instances.has("pred_pose")
     if has_pose:
-        pose = instances.pred_pose
+        poses = instances.pred_pose
 
     results = []
     for k in range(num_instance):
@@ -329,5 +329,9 @@ def instances_to_xencoco_json(instances, img_id):
             # This is the inverse of data loading logic in `datasets/coco.py`.
             keypoints[k][:, :2] -= 0.5
             result["keypoints"] = keypoints[k].flatten().tolist()
+        if has_shape_params:
+            result["parameters"] = shape_params[k].tolist()
+        if has_pose:
+            result["pose"] = poses[k].tolist()
         results.append(result)
     return results
