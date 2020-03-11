@@ -20,6 +20,8 @@ from detectron2.structures import (
 from fvcore.common.file_io import PathManager, file_lock
 
 from scene_generation.utils.type_convert import dict_to_matrix
+from scene_generation.utils.torch_quaternion import qeuler
+
 
 """
 This file contains functions to parse XenCOCO-format annotations into dicts in "Detectron2 format",
@@ -241,7 +243,9 @@ def annotations_to_instances(annos, image_size):
     
     if len(annos) and "pose" in annos[0]:
         pose = [obj["pose"] for obj in annos]
-        target.gt_pose = torch.stack(pose, dim=0)
+        target.gt_pose_quatxyz = torch.stack(pose, dim=0)
+        # Convert to RPY
+        target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='xyz')
 
     return target
 

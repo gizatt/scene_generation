@@ -6,10 +6,8 @@ from detectron2.modeling.poolers import ROIPooler
 from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers, FastRCNNOutputs
 from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads, select_foreground_proposals
 
-from scene_generation.inverse_graphics.shape_head import (
-    build_shape_head,
-    shape_rcnn_loss
-)
+from scene_generation.inverse_graphics.shape_head import build_shape_head
+from scene_generation.utils.torch_quaternion import euler_to_quaternion
 
 '''
 Implements shape and pose regression from a cropped instance proposal region.
@@ -27,15 +25,19 @@ class XenRCNNROIHeads(StandardROIHeads):
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__(cfg, input_shape)
         assert(cfg.MODEL.ROI_HEADS.NUM_CLASSES == 1)
-        self.with_mask = cfg.MODEL.ROI_HEADS.WITH_MASK_HEAD
+        self.with_mask = cfg.MODEL.MASK_ON
+        self.with_shape = cfg.MODEL.SHAPE_ON
+        self.with_pose = cfg.MODEL.POSE_ON
         self.shape_loss_weight = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_WEIGHT
         self.shape_loss_norm = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_NORM
         self.pose_loss_weight = cfg.MODEL.ROI_HEADS.POSE_LOSS_WEIGHT
         self.pose_loss_norm = cfg.MODEL.ROI_HEADS.POSE_LOSS_NORM
         self.shared_pooler_shape = self._init_pooler(cfg, input_shape)
-        self.shape_head = build_shape_head(cfg, self.shared_pooler_shape)
-        #self.pose_xyz_head = build_pose_xyz_head(cfg, self.shared_pooler_shape)
-        #self.pose_rpy_head = build_pose_rpy_head(cfg, self.shared_pooler_shape)
+        if self.with_shape:
+            self.shape_head = build_shape_head(cfg, self.shared_pooler_shape)
+        if self.with_pose:
+            self.pose_xyz_head = build_pose_xyz_head(cfg, self.shared_pooler_shape)
+            self.pose_rpy_head = build_pose_rpy_head(cfg, self.shared_pooler_shape)
         # If MODEL.VIS_MINIBATCH is True we store minibatch targets
         # for visualization purposes
         self._vis = None #cfg.MODEL.VIS_MINIBATCH
@@ -92,9 +94,11 @@ class XenRCNNROIHeads(StandardROIHeads):
             proposals, _ = select_foreground_proposals(proposals, self.num_classes)
             proposal_boxes = [x.proposal_boxes for x in proposals]
             shared_features = self.shared_pooler(features, proposal_boxes)
-            losses.update(self._forward_shape(shared_features, proposals))
-            #losses.update(self._forward_pose_xyz(shared_features, proposals))
-            #losses.update(self._forward_pose_rpy(shared_features, proposals))
+            if self.with_shape:
+                losses.update(self._forward_shape(shared_features, proposals))
+            if self.with_pose:
+                losses.update(self._forward_pose_xyz(shared_features, proposals))
+                losses.update(self._forward_pose_rpy(shared_features, proposals))
 
             # print minibatch examples
             if self._vis:
@@ -130,32 +134,55 @@ class XenRCNNROIHeads(StandardROIHeads):
         pred_boxes = [x.pred_boxes for x in instances]
         shared_features = self.shared_pooler(features, pred_boxes)
 
-        instances = self._forward_shape(shared_features, instances)
-        #instances = self._forward_pose_xyz(shared_features, instances)
-        #instances = self._forward_pose_rpy(shared_features, instances)
+        if self.with_shape:
+            instances = self._forward_shape(shared_features, instances)
+        if self.with_pose:
+            instances = self._forward_pose(shared_features, instances)
         return instances
 
-    def _forward_pose_xyz(self, shared_features, instances):
+    def _forward_pose(self, shared_features, instances):
         """
-        Forward logic of the xyz pose prediction branch.
+        Forward logic for the shape estimation branch.
+        Args:
+            features (list[Tensor]): #level input features for xyz prediction
+            instances (list[Instances]): the per-image instances to train/predict meshes.
+                In training, they can be the proposals.
+                In inference, they can be the predicted boxes.
+        Returns:
+            In training, a dict of losses.
+            In inference, update `instances` with new field "pred_pose" and return it.
         """
         if self.training:
-            # The loss is only defined on positive proposals.
-            z_pred = self.z_head(shared_features)
-            src_boxes = cat([p.tensor for p in proposal_boxes])
-            loss_z_reg = z_rcnn_loss(
-                z_pred,
-                instances,
-                src_boxes,
-                loss_weight=self.z_loss_weight,
-                smooth_l1_beta=self.z_smooth_l1_beta,
+            losses = {}
+            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features)
+            pose_xyz = self.pose_xyz_head.pose_xyz_rcnn_loss(
+                pose_xyz_estimate, P_xyz, instances,
+                loss_weight=self.pose_loss_weight,
+                loss_type=self.pose_loss_norm
             )
-            return {"loss_z_reg": loss_z_reg}
+            losses.update({"pose_xyz": pose_xyz})
+
+            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features)
+            pose_rpy = self.pose_rpy_head.pose_rpy_rcnn_loss(
+                pose_rpy_estimate, P_rpy, instances,
+                loss_weight=self.pose_loss_weight,
+                loss_type=self.pose_loss_norm
+            )
+            losses.update({"pose_rpy": pose_rpy})
+
+            return losses
+
         else:
-            pred_boxes = [x.pred_boxes for x in instances]
-            z_features = self.shared_pooler(features, pred_boxes)
-            z_pred = self.z_head(z_features)
-            z_rcnn_inference(z_pred, instances)
+            pose_xyz_estimates, _ = self.pose_xyz_head(features)
+            pose_rpy_estimates, _ = self.pose_rpy_head(features)
+
+            pose_estimates = torch.cat(
+                [euler_to_quaternion(pose_rpy_estimates, order='xyz'),
+                 pose_xyz_estimates], dim=1)
+            num_instances_per_image = [len(i) for i in instances]
+            pose_by_instance_group = pose_estimates.split(num_instances_per_image)
+            for pose_estimate_k, instances_k in zip(pose_by_instance_group, instances):
+                instances_k.pred_pose = pose_estimate_k
             return instances
 
     def _forward_shape(self, features, instances):
@@ -173,9 +200,9 @@ class XenRCNNROIHeads(StandardROIHeads):
         
         if self.training:
             losses = {}
-            shape_estimate = self.shape_head(features)
-            loss_shape = shape_rcnn_loss(
-                shape_estimate, instances,
+            shape_estimate, P = self.shape_head(features)
+            loss_shape = self.shape_head.shape_rcnn_loss(
+                shape_estimate, P, instances,
                 loss_weight=self.shape_loss_weight,
                 loss_type=self.shape_loss_norm
             )
@@ -183,7 +210,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             return losses
 
         else:
-            shape_estimate = self.shape_head(features)
+            shape_estimate, P = self.shape_head(features)
             num_instances_per_image = [len(i) for i in instances]
             pred_shapes_by_instance_group = shape_estimate.split(num_instances_per_image)
             for shape_estimate_k, instances_k in zip(pred_shapes_by_instance_group, instances):
