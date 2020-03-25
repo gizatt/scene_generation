@@ -98,8 +98,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             if self.with_shape:
                 losses.update(self._forward_shape(shared_features, proposals))
             if self.with_pose:
-                losses.update(self._forward_pose_xyz(shared_features, proposals))
-                losses.update(self._forward_pose_rpy(shared_features, proposals))
+                losses.update(self._forward_pose(shared_features, proposals))
 
             # print minibatch examples
             if self._vis:
@@ -141,7 +140,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             instances = self._forward_pose(shared_features, instances)
         return instances
 
-    def _forward_pose(self, shared_features, instances):
+    def _forward_pose(self, features, instances):
         """
         Forward logic for the shape estimation branch.
         Args:
@@ -178,7 +177,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             pose_rpy_estimates, _ = self.pose_rpy_head(features)
 
             pose_estimates = torch.cat(
-                [euler_to_quaternion(pose_rpy_estimates, order='xyz'),
+                [euler_to_quaternion(pose_rpy_estimates, order='zyx'),
                  pose_xyz_estimates], dim=1)
             num_instances_per_image = [len(i) for i in instances]
             pose_by_instance_group = pose_estimates.split(num_instances_per_image)

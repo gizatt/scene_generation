@@ -117,7 +117,7 @@ class RCNNPoseXyzHead(nn.Module):
         """
         Compute the error between the estimated and actual pose.
         Args:
-            pose_xyz_estimates (Tensor): A tensor of shape (B, 3) for batch size B.
+            pose_xyz_estimate (Tensor): A tensor of shape (B, 3) for batch size B.
             P (Tensor): A tensor of shape (B, 3, N_bins) for batch size B,
                 and # of xyz bins N_bins.
             instances (list[Instances]): A list of N Instances, where N is the number of images
@@ -133,20 +133,20 @@ class RCNNPoseXyzHead(nn.Module):
         assert(pose_xyz_estimate.size(1) == 3)
         assert(P.size(0) == total_num_pose_estimates)
         assert(P.size(1) == 3)
-        assert(P.size(2) == self.num_pose_bins)
+        assert(P.size(2) == self.num_bins)
 
         # Gather up gt xyz poses from the list of Instances objects
         all_gt_pose_xyz = []
         for instances_per_image in instances:
             if len(instances_per_image) == 0:
                 continue
-            all_gt_pose_xyz.append(instances_per_image.gt_pose_quatxyz[-3:].to(device=pose_xyz_estimates.device))
+            all_gt_pose_xyz.append(instances_per_image.gt_pose_quatxyz[:, -3:].to(device=pose_xyz_estimate.device))
 
         if len(all_gt_pose_xyz) == 0:
             return 0.
 
-        gt_poses = cat(all_gt_pose_xyz, dim=0)
-        assert gt_poses.numel() > 0, gt_poses.shape
+        all_gt_pose_xyz = cat(all_gt_pose_xyz, dim=0)
+        assert all_gt_pose_xyz.numel() > 0, all_gt_pose_xyz.shape
 
         # Compute the bin index in which the ground truth xyz poses fall
         # by subtracting off the bin left boundaries and dividing by the bin widths
@@ -259,6 +259,8 @@ class RCNNPoseRpyHead(nn.Module):
             rpy_bin_corners.append(
                 torch.linspace(bottom, top, steps=self.num_bins))
         rpy_bin_corners = torch.stack(rpy_bin_corners)
+        self.register_buffer("rpy_bin_corners",
+                             rpy_bin_corners)
         self.register_buffer("rpy_bin_corners_real",
                              torch.cos(rpy_bin_corners))
         self.register_buffer("rpy_bin_corners_imag",
@@ -292,7 +294,7 @@ class RCNNPoseRpyHead(nn.Module):
         """
         Compute the error between the estimated and actual pose.
         Args:
-            pose_rpy_estimates (Tensor): A tensor of shape (B, 3) for batch size B.
+            pose_rpy_estimate (Tensor): A tensor of shape (B, 3) for batch size B.
             P (Tensor): A tensor of shape (B, 3, N_bins) for batch size B,
                 and # of rpy bins N_bins.
             instances (list[Instances]): A list of N Instances, where N is the number of images
@@ -308,20 +310,20 @@ class RCNNPoseRpyHead(nn.Module):
         assert(pose_rpy_estimate.size(1) == 3)
         assert(P.size(0) == total_num_pose_estimates)
         assert(P.size(1) == 3)
-        assert(P.size(2) == self.num_pose_bins)
+        assert(P.size(2) == self.num_bins)
 
         # Gather up gt rpy poses from the list of Instances objects
         all_gt_pose_rpy = []
         for instances_per_image in instances:
             if len(instances_per_image) == 0:
                 continue
-            all_gt_pose_rpy.append(instances_per_image.gt_pose_rpy.to(device=pose_rpy_estimates.device))
+            all_gt_pose_rpy.append(instances_per_image.gt_pose_rpy.to(device=pose_rpy_estimate.device))
 
         if len(all_gt_pose_rpy) == 0:
             return 0.
 
-        gt_poses = cat(all_gt_pose_rpy, dim=0)
-        assert gt_poses.numel() > 0, gt_poses.shape
+        all_gt_pose_rpy = cat(all_gt_pose_rpy, dim=0)
+        assert all_gt_pose_rpy.numel() > 0, all_gt_pose_rpy.shape
 
         # Compute the bin index in which the ground truth rpy poses fall
         # by subtracting off the bin left boundaries and dividing by the bin widths
@@ -340,7 +342,7 @@ class RCNNPoseRpyHead(nn.Module):
         pose_loss_0 = torch.abs(pose_rpy_estimate - all_gt_pose_rpy)
         pose_loss_1 = torch.abs(pose_rpy_estimate + np.pi*2. - all_gt_pose_rpy)
         pose_loss_2 = torch.abs(pose_rpy_estimate - np.pi*2. - all_gt_pose_rpy)
-        pose_loss_min = torch.min(torch.stack([pose_loss_0, pose_loss_1, pose_loss_2], dim=0), dim=0)
+        pose_loss_min, _ = torch.min(torch.stack([pose_loss_0, pose_loss_1, pose_loss_2], dim=0), dim=0)
         if loss_type == "l1":
             pose_loss = pose_loss + torch.mean(pose_loss_min)
         elif loss_type == "l2":
