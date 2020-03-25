@@ -195,3 +195,30 @@ def euler_to_quaternion(e, order):
     
     return result.reshape(original_shape)
     
+if __name__ == "__main__":
+    print("Starting tests to try to find correspondence with Drake conventions")
+
+    import numpy as np
+    import drake
+    from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
+    from pydrake.math import RigidTransform, RollPitchYaw
+
+    input_quat = np.array([ 8.5056e-06,  9.9844e-01,  5.9879e-02, -1.0553e-05])
+    #input_quat = np.random.random(4)
+    quat_norm = input_quat / np.linalg.norm(input_quat)
+    drake_quat = Quaternion(quat_norm)
+    drake_rpy = RollPitchYaw(drake_quat)
+
+    torch_quat = torch.tensor(quat_norm)
+    for order in ['xyz',
+                  'yzx',
+                  'zxy',
+                  'xzy',
+                  'yxz',
+                  'zyx']:
+        print("Order %s:" % order)
+        torch_rpy = qeuler(torch.reshape(torch_quat, (1, 4)), order=order)
+        print("\tDrake RPY:", drake_rpy.vector())
+        print("\tTorch RPY:", torch_rpy.numpy())
+
+

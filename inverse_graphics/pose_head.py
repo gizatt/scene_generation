@@ -11,7 +11,7 @@ from torch.nn import functional as F
 ROI_POSE_HEAD_REGISTRY = Registry("ROI_POSE_HEAD")
 
 
-@ROI_SHAPE_HEAD_REGISTRY.register()
+@ROI_POSE_HEAD_REGISTRY.register()
 class RCNNPoseXyzHead(nn.Module):
     """
     Takes an ROI an spits out estimates of the object XYZ pose.
@@ -86,11 +86,11 @@ class RCNNPoseXyzHead(nn.Module):
         # Pre-compute xyz bin centers
         xyz_bin_corners = []
         xyz_bin_widths = []
-        for k in range(self.num_xyz_params):
+        for k in range(3):
             bottom, top = self.xyz_bin_ranges[k]
-            xyz_bin_widths.append( (top - bottom) / (self.num_xyz_bins - 1) )
+            xyz_bin_widths.append( (top - bottom) / (self.num_bins - 1) )
             xyz_bin_corners.append(
-                torch.linspace(bottom, top, steps=self.num_xyz_bins))
+                torch.linspace(bottom, top, steps=self.num_bins))
         self.register_buffer("xyz_bin_corners", torch.stack(xyz_bin_corners))
         self.register_buffer("xyz_bin_widths", torch.tensor(xyz_bin_widths))
 
@@ -107,7 +107,7 @@ class RCNNPoseXyzHead(nn.Module):
                 x = torch.flatten(x, start_dim=1)
             for layer in self.fcs:
                 x = F.relu(layer(x))
-        x = x.reshape(x.shape[0], 3, self.num_xyz_bins)
+        x = x.reshape(x.shape[0], 3, self.num_bins)
         P = F.softmax(x / torch.exp(self.log_T), dim=-1)
         xyz_estimate = torch.sum(P * self.xyz_bin_corners, dim=2)
         return xyz_estimate, P
@@ -140,7 +140,7 @@ class RCNNPoseXyzHead(nn.Module):
         for instances_per_image in instances:
             if len(instances_per_image) == 0:
                 continue
-            all_gt_pose_xyz.append(instances_per_image.gt_pose[-3:].to(device=pose_xyz_estimates.device))
+            all_gt_pose_xyz.append(instances_per_image.gt_pose_quatxyz[-3:].to(device=pose_xyz_estimates.device))
 
         if len(all_gt_pose_xyz) == 0:
             return 0.
@@ -152,7 +152,7 @@ class RCNNPoseXyzHead(nn.Module):
         # by subtracting off the bin left boundaries and dividing by the bin widths
         distance_into_bins = all_gt_pose_xyz.detach() - self.xyz_bin_corners[:, 0]
         bin_indices = (distance_into_bins / self.xyz_bin_widths).floor()
-        bin_indices = torch.clamp(bin_indices, 0, self.num_xyz_bins).long()
+        bin_indices = torch.clamp(bin_indices, 0, self.num_bins).long()
 
         active_probs = torch.stack(
             [P[k, range(3), bin_indices[k, :]]
@@ -174,7 +174,7 @@ class RCNNPoseXyzHead(nn.Module):
         return pose_loss
 
 
-@ROI_SHAPE_HEAD_REGISTRY.register()
+@ROI_POSE_HEAD_REGISTRY.register()
 class RCNNPoseRpyHead(nn.Module):
     """
     Takes an ROI an spits out estimates of the object pose RPY components.
@@ -252,14 +252,13 @@ class RCNNPoseRpyHead(nn.Module):
         # expectation easier, prepare the real + imaginary component of
         # the complex exponential of each bin center.
         rpy_bin_corners = []
-        rpy_bin_corners = []
         rpy_bin_widths = []
-        for k in range(self.num_rpy_params):
+        for k in range(3):
             bottom, top = -np.pi, np.pi
-            rpy_bin_widths.append( (top - bottom) / (self.num_rpy_bins - 1) )
+            rpy_bin_widths.append( (top - bottom) / (self.num_bins - 1) )
             rpy_bin_corners.append(
-                torch.linspace(bottom, top, steps=self.num_rpy_bins))
-        rpy_bin_corners = torch.stack([rpy_bin_corners])
+                torch.linspace(bottom, top, steps=self.num_bins))
+        rpy_bin_corners = torch.stack(rpy_bin_corners)
         self.register_buffer("rpy_bin_corners_real",
                              torch.cos(rpy_bin_corners))
         self.register_buffer("rpy_bin_corners_imag",
@@ -279,7 +278,7 @@ class RCNNPoseRpyHead(nn.Module):
                 x = torch.flatten(x, start_dim=1)
             for layer in self.fcs:
                 x = F.relu(layer(x))
-        x = x.reshape(x.shape[0], 3, self.num_rpy_bins)
+        x = x.reshape(x.shape[0], 3, self.num_bins)
         P = F.softmax(x / torch.exp(self.log_T), dim=-1)
         # To get the estimate, take the *complex* expectation -- see
         # eq. (2) in the 3dRCNN paper.
@@ -316,7 +315,7 @@ class RCNNPoseRpyHead(nn.Module):
         for instances_per_image in instances:
             if len(instances_per_image) == 0:
                 continue
-            all_gt_pose_rpy.append(instances_per_image.gt_pose[:3].to(device=pose_rpy_estimates.device))
+            all_gt_pose_rpy.append(instances_per_image.gt_pose_rpy.to(device=pose_rpy_estimates.device))
 
         if len(all_gt_pose_rpy) == 0:
             return 0.
@@ -328,21 +327,24 @@ class RCNNPoseRpyHead(nn.Module):
         # by subtracting off the bin left boundaries and dividing by the bin widths
         distance_into_bins = all_gt_pose_rpy.detach() - self.rpy_bin_corners[:, 0]
         bin_indices = (distance_into_bins / self.rpy_bin_widths).floor()
-        bin_indices = torch.clamp(bin_indices, 0, self.num_rpy_bins).long()
+        bin_indices = torch.clamp(bin_indices, 0, self.num_bins).long()
 
         active_probs = torch.stack(
             [P[k, range(3), bin_indices[k, :]]
              for k in range(total_num_pose_estimates)])
         pose_loss = torch.mean(-torch.log(active_probs))
 
+        # In either loss case, collapse among the minimum (elementwise) loss among
+        # the original angle estimate, as well as the angle estimate rotated left
+        # and right by 2pi.
+        pose_loss_0 = torch.abs(pose_rpy_estimate - all_gt_pose_rpy)
+        pose_loss_1 = torch.abs(pose_rpy_estimate + np.pi*2. - all_gt_pose_rpy)
+        pose_loss_2 = torch.abs(pose_rpy_estimate - np.pi*2. - all_gt_pose_rpy)
+        pose_loss_min = torch.min(torch.stack([pose_loss_0, pose_loss_1, pose_loss_2], dim=0), dim=0)
         if loss_type == "l1":
-            pose_loss = pose_loss + F.l1_loss(
-                pose_rpy_estimate, all_gt_pose_rpy, reduction="mean"
-            )
+            pose_loss = pose_loss + torch.mean(pose_loss_min)
         elif loss_type == "l2":
-            pose_loss = pose_loss + F.mse_loss(
-                pose_rpy_estimate, all_gt_pose_xyz, reduction="mean"
-            )
+            pose_loss = pose_loss + torch.mean(pose_loss_min**2.)
         else:
             raise NotImplementedError("Unrecognized loss type: ", loss_type)
 

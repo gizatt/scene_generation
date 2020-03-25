@@ -244,8 +244,8 @@ def annotations_to_instances(annos, image_size):
     if len(annos) and "pose" in annos[0]:
         pose = [obj["pose"] for obj in annos]
         target.gt_pose_quatxyz = torch.stack(pose, dim=0)
-        # Convert to RPY
-        target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='xyz')
+        # Convert to RPY, should be range [-pi, pi]
+        target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='zyx')
 
     return target
 

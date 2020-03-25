@@ -7,6 +7,7 @@ from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers, FastRC
 from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads, select_foreground_proposals
 
 from scene_generation.inverse_graphics.shape_head import build_shape_head
+from scene_generation.inverse_graphics.pose_head import build_pose_xyz_head, build_pose_rpy_head
 from scene_generation.utils.torch_quaternion import euler_to_quaternion
 
 '''
