@@ -160,7 +160,7 @@ class XenRCNNROIHeads(StandardROIHeads):
                 loss_weight=self.pose_loss_weight,
                 loss_type=self.pose_loss_norm
             )
-            losses.update({"pose_xyz": pose_xyz})
+            losses.update({"loss_pose_xyz": pose_xyz})
 
             pose_rpy_estimate, P_rpy = self.pose_rpy_head(features)
             pose_rpy = self.pose_rpy_head.pose_rpy_rcnn_loss(
@@ -168,7 +168,7 @@ class XenRCNNROIHeads(StandardROIHeads):
                 loss_weight=self.pose_loss_weight,
                 loss_type=self.pose_loss_norm
             )
-            losses.update({"pose_rpy": pose_rpy})
+            losses.update({"loss_pose_rpy": pose_rpy})
 
             return losses
 
