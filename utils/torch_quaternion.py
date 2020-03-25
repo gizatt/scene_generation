@@ -170,9 +170,9 @@ def euler_to_quaternion(e, order):
     y = e[:, 1]
     z = e[:, 2]
     
-    rx = np.stack((np.cos(x/2), np.sin(x/2), np.zeros_like(x), np.zeros_like(x)), axis=1)
-    ry = np.stack((np.cos(y/2), np.zeros_like(y), np.sin(y/2), np.zeros_like(y)), axis=1)
-    rz = np.stack((np.cos(z/2), np.zeros_like(z), np.zeros_like(z), np.sin(z/2)), axis=1)
+    rx = torch.stack((torch.cos(x/2), torch.sin(x/2), torch.zeros_like(x), torch.zeros_like(x)), axis=1)
+    ry = torch.stack((torch.cos(y/2), torch.zeros_like(y), torch.sin(y/2), torch.zeros_like(y)), axis=1)
+    rz = torch.stack((torch.cos(z/2), torch.zeros_like(z), torch.zeros_like(z), torch.sin(z/2)), axis=1)
 
     result = None
     for coord in order:
@@ -187,7 +187,7 @@ def euler_to_quaternion(e, order):
         if result is None:
             result = r
         else:
-            result = qmul_np(result, r)
+            result = qmul(result, r)
             
     # Reverse antipodal representation to have a non-negative "w"
     if order in ['xyz', 'yzx', 'zxy']:
@@ -220,5 +220,6 @@ if __name__ == "__main__":
         torch_rpy = qeuler(torch.reshape(torch_quat, (1, 4)), order=order)
         print("\tDrake RPY:", drake_rpy.vector())
         print("\tTorch RPY:", torch_rpy.numpy())
-
+        print("\"Back to quat: ", euler_to_quaternion(torch_rpy, order=order).numpy())
+        print("\tOrig quat: ", torch_quat.numpy())
 
