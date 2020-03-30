@@ -10,6 +10,7 @@ import numpy as np
 
 import torch
 from fvcore.common.timer import Timer
+from detectron2.data.transforms import RandomFlip
 from detectron2.data import detection_utils as utils
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.data import transforms as T
@@ -19,7 +20,11 @@ from detectron2.structures import (
 )
 from fvcore.common.file_io import PathManager, file_lock
 
-from scene_generation.utils.type_convert import dict_to_matrix
+from scene_generation.utils.type_convert import (
+    dict_to_matrix,
+    rigidtransform_from_pose_vector,
+    pose_vector_from_rigidtransform
+)
 from scene_generation.utils.torch_quaternion import qeuler
 
 
@@ -205,13 +210,14 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     return dataset_dicts
 
 
-def annotations_to_instances(annos, image_size):
+def annotations_to_instances(annos, image_size, camera_pose=None):
     """
     Create an :class:`Instances` object used by the models,
     from instance annotations in the dataset dict.
     Args:
         annos (list[dict]): a list of annotations, one per instance.
         image_size (tuple): height, width
+        camera_pose: quat xyz camera pose, np array or list
     Returns:
         Instances: It will contains fields "gt_boxes", "gt_classes",
             "gt_masks", "gt_keypoints", if they can be obtained from `annos`.
@@ -230,7 +236,7 @@ def annotations_to_instances(annos, image_size):
         target.gt_masks = BitMasks(torch.stack(masks))
 
     # camera calibration
-    # if len(annos) and "camera_calibration" in annos[0]:
+    #if len(annos) and "camera_calibration in annos[0]:
     #     K = [torch.tensor(
     #             dict_to_matrix(
     #                 obj["camera_calibration"]["camera_matrix"]))
@@ -241,9 +247,17 @@ def annotations_to_instances(annos, image_size):
         shape_params = [obj["parameters"] for obj in annos]
         target.gt_shape_params = torch.stack(shape_params, dim=0)
     
-    if len(annos) and "pose" in annos[0]:
-        pose = [obj["pose"] for obj in annos]
+    if len(annos) and "pose" in annos[0] and camera_pose is not None:
+        pose = []
+        cam_tf = rigidtransform_from_pose_vector(camera_pose)
+        for obj in annos:
+            obj_tf = rigidtransform_from_pose_vector(obj["pose"])
+            obj_in_cam = cam_tf.inverse().multiply(obj_tf)
+            pose.append(
+                torch.tensor(pose_vector_from_rigidtransform(obj_in_cam)))
+
         target.gt_pose_quatxyz = torch.stack(pose, dim=0)
+
         # Convert to RPY, should be range [-pi, pi]
         target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='zyx')
 
@@ -260,7 +274,10 @@ class XenRCNNMapper:
 
     def __init__(self, cfg, is_train=True):
         self.tfm_gens = utils.build_transform_gen(cfg, is_train)
-
+        # Force it to not use random flip
+        for gen in self.tfm_gens:
+            if isinstance(gen, RandomFlip):
+                self.tfm_gens.remove(gen)
         # fmt: off
         self.img_format     = cfg.INPUT.FORMAT
         # fmt: on
@@ -287,6 +304,7 @@ class XenRCNNMapper:
         image, transforms = T.apply_transform_gens(self.tfm_gens, image)
 
         image_shape = image.shape[:2]  # h, w
+        camera_pose = dataset_dict["camera_pose"]
 
         # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
@@ -305,7 +323,7 @@ class XenRCNNMapper:
                 if obj.get("iscrowd", 0) == 0
             ]
             # Should not be empty during training
-            instances = annotations_to_instances(annos, image_shape)
+            instances = annotations_to_instances(annos, image_shape, camera_pose)
             dataset_dict["instances"] = instances[instances.gt_boxes.nonempty()]
 
         return dataset_dict

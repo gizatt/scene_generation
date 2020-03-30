@@ -1,7 +1,9 @@
+from pydrake.math import (RollPitchYaw, RigidTransform, RotationMatrix)
+from pydrake.common.eigen_geometry import Quaternion, AngleAxis, Isometry3
+
 import numpy as np
 from typing import Dict
 import scene_generation.utils.transformations as transformations
-
 
 def camera2world_from_map(camera2world_map):  # type: (Dict) -> np.ndarray
     """
@@ -61,6 +63,15 @@ def transform_from_pose_vector(pose_vector):  # type: (np.array(7)) -> np.ndarra
     # The linear part
     tf[:3, 3] = pose_vector[-3:]
     return tf
+
+def rigidtransform_from_pose_vector(pose_vector):
+    quat_part = pose_vector[:4]
+    quat_part /= np.linalg.norm(quat_part)
+    # Transform keypoints to camera frame, and then camera image coordinates.
+    return RigidTransform(p=pose_vector[-3:], quaternion=Quaternion(quat_part))
+
+def pose_vector_from_rigidtransform(tf):
+    return np.concatenate([Quaternion(tf.rotation().matrix()).wxyz(), tf.translation()])
 
 def dict_to_matrix(d):
     """
