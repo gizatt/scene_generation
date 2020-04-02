@@ -236,7 +236,7 @@ def annotations_to_instances(annos, image_size, camera_pose=None):
         target.gt_masks = BitMasks(torch.stack(masks))
 
     # camera calibration
-    #if len(annos) and "camera_calibration in annos[0]:
+    #if len(annos) and "camera_calibration" in annos[0]:
     #     K = [torch.tensor(
     #             dict_to_matrix(
     #                 obj["camera_calibration"]["camera_matrix"]))
@@ -280,6 +280,7 @@ class XenRCNNMapper:
                 self.tfm_gens.remove(gen)
         # fmt: off
         self.img_format     = cfg.INPUT.FORMAT
+
         # fmt: on
         self.is_train = is_train
 
@@ -298,6 +299,7 @@ class XenRCNNMapper:
         #dataset_dict = {key: value for key, value in dataset_dict.items()}
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
         image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
+        depth_image = utils.read_image(dataset_dict["depth_file_name"], format='I')
         utils.check_image_size(dataset_dict, image)
 
         orig_image_shape = image.shape[:2]
@@ -310,7 +312,12 @@ class XenRCNNMapper:
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
         dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype("float32"))
+        # Convert depth image to H W C (c = 1), and convert to meters
+        dataset_dict["depth_image"] = torch.as_tensor(np.expand_dims(depth_image, 0).astype("float32")) / 1000.
         # Can use uint8 if it turns out to be slow some day
+
+        dataset_dict["K"] = torch.as_tensor(dict_to_matrix(
+            dataset_dict["camera_calibration"]["camera_matrix"]))
 
         if not self.is_train:
             dataset_dict.pop("annotations", None)

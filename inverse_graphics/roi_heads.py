@@ -69,17 +69,11 @@ class XenRCNNROIHeads(StandardROIHeads):
         """
         See :class:`ROIHeads.forward`.
         """
-        if self._vis:
-            self._misc["images"] = images
-        del images
+        print("Images: ", images)
 
         if self.training:
             proposals = self.label_and_sample_proposals(proposals, targets)
         del targets
-
-        if self._vis:
-            self._misc["proposals"] = proposals
-
 
         if self.training:
             losses = self._forward_box(features, proposals)
@@ -98,12 +92,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             if self.with_shape:
                 losses.update(self._forward_shape(shared_features, proposals))
             if self.with_pose:
-                losses.update(self._forward_pose(shared_features, proposals))
-
-            # print minibatch examples
-            if self._vis:
-                raise NotImplementedError("vis")
-                vis_utils.visualize_minibatch(self._misc["images"], self._misc, self._vis_dir, True)
+                losses.update(self._forward_pose(shared_features, proposals, proposal_boxes))
             return [], losses
         else:
             pred_instances = self._forward_box(features, proposals)
@@ -137,10 +126,10 @@ class XenRCNNROIHeads(StandardROIHeads):
         if self.with_shape:
             instances = self._forward_shape(shared_features, instances)
         if self.with_pose:
-            instances = self._forward_pose(shared_features, instances)
+            instances = self._forward_pose(shared_features, instances, pred_boxes)
         return instances
 
-    def _forward_pose(self, features, instances):
+    def _forward_pose(self, features, instances, boxes):
         """
         Forward logic for the shape estimation branch.
         Args:
@@ -152,6 +141,17 @@ class XenRCNNROIHeads(StandardROIHeads):
             In training, a dict of losses.
             In inference, update `instances` with new field "pred_pose" and return it.
         """
+
+        # For each box, compute the rotation matrix to move the view vector
+        # from the center of the image to the center of the crop box
+        rotmats = []
+        for boxlist, instance in zip(boxes, instances):
+            bbox_centers = torch.mean(boxlist.tensor, dim=1)
+            #image_center = torch.tensor([
+            #                    instance.image_height/2.,
+            #                    instance.image_width/2.]).to(device=boxes.device)
+
+
         if self.training:
             losses = {}
             pose_xyz_estimate, P_xyz = self.pose_xyz_head(features)
