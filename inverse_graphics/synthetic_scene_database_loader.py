@@ -318,7 +318,7 @@ class XenRCNNMapper:
         # Can use uint8 if it turns out to be slow some day
 
         dataset_dict["K"] = torch.as_tensor(dict_to_matrix(
-            dataset_dict["camera_calibration"]["camera_matrix"]))
+            dataset_dict["camera_calibration"]["camera_matrix"]).astype("float32"))
 
         if not self.is_train:
             dataset_dict.pop("annotations", None)

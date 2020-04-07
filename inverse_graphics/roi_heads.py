@@ -25,6 +25,7 @@ class XenRCNNROIHeads(StandardROIHeads):
 
     def __init__(self, cfg, input_shape: Dict[str, ShapeSpec]):
         super().__init__(cfg, input_shape)
+        print("Build ROI heads with shape ", input_shape)
         assert(cfg.MODEL.ROI_HEADS.NUM_CLASSES == 1)
         self.with_mask = cfg.MODEL.MASK_ON
         self.with_shape = cfg.MODEL.SHAPE_ON
@@ -90,22 +91,23 @@ class XenRCNNROIHeads(StandardROIHeads):
             if self.with_shape:
                 losses.update(self._forward_shape(shared_features, proposals))
             if self.with_pose:
-                losses.update(self._forward_pose(shared_features, proposals, proposal_boxes))
+                losses.update(self._forward_pose(shared_features, proposals, proposal_boxes, images.calibrations))
             return [], losses
         else:
             pred_instances = self._forward_box(features, proposals)
             # During inference cascaded prediction is used: the mask and keypoints heads are only
             # applied to the top scoring box detections.
-            pred_instances = self.forward_with_given_boxes(features, pred_instances)
+            pred_instances = self.forward_with_given_boxes(features, pred_instances, images.calibrations)
             return pred_instances, {}
 
-    def forward_with_given_boxes(self, features, instances):
+    def forward_with_given_boxes(self, features, instances, calibrations):
         """
         Use the given boxes in `instances` to produce other (non-box) per-ROI outputs.
         Args:
             features: same as in `forward()`
             instances (list[Instances]): instances to predict other outputs. Expect the keys
                 "pred_boxes" and "pred_classes" to exist.
+            calibrations (list[Tensor[3x3]]): K matrix of each image
         Returns:
             instances (Instances): the same `Instances` object, with extra
                 fields such as `pred_masks` or `pred_voxels`.
@@ -124,10 +126,10 @@ class XenRCNNROIHeads(StandardROIHeads):
         if self.with_shape:
             instances = self._forward_shape(shared_features, instances)
         if self.with_pose:
-            instances = self._forward_pose(shared_features, instances, pred_boxes)
+            instances = self._forward_pose(shared_features, instances, pred_boxes, calibrations)
         return instances
 
-    def _forward_pose(self, features, instances, boxes):
+    def _forward_pose(self, features, instances, boxes, calibrations):
         """
         Forward logic for the shape estimation branch.
         Args:
@@ -135,6 +137,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             instances (list[Instances]): the per-image instances to train/predict meshes.
                 In training, they can be the proposals.
                 In inference, they can be the predicted boxes.
+            calibrations (list[Tensor[3x3]]): K matrix of each image
         Returns:
             In training, a dict of losses.
             In inference, update `instances` with new field "pred_pose" and return it.
@@ -143,16 +146,21 @@ class XenRCNNROIHeads(StandardROIHeads):
         # For each box, compute the rotation matrix to move the view vector
         # from the center of the image to the center of the crop box
         rotmats = []
-        for boxlist, instance in zip(boxes, instances):
+        expanded_calibrations = []
+        for boxlist, instance, K in zip(boxes, instances, calibrations):
+            expanded_calibrations += [K] * len(instance)
             bbox_centers = torch.mean(boxlist.tensor, dim=1)
             #image_center = torch.tensor([
             #                    instance.image_height/2.,
             #                    instance.image_width/2.]).to(device=boxes.device)
 
-
+        if len(expanded_calibrations) > 0:
+            expanded_calibrations = torch.stack(expanded_calibrations).to(features.device)
+        else:
+            expanded_calibrations = torch.empty((0, 3, 3)).to(features.device)
         if self.training:
             losses = {}
-            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features)
+            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features, expanded_calibrations)
             pose_xyz = self.pose_xyz_head.pose_xyz_rcnn_loss(
                 pose_xyz_estimate, P_xyz, instances,
                 loss_weight=self.pose_loss_weight,
@@ -160,7 +168,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             )
             losses.update({"loss_pose_xyz": pose_xyz})
 
-            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features)
+            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, expanded_calibrations)
             pose_rpy = self.pose_rpy_head.pose_rpy_rcnn_loss(
                 pose_rpy_estimate, P_rpy, instances,
                 loss_weight=self.pose_loss_weight,
@@ -171,8 +179,8 @@ class XenRCNNROIHeads(StandardROIHeads):
             return losses
 
         else:
-            pose_xyz_estimates, _ = self.pose_xyz_head(features)
-            pose_rpy_estimates, _ = self.pose_rpy_head(features)
+            pose_xyz_estimates, _ = self.pose_xyz_head(features, expanded_calibrations)
+            pose_rpy_estimates, _ = self.pose_rpy_head(features, expanded_calibrations)
 
             pose_estimates = torch.cat(
                 [euler_to_quaternion(pose_rpy_estimates, order='zyx'),

@@ -68,7 +68,11 @@ class RCNNPoseXyzHead(nn.Module):
 
         self.fcs = []
         for k in range(num_fc):
-            if k < num_fc - 1:
+            if k == 0:   
+                # Takes 3x3 calibrations as input as well
+                fc = nn.Linear(np.prod(self._output_size) + 9, fc_dim)
+                self._output_size = fc_dim
+            elif k < num_fc - 1:
                 fc = nn.Linear(np.prod(self._output_size), fc_dim)
                 self._output_size = fc_dim
             else:
@@ -99,12 +103,14 @@ class RCNNPoseXyzHead(nn.Module):
         for layer in self.fcs:
             weight_init.c2_xavier_fill(layer)
 
-    def forward(self, x):
+    def forward(self, x, calibrations):
         for layer in self.conv_norm_relus:
             x = layer(x)
+        if x.dim() > 2:
+            x = torch.flatten(x, start_dim=1)
+        calibrations = torch.flatten(calibrations, start_dim=1)
+        x = torch.cat([x, calibrations], dim=-1)
         if len(self.fcs):
-            if x.dim() > 2:
-                x = torch.flatten(x, start_dim=1)
             for layer in self.fcs:
                 x = F.relu(layer(x))
         x = x.reshape(x.shape[0], 3, self.num_bins)
@@ -233,7 +239,11 @@ class RCNNPoseRpyHead(nn.Module):
 
         self.fcs = []
         for k in range(num_fc):
-            if k < num_fc - 1:
+            if k == 0:   
+                # Takes 3x3 calibrations as input as well
+                fc = nn.Linear(np.prod(self._output_size) + 9, fc_dim)
+                self._output_size = fc_dim
+            elif k < num_fc - 1:
                 fc = nn.Linear(np.prod(self._output_size), fc_dim)
                 self._output_size = fc_dim
             else:
@@ -272,12 +282,14 @@ class RCNNPoseRpyHead(nn.Module):
         for layer in self.fcs:
             weight_init.c2_xavier_fill(layer)
 
-    def forward(self, x):
+    def forward(self, x, calibrations):
         for layer in self.conv_norm_relus:
             x = layer(x)
+        if x.dim() > 2:
+            x = torch.flatten(x, start_dim=1)
+        calibrations = torch.flatten(calibrations, start_dim=1)
+        x = torch.cat([x, calibrations], dim=-1)
         if len(self.fcs):
-            if x.dim() > 2:
-                x = torch.flatten(x, start_dim=1)
             for layer in self.fcs:
                 x = F.relu(layer(x))
         x = x.reshape(x.shape[0], 3, self.num_bins)
