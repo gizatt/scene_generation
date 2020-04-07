@@ -304,6 +304,7 @@ class XenRCNNMapper:
 
         orig_image_shape = image.shape[:2]
         image, transforms = T.apply_transform_gens(self.tfm_gens, image)
+        depth_image, transforms = T.apply_transform_gens(self.tfm_gens, depth_image)
 
         image_shape = image.shape[:2]  # h, w
         camera_pose = dataset_dict["camera_pose"]

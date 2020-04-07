@@ -4,11 +4,17 @@ import numpy as np
 from typing import Any, List, Sequence, Tuple, Union
 import torch
 from torch import nn
+import torch.nn.functional as F
 
+from detectron2.layers import ShapeSpec
 from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
 from detectron2.structures import ImageList
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.logger import log_first_n
+
+from detectron2.modeling.backbone import build_backbone
+from detectron2.modeling.proposal_generator import build_proposal_generator
+from detectron2.modeling.roi_heads import build_roi_heads
 
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 
@@ -35,7 +41,8 @@ class ImageListWithDepthAndCalibration(ImageList):
             image_sizes (list[tuple[int, int]]): Each tuple is (h, w). It can
                 be smaller than (H, W) due to padding.
         """
-        self.tensor = rgb_tensor
+        self.tensor = torch.cat([rgb_tensor, depth_tensor], dim=-3)
+        self.rgb_tensor = rgb_tensor
         self.depth_tensor = depth_tensor
         self.calibrations = calibrations
         self.image_sizes = image_sizes
@@ -128,11 +135,25 @@ class GeneralizedRCNNWithDepthAndCalibration(GeneralizedRCNN):
      image preprocessing.
     """
     def __init__(self, cfg):
-        super().__init__(cfg)
+        nn.Module.__init__(self)
+
+        self.device = torch.device(cfg.MODEL.DEVICE)
+        self.backbone = build_backbone(cfg, input_shape=ShapeSpec(channels=4))
+        self.proposal_generator = build_proposal_generator(cfg, self.backbone.output_shape())
+        self.roi_heads = build_roi_heads(cfg, self.backbone.output_shape())
+        self.vis_period = cfg.VIS_PERIOD
+        self.input_format = cfg.INPUT.FORMAT
+
+        assert len(cfg.MODEL.PIXEL_MEAN) == len(cfg.MODEL.PIXEL_STD)
+        num_channels = len(cfg.MODEL.PIXEL_MEAN)
+        pixel_mean = torch.Tensor(cfg.MODEL.PIXEL_MEAN).to(self.device).view(num_channels, 1, 1)
+        pixel_std = torch.Tensor(cfg.MODEL.PIXEL_STD).to(self.device).view(num_channels, 1, 1)
+        self.normalizer = lambda x: (x - pixel_mean) / pixel_std
         self.depth_normalizer = lambda x: (x - cfg.MODEL.DEPTH_PIXEL_MEAN) / cfg.MODEL.DEPTH_PIXEL_STD
+        self.to(self.device)
 
     def preprocess_image(self, batched_inputs):
-        """calibrations
+        """
         Normalize, pad and batch the input images, and pack in depth
         and calibration info.
         """

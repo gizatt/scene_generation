@@ -69,8 +69,6 @@ class XenRCNNROIHeads(StandardROIHeads):
         """
         See :class:`ROIHeads.forward`.
         """
-        print("Images: ", images)
-
         if self.training:
             proposals = self.label_and_sample_proposals(proposals, targets)
         del targets
