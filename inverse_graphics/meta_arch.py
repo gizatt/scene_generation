@@ -1,3 +1,4 @@
+from copy import deepcopy
 import logging
 import numpy as np
 from typing import Any, List, Sequence, Tuple, Union
@@ -83,6 +84,10 @@ class ImageListWithDepthAndCalibration(ImageList):
             max_size[-1] = int(math.ceil(max_size[-1] / stride) * stride)  # type: ignore
             max_size = tuple(max_size)
 
+        depth_max_size = list(max_size)
+        depth_max_size[-3] = 1 # depth should be single-channel
+        depth_max_size = tuple(depth_max_size)
+
         image_sizes = [tuple(im.shape[-2:]) for im in tensors]
         depth_image_sizes = [tuple(im.shape[-2:]) for im in depth_tensors]
         assert(image_sizes == depth_image_sizes)
@@ -102,7 +107,8 @@ class ImageListWithDepthAndCalibration(ImageList):
         else:
             batch_shape = (len(tensors),) + max_size
             batched_imgs = tensors[0].new_full(batch_shape, pad_value)
-            batched_depth_imgs = depth_tensors[0].new_full(batch_shape, pad_value)
+            depth_batch_shape = (len(tensors),) + depth_max_size
+            batched_depth_imgs = depth_tensors[0].new_full(depth_batch_shape, pad_value)
             for img, pad_img in zip(tensors, batched_imgs):
                 pad_img[..., : img.shape[-2], : img.shape[-1]].copy_(img)
             for depth_img, pad_depth_img in zip(depth_tensors, batched_depth_imgs):
