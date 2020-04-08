@@ -7,6 +7,9 @@ from detectron2.utils.registry import Registry
 from torch import nn
 from torch.nn import functional as F
 
+from scene_generation.utils.torch_quaternion import (
+    quat2mat
+)
 
 ROI_POSE_HEAD_REGISTRY = Registry("ROI_POSE_HEAD")
 
@@ -370,6 +373,151 @@ class RCNNPoseRpyHead(nn.Module):
         return pose_loss
 
 
+@ROI_POSE_HEAD_REGISTRY.register()
+class RCNNPose6DOFRotHead(nn.Module):
+    """
+    Takes an ROI an spits out estimates of the object pose rotation estimate
+    (in rotation matrix form).
+
+    Operates by applying a number of convolutional + FC layers with
+    that spit out a 6DOF overparameterized rotation format (following
+    https://arxiv.org/pdf/1812.07035.pdf).
+
+    Layout is:
+        
+        conv layers --> FC layers --> 6DOF representation -> postprocess into rotmat
+    """
+
+    def __init__(self, cfg, input_shape):
+        super().__init__()
+
+        # fmt: off
+        num_conv         = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.NUM_CONV
+        conv_dim         = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.CONV_DIM
+        num_fc           = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.NUM_FC
+        fc_dim           = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.FC_DIM
+        norm             = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.NORM
+
+        # fmt: on
+        assert num_conv + num_fc > 0
+
+        self._output_size = (input_shape.channels, input_shape.height, input_shape.width)
+
+        num_output_params = 6
+
+        self.conv_norm_relus = []
+        for k in range(num_conv):
+            conv = Conv2d(
+                self._output_size[0],
+                conv_dim,
+                kernel_size=3,
+                padding=1,
+                bias=not norm,
+                norm=get_norm(norm, conv_dim),
+                activation=F.relu,
+            )
+            self.add_module("conv{}".format(k + 1), conv)
+            self.conv_norm_relus.append(conv)
+            self._output_size = (conv_dim, self._output_size[1], self._output_size[2])
+
+        self.fcs = []
+        for k in range(num_fc):
+            if k == 0:   
+                # Takes 3x3 calibrations + Hinfs + rotmats as input as well
+                fc = nn.Linear(np.prod(self._output_size) + 27, fc_dim)
+                self._output_size = fc_dim
+            elif k < num_fc - 1:
+                fc = nn.Linear(np.prod(self._output_size), fc_dim)
+                self._output_size = fc_dim
+            else:
+                fc = nn.Linear(np.prod(self._output_size), num_output_params)
+                self._output_size = num_output_params
+            self.add_module("fc{}".format(k + 1), fc)
+            self.fcs.append(fc)
+            self._output_size = fc_dim
+
+        for layer in self.conv_norm_relus:
+            weight_init.c2_msra_fill(layer)
+        for layer in self.fcs:
+            weight_init.c2_xavier_fill(layer)
+
+    def forward(self, x, Kcs, rotations, Hinfs):
+        for layer in self.conv_norm_relus:
+            x = layer(x)
+        if x.dim() > 2:
+            x = torch.flatten(x, start_dim=1)
+        Kcs = torch.flatten(Kcs, start_dim=1)
+        rotations = torch.flatten(rotations, start_dim=1)
+        Hinfs = torch.flatten(Hinfs, start_dim=1)
+        x = torch.cat([x, Kcs, rotations, Hinfs], dim=-1)
+        if len(self.fcs):
+            for layer in self.fcs:
+                x = F.relu(layer(x))
+        x = x.reshape(x.shape[0], 2, 3)
+        # We've predicted two 3-vectors -- normalize them
+        # and form a rotation matrix from them referencing Appendix B
+        # in https://arxiv.org/pdf/1812.07035.pdf
+        a1 = x[:, 0, :]
+        a2 = x[:, 1, :]
+        R = torch.empty(x.shape[0], 3, 3).to(x.device)
+        b1 = F.normalize(a1, p=2, dim=1)
+        # Sum is repeated out to [batch x 3] from [batch] so it
+        # broadcast-multiplies with [batch x 3] b1 happily
+        b2 = F.normalize(a2 - (torch.sum(b1*a2, dim=-1).view(-1, 1).expand(-1, 3)*b1), dim=1)
+        b3 = torch.cross(b1, b2)
+        R = torch.stack([b1, b2, b3], dim=-1)
+        return R
+
+    def pose_6DOF_rot_rcnn_loss(self, R_estimate,
+                                instances, loss_weight=1.0, loss_type="l1"):
+        """
+        Compute the error between the estimated and actual pose.
+        Args:
+            R_estimate (Tensor): A tensor of shape (B, 3, 3) for batch size B.
+            instances (list[Instances]): A list of N Instances, where N is the number of images
+                in the batch. These instances are in 1:1
+                correspondence with the pose estimates. The ground-truth labels (class, box, mask,
+                ...) associated with each instance are stored in fields.
+            loss_weight (float): A float to multiply the loss with.
+            loss_type (string): 'l1' or 'l2'
+        Returns:
+            loss (Tensor): A scalar tensor containing the loss.
+        """
+        total_num_pose_estimates = R_estimate.size(0)
+        assert(R_estimate.shape[-2:] == (3, 3))
+
+        # Gather up gt rotation matrices from the list of Instances objects
+        all_gt_pose_quat = []
+        for instances_per_image in instances:
+            if len(instances_per_image) == 0:
+                continue
+            all_gt_pose_quat.append(instances_per_image.gt_pose_quatxyz[:, :4].detach().to(device=R_estimate.device))
+
+        if len(all_gt_pose_quat) == 0:
+            return 0.
+
+        all_gt_pose_quat = cat(all_gt_pose_quat, dim=0)
+        assert all_gt_pose_quat.numel() > 0, all_gt_pose_quat.shape
+
+        all_gt_pose_rotmat = quat2mat(all_gt_pose_quat)
+        # Get rotation difference between predicted and target
+        diff_rotations = torch.matmul(all_gt_pose_rotmat, torch.transpose(R_estimate, 1, 2))
+
+        # Batch trace implementation from torch_quaternion.py        
+        rotation_matrix_vec = diff_rotations.reshape(*diff_rotations.shape[:-2], 9)
+        m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.chunk(
+            rotation_matrix_vec, chunks=9, dim=-1)
+        trace = m00 + m11 + m22
+        angle_errors = torch.acos((trace - 1.)/2.)
+        
+        if loss_type == "l1":
+            pose_loss = torch.mean(angle_errors)
+        elif loss_type == "l2":
+            pose_loss = torch.mean(angle_errors**2.)
+        else:
+            raise NotImplementedError("Unrecognized loss type: ", loss_type)
+        pose_loss = pose_loss * loss_weight
+        return pose_loss
 
 def build_pose_xyz_head(cfg, input_shape):
     name = cfg.MODEL.ROI_POSE_XYZ_HEAD.NAME
@@ -378,4 +526,8 @@ def build_pose_xyz_head(cfg, input_shape):
 
 def build_pose_rpy_head(cfg, input_shape):
     name = cfg.MODEL.ROI_POSE_RPY_HEAD.NAME
+    return ROI_POSE_HEAD_REGISTRY.get(name)(cfg, input_shape)
+
+def build_pose_6DOF_rot_head(cfg, input_shape):
+    name = cfg.MODEL.ROI_POSE_6DOF_ROT_HEAD.NAME
     return ROI_POSE_HEAD_REGISTRY.get(name)(cfg, input_shape)

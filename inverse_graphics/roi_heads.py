@@ -7,7 +7,9 @@ from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers, FastRC
 from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads, select_foreground_proposals
 
 from scene_generation.inverse_graphics.shape_head import build_shape_head
-from scene_generation.inverse_graphics.pose_head import build_pose_xyz_head, build_pose_rpy_head
+from scene_generation.inverse_graphics.pose_head import (
+    build_pose_xyz_head, build_pose_rpy_head, build_pose_6DOF_rot_head
+)
 from scene_generation.utils.torch_quaternion import (
     euler_to_quaternion, qeuler, qrot, qmul,
     rotation_matrix_to_quaternion
@@ -34,6 +36,7 @@ class XenRCNNROIHeads(StandardROIHeads):
         self.with_mask = cfg.MODEL.MASK_ON
         self.with_shape = cfg.MODEL.SHAPE_ON
         self.with_pose = cfg.MODEL.POSE_ON
+        self.with_6dof_rot = cfg.MODEL.POSE_6DOF_ROT_ON
         self.shape_loss_weight = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_WEIGHT
         self.shape_loss_norm = cfg.MODEL.ROI_HEADS.SHAPE_LOSS_NORM
         self.pose_loss_weight = cfg.MODEL.ROI_HEADS.POSE_LOSS_WEIGHT
@@ -43,7 +46,10 @@ class XenRCNNROIHeads(StandardROIHeads):
             self.shape_head = build_shape_head(cfg, self.shared_pooler_shape)
         if self.with_pose:
             self.pose_xyz_head = build_pose_xyz_head(cfg, self.shared_pooler_shape)
-            self.pose_rpy_head = build_pose_rpy_head(cfg, self.shared_pooler_shape)
+            if self.with_6dof_rot:
+                self.pose_6dof_rot_head = build_pose_6DOF_rot_head(cfg, self.shared_pooler_shape)
+            else:
+                self.pose_rpy_head = build_pose_rpy_head(cfg, self.shared_pooler_shape)
         # If MODEL.VIS_MINIBATCH is True we store minibatch targets
         # for visualization purposes
         self._vis = None #cfg.MODEL.VIS_MINIBATCH
@@ -176,7 +182,7 @@ class XenRCNNROIHeads(StandardROIHeads):
                                    (boxlist.tensor[:, 3] + boxlist.tensor[:, 1]) / 2.,
                                    torch.ones(subbatch_size).to(Kc.device)], dim=-1)
             view_rays = torch.matmul(Kc_inv.unsqueeze(0),
-                                     offsets.view(-1, 3, 1)).squeeze()
+                                     offsets.view(-1, 3, 1)).view(-1, 3)
             R = rotation_matrix_from_two_vectors(
                     torch.tensor([0., 0., 1.]).repeat(subbatch_size, 1).to(Kc.device),
                     view_rays)
@@ -208,30 +214,43 @@ class XenRCNNROIHeads(StandardROIHeads):
             )
             losses.update({"loss_pose_xyz": pose_xyz})
 
-            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
-            #print("Pose rpy estiamte before rot: ", pose_rpy_estimate[:4, :])
-            #pose_quat_estimate = euler_to_quaternion(pose_rpy_estimate, order='zyx')
-            #print("Pose rpy as quat: ", pose_quat_estimate[:4, :])
-            #pose_quat_estimate = qmul(quaternions, pose_quat_estimate)
-            #print("Pose rpy multiplied as quat: ", pose_quat_estimate[:4, :])
-            #pose_rpy_estimate = qeuler(pose_quat_estimate, order='xyz')
-            #print("Rotated rpy estimate: ", pose_rpy_estimate[:4, :])
-            # Compose the quaternion
-            pose_rpy = self.pose_rpy_head.pose_rpy_rcnn_loss(
-                pose_rpy_estimate, P_rpy, instances,
-                loss_weight=self.pose_loss_weight,
-                loss_type=self.pose_loss_norm
-            )
-            losses.update({"loss_pose_rpy": pose_rpy})
+            if self.with_6dof_rot:
+                rotation_estimates = self.pose_6dof_rot_head(features, Kcs, rotations, Hinfs)
+                pose_6dof_rot_loss = self.pose_6dof_rot_head.pose_6DOF_rot_rcnn_loss(
+                    rotation_estimates, instances,
+                    loss_weight=self.pose_loss_weight,
+                    loss_type=self.pose_loss_norm
+                )
+                losses.update({"loss_pose_6dof_rot": pose_6dof_rot_loss})
+            else:
+                pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+                #print("Pose rpy estiamte before rot: ", pose_rpy_estimate[:4, :])
+                #pose_quat_estimate = euler_to_quaternion(pose_rpy_estimate, order='zyx')
+                #print("Pose rpy as quat: ", pose_quat_estimate[:4, :])
+                #pose_quat_estimate = qmul(quaternions, pose_quat_estimate)
+                #print("Pose rpy multiplied as quat: ", pose_quat_estimate[:4, :])
+                #pose_rpy_estimate = qeuler(pose_quat_estimate, order='xyz')
+                #print("Rotated rpy estimate: ", pose_rpy_estimate[:4, :])
+                # Compose the quaternion
+                pose_rpy_loss = self.pose_rpy_head.pose_rpy_rcnn_loss(
+                    pose_rpy_estimate, P_rpy, instances,
+                    loss_weight=self.pose_loss_weight,
+                    loss_type=self.pose_loss_norm
+                )
+                losses.update({"loss_pose_rpy": pose_rpy_loss})
 
             return losses
 
         else:
             pose_xyz_estimates, _ = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
             #pose_xyz_estimates = qrot(quaternions, pose_xyz_estimates)
-            pose_rpy_estimates, _ = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
-            pose_quat_estimates = euler_to_quaternion(pose_rpy_estimates, order='zyx')
-            #pose_quat_estimates = qmul(quaternions, pose_quat_estimates)
+            if self.with_6dof_rot:
+                pose_rot_estimates = self.pose_6dof_rot_head(features, Kcs, rotations, Hinfs)
+                pose_quat_estimates = rotation_matrix_to_quaternion(pose_rot_estimates)
+            else:
+                pose_rpy_estimates, _ = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+                pose_quat_estimates = euler_to_quaternion(pose_rpy_estimates, order='zyx')
+                #pose_quat_estimates = qmul(quaternions, pose_quat_estimates)
 
             pose_estimates = torch.cat(
                 [pose_quat_estimates,

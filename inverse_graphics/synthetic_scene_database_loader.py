@@ -254,7 +254,7 @@ def annotations_to_instances(annos, image_size, camera_pose=None):
             obj_tf = rigidtransform_from_pose_vector(obj["pose"])
             obj_in_cam = cam_tf.inverse().multiply(obj_tf)
             pose.append(
-                torch.tensor(pose_vector_from_rigidtransform(obj_in_cam)))
+                torch.tensor(pose_vector_from_rigidtransform(obj_in_cam).astype("float32")))
 
         target.gt_pose_quatxyz = torch.stack(pose, dim=0)
 
