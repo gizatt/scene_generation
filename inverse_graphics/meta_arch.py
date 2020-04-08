@@ -106,6 +106,7 @@ class ImageListWithDepthAndCalibration(ImageList):
             padding_size = [0, max_size[-1] - image_size[1], 0, max_size[-2] - image_size[0]]
             if all(x == 0 for x in padding_size):  # https://github.com/pytorch/pytorch/issues/31734
                 batched_imgs = tensors[0].unsqueeze(0)
+                batched_depth_imgs = depth_tensors[0].unsqueeze(0)
             else:
                 padded = F.pad(tensors[0], padding_size, value=pad_value)
                 padded_depth = F.pad(depth_tensors[0], padding_size, value=pad_value)
