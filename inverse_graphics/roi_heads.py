@@ -8,7 +8,11 @@ from detectron2.modeling.roi_heads.roi_heads import StandardROIHeads, select_for
 
 from scene_generation.inverse_graphics.shape_head import build_shape_head
 from scene_generation.inverse_graphics.pose_head import build_pose_xyz_head, build_pose_rpy_head
-from scene_generation.utils.torch_quaternion import euler_to_quaternion
+from scene_generation.utils.torch_quaternion import (
+    euler_to_quaternion, qeuler, qrot, qmul,
+    rotation_matrix_to_quaternion
+)
+from scene_generation.utils.torch_misc_math import rotation_matrix_from_two_vectors
 
 '''
 Implements shape and pose regression from a cropped instance proposal region.
@@ -146,21 +150,57 @@ class XenRCNNROIHeads(StandardROIHeads):
         # For each box, compute the rotation matrix to move the view vector
         # from the center of the image to the center of the crop box
         rotmats = []
-        expanded_calibrations = []
-        for boxlist, instance, K in zip(boxes, instances, calibrations):
-            expanded_calibrations += [K] * len(instance)
-            bbox_centers = torch.mean(boxlist.tensor, dim=1)
-            #image_center = torch.tensor([
-            #                    instance.image_height/2.,
-            #                    instance.image_width/2.]).to(device=boxes.device)
+        Kcs = []
+        f_w, f_h = features.shape[-2:]
+        rotations = []
+        Hinfs = []
+        for boxlist, instance, Kc in zip(boxes, instances, calibrations):
+            subbatch_size = len(instance)
+            if subbatch_size == 0:
+                continue
+            Kcs += [Kc] * subbatch_size
+            Kc_inv = torch.inverse(Kc)
+            r_w = boxlist.tensor[:, 2] - boxlist.tensor[:, 0]
+            r_h = boxlist.tensor[:, 3] - boxlist.tensor[:, 1]
+            # Intrinsics for the f_w by f_h ROI region
+            Kr = torch.zeros(subbatch_size, 3, 3)
+            Kr[:, 0, 0] = Kc[0, 0] * f_w / r_w
+            Kr[:, 1, 1] = Kc[1, 1] * f_h / r_h
+            Kr[:, 0, 2] = f_w / 2.
+            Kr[:, 1, 2] = f_h / 2.
+            Kr[:, 2, 2] = 1.
+            Kr = Kr.to(Kc.device)
 
-        if len(expanded_calibrations) > 0:
-            expanded_calibrations = torch.stack(expanded_calibrations).to(features.device)
+            # Compute rotation matrix from camera to bbox
+            offsets = torch.stack([(boxlist.tensor[:, 2] + boxlist.tensor[:, 0]) / 2.,
+                                   (boxlist.tensor[:, 3] + boxlist.tensor[:, 1]) / 2.,
+                                   torch.ones(subbatch_size).to(Kc.device)], dim=-1)
+            view_rays = torch.matmul(Kc_inv.unsqueeze(0),
+                                     offsets.view(-1, 3, 1)).squeeze()
+            R = rotation_matrix_from_two_vectors(
+                    torch.tensor([0., 0., 1.]).repeat(subbatch_size, 1).to(Kc.device),
+                    view_rays)
+            rotations.append(R)
+            #quaternions.append(rotation_matrix_to_quaternion(Rt))
+            # Finally form the actual homography matrix between the crop and full image
+            Hinf = torch.matmul(Kc, torch.matmul(R, torch.inverse(Kr)))
+            Hinfs.append(Hinf)
+
+        if len(Kcs) > 0:
+            Kcs = torch.stack(Kcs, dim=0).to(features.device)
+            rotations = torch.cat(rotations, dim=0).to(features.device)
+            Hinfs = torch.cat(Hinfs, dim=0).to(features.device)
         else:
-            expanded_calibrations = torch.empty((0, 3, 3)).to(features.device)
+            Kcs = torch.empty((0, 3, 3)).to(features.device)
+            rotations = torch.empty((0, 3, 3)).to(features.device)
+            Hinfs = torch.empty((0, 3, 3)).to(features.device)
         if self.training:
             losses = {}
-            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features, expanded_calibrations)
+            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
+            # Apply rotation
+            #print("Pose xyz estimate before rot: ", pose_xyz_estimate[:4, :])
+            #pose_xyz_estimate = qrot(quaternions, pose_xyz_estimate)
+            #print("Pose xyz estimate after rot: ", pose_xyz_estimate[:4, :])
             pose_xyz = self.pose_xyz_head.pose_xyz_rcnn_loss(
                 pose_xyz_estimate, P_xyz, instances,
                 loss_weight=self.pose_loss_weight,
@@ -168,7 +208,15 @@ class XenRCNNROIHeads(StandardROIHeads):
             )
             losses.update({"loss_pose_xyz": pose_xyz})
 
-            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, expanded_calibrations)
+            pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+            #print("Pose rpy estiamte before rot: ", pose_rpy_estimate[:4, :])
+            #pose_quat_estimate = euler_to_quaternion(pose_rpy_estimate, order='zyx')
+            #print("Pose rpy as quat: ", pose_quat_estimate[:4, :])
+            #pose_quat_estimate = qmul(quaternions, pose_quat_estimate)
+            #print("Pose rpy multiplied as quat: ", pose_quat_estimate[:4, :])
+            #pose_rpy_estimate = qeuler(pose_quat_estimate, order='xyz')
+            #print("Rotated rpy estimate: ", pose_rpy_estimate[:4, :])
+            # Compose the quaternion
             pose_rpy = self.pose_rpy_head.pose_rpy_rcnn_loss(
                 pose_rpy_estimate, P_rpy, instances,
                 loss_weight=self.pose_loss_weight,
@@ -179,11 +227,14 @@ class XenRCNNROIHeads(StandardROIHeads):
             return losses
 
         else:
-            pose_xyz_estimates, _ = self.pose_xyz_head(features, expanded_calibrations)
-            pose_rpy_estimates, _ = self.pose_rpy_head(features, expanded_calibrations)
+            pose_xyz_estimates, _ = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
+            #pose_xyz_estimates = qrot(quaternions, pose_xyz_estimates)
+            pose_rpy_estimates, _ = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+            pose_quat_estimates = euler_to_quaternion(pose_rpy_estimates, order='zyx')
+            #pose_quat_estimates = qmul(quaternions, pose_quat_estimates)
 
             pose_estimates = torch.cat(
-                [euler_to_quaternion(pose_rpy_estimates, order='zyx'),
+                [pose_quat_estimates,
                  pose_xyz_estimates], dim=1)
             num_instances_per_image = [len(i) for i in instances]
             pose_by_instance_group = pose_estimates.split(num_instances_per_image)

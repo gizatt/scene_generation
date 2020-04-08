@@ -69,8 +69,8 @@ class RCNNPoseXyzHead(nn.Module):
         self.fcs = []
         for k in range(num_fc):
             if k == 0:   
-                # Takes 3x3 calibrations as input as well
-                fc = nn.Linear(np.prod(self._output_size) + 9, fc_dim)
+                # Takes 3x3 calibrations, rotations, and Hinfs as input as well
+                fc = nn.Linear(np.prod(self._output_size) + 27, fc_dim)
                 self._output_size = fc_dim
             elif k < num_fc - 1:
                 fc = nn.Linear(np.prod(self._output_size), fc_dim)
@@ -103,13 +103,15 @@ class RCNNPoseXyzHead(nn.Module):
         for layer in self.fcs:
             weight_init.c2_xavier_fill(layer)
 
-    def forward(self, x, calibrations):
+    def forward(self, x,  Kcs, rotations, Hinfs):
         for layer in self.conv_norm_relus:
             x = layer(x)
         if x.dim() > 2:
             x = torch.flatten(x, start_dim=1)
-        calibrations = torch.flatten(calibrations, start_dim=1)
-        x = torch.cat([x, calibrations], dim=-1)
+        Kcs = torch.flatten(Kcs, start_dim=1)
+        rotations = torch.flatten(rotations, start_dim=1)
+        Hinfs = torch.flatten(Hinfs, start_dim=1)
+        x = torch.cat([x, Kcs, rotations, Hinfs], dim=-1)
         if len(self.fcs):
             for layer in self.fcs:
                 x = F.relu(layer(x))
@@ -240,8 +242,8 @@ class RCNNPoseRpyHead(nn.Module):
         self.fcs = []
         for k in range(num_fc):
             if k == 0:   
-                # Takes 3x3 calibrations as input as well
-                fc = nn.Linear(np.prod(self._output_size) + 9, fc_dim)
+                # Takes 3x3 calibrations + Hinfs + rotmats as input as well
+                fc = nn.Linear(np.prod(self._output_size) + 27, fc_dim)
                 self._output_size = fc_dim
             elif k < num_fc - 1:
                 fc = nn.Linear(np.prod(self._output_size), fc_dim)
@@ -282,13 +284,15 @@ class RCNNPoseRpyHead(nn.Module):
         for layer in self.fcs:
             weight_init.c2_xavier_fill(layer)
 
-    def forward(self, x, calibrations):
+    def forward(self, x, Kcs, rotations, Hinfs):
         for layer in self.conv_norm_relus:
             x = layer(x)
         if x.dim() > 2:
             x = torch.flatten(x, start_dim=1)
-        calibrations = torch.flatten(calibrations, start_dim=1)
-        x = torch.cat([x, calibrations], dim=-1)
+        Kcs = torch.flatten(Kcs, start_dim=1)
+        rotations = torch.flatten(rotations, start_dim=1)
+        Hinfs = torch.flatten(Hinfs, start_dim=1)
+        x = torch.cat([x, Kcs, rotations, Hinfs], dim=-1)
         if len(self.fcs):
             for layer in self.fcs:
                 x = F.relu(layer(x))
