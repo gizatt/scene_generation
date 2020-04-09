@@ -31,7 +31,9 @@ class ImageListWithDepthAndCalibration(ImageList):
         calibrations (list[3x3 tensors]): each entry is a K matrix
     """
 
-    def __init__(self, rgb_tensor: torch.Tensor,
+    def __init__(self, 
+                       tensor: torch.Tensor,
+                       rgb_tensor: torch.Tensor,
                        depth_tensor: torch.Tensor,
                        calibrations: List[torch.Tensor],
                        image_sizes: List[Tuple[int, int]]):
@@ -41,7 +43,7 @@ class ImageListWithDepthAndCalibration(ImageList):
             image_sizes (list[tuple[int, int]]): Each tuple is (h, w). It can
                 be smaller than (H, W) due to padding.
         """
-        self.tensor = rgb_tensor # torch.cat([rgb_tensor, depth_tensor], dim=-3)
+        self.tensor = tensor 
         self.rgb_tensor = rgb_tensor
         self.depth_tensor = depth_tensor
         self.calibrations = calibrations
@@ -53,7 +55,8 @@ class ImageListWithDepthAndCalibration(ImageList):
         depth_tensors: Sequence[torch.Tensor],
         calibrations: Sequence[torch.Tensor],
         size_divisibility: int = 0,
-        pad_value: float = 0.0
+        pad_value: float = 0.0,
+        make_primary_tensor_rgbd: bool = False
     ) -> "ImageList":
         """
         Args:
@@ -122,9 +125,16 @@ class ImageListWithDepthAndCalibration(ImageList):
             for depth_img, pad_depth_img in zip(depth_tensors, batched_depth_imgs):
                 pad_depth_img[..., : depth_img.shape[-2], : depth_img.shape[-1]].copy_(depth_img)
 
+        batched_imgs = batched_imgs.contiguous()
+        batched_depth_imgs = batched_depth_imgs.contiguous()
+        if make_primary_tensor_rgbd:
+            primary_imgs = torch.cat([batched_imgs, batched_depth_imgs], dim=-3)
+        else:
+            primary_imgs = batched_imgs
         return ImageListWithDepthAndCalibration(
-                    batched_imgs.contiguous(),
-                    batched_depth_imgs.contiguous(),
+                    primary_imgs.contiguous(),
+                    batched_imgs,
+                    batched_depth_imgs,
                     calibrations, image_sizes)
 
 
@@ -138,8 +148,12 @@ class GeneralizedRCNNWithDepthAndCalibration(GeneralizedRCNN):
     def __init__(self, cfg):
         nn.Module.__init__(self)
 
+        if cfg.MODEL.DEPTH_CHANNEL_ON:
+            self.im_channels = 4
+        else:
+            self.im_channels = 3
         self.device = torch.device(cfg.MODEL.DEVICE)
-        self.backbone = build_backbone(cfg, input_shape=ShapeSpec(channels=3))
+        self.backbone = build_backbone(cfg, input_shape=ShapeSpec(channels=self.im_channels))
         self.proposal_generator = build_proposal_generator(cfg, self.backbone.output_shape())
         self.roi_heads = build_roi_heads(cfg, self.backbone.output_shape())
         self.vis_period = cfg.VIS_PERIOD
@@ -164,5 +178,6 @@ class GeneralizedRCNNWithDepthAndCalibration(GeneralizedRCNN):
         depth_images = [self.depth_normalizer(x) for x in depth_images]
         calibrations = [x["K"].to(self.device) for x in batched_inputs]
         images = ImageListWithDepthAndCalibration.from_tensors(
-            images, depth_images, calibrations, self.backbone.size_divisibility)
+            images, depth_images, calibrations, self.backbone.size_divisibility,
+            make_primary_tensor_rgbd = (self.im_channels == 4))
         return images

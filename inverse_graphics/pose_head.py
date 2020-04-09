@@ -459,7 +459,6 @@ class RCNNPose6DOFRotHead(nn.Module):
         # in https://arxiv.org/pdf/1812.07035.pdf
         a1 = x[:, 0, :]
         a2 = x[:, 1, :]
-        R = torch.empty(x.shape[0], 3, 3).to(x.device)
         b1 = F.normalize(a1, p=2, dim=1)
         # Sum is repeated out to [batch x 3] from [batch] so it
         # broadcast-multiplies with [batch x 3] b1 happily
@@ -501,15 +500,14 @@ class RCNNPose6DOFRotHead(nn.Module):
 
         all_gt_pose_rotmat = quat2mat(all_gt_pose_quat)
         # Get rotation difference between predicted and target
-        diff_rotations = torch.matmul(all_gt_pose_rotmat, torch.transpose(R_estimate, 1, 2))
+        diff_rotations = torch.matmul(all_gt_pose_rotmat, torch.transpose(R_estimate, 1, 2)).contiguous()
 
         # Batch trace implementation from torch_quaternion.py        
         rotation_matrix_vec = diff_rotations.reshape(*diff_rotations.shape[:-2], 9)
         m00, m01, m02, m10, m11, m12, m20, m21, m22 = torch.chunk(
             rotation_matrix_vec, chunks=9, dim=-1)
         trace = m00 + m11 + m22
-        angle_errors = torch.acos((trace - 1.)/2.)
-        
+        angle_errors = torch.acos(torch.clamp((trace - 1.)/2., -0.9999, 0.9999))
         if loss_type == "l1":
             pose_loss = torch.mean(angle_errors)
         elif loss_type == "l2":
