@@ -105,18 +105,22 @@ class RCNNShapeHead(nn.Module):
                 x = F.relu(layer(x))
 
         x = x.reshape(x.shape[0], self.num_shape_params, self.num_shape_bins)
-        P = F.softmax(x / torch.exp(self.log_T), dim=-1)
-        shape_estimate = torch.sum(P * self.shape_bin_corners, dim=2)
-        return shape_estimate, P
+        log_P = F.log_softmax(x / torch.exp(self.log_T), dim=-1)
+        shape_estimate = torch.sum(torch.exp(log_P) * self.shape_bin_corners, dim=2)
 
-    def shape_rcnn_loss(self, shape_estimate, P, instances,
+        if self.training:
+            get_event_storage().put_scalar("shape_log_T", self.log_T)
+
+        return shape_estimate, log_P
+
+    def shape_rcnn_loss(self, shape_estimate, log_P, instances,
                         loss_weight=1.0, loss_type="l1"):
         """
         Compute the shape prediction loss.
         Args:
             shape_estimate (Tensor): A tensor of shape (B, D) for batch size B
                 and # of shape parameters D.
-            P (Tensor): A tensor of shape (B, D, N_bins) for batch size B,
+            log_P (Tensor): A tensor of shape (B, D, N_bins) for batch size B,
                 # of shape params D, and # of shape bins N_bins.
             instances (list[Instances]): A list of N Instances, where N is the number of images
                 in the batch. These instances are in 1:1
@@ -128,9 +132,9 @@ class RCNNShapeHead(nn.Module):
         """
         total_num_shape_estimates = shape_estimate.size(0)
         assert(shape_estimate.size(1) == self.num_shape_params)
-        assert(P.size(0) == total_num_shape_estimates)
-        assert(P.size(1) == self.num_shape_params)
-        assert(P.size(2) == self.num_shape_bins)
+        assert(log_P.size(0) == total_num_shape_estimates)
+        assert(log_P.size(1) == self.num_shape_params)
+        assert(log_P.size(2) == self.num_shape_bins)
         
         # Gather up shape params from the list of Instances objects
         all_gt_shape_params = []
@@ -151,10 +155,10 @@ class RCNNShapeHead(nn.Module):
         bin_indices = (distance_into_bins / self.shape_bin_widths).floor()
         bin_indices = torch.clamp(bin_indices, 0, self.num_shape_bins).long()
 
-        active_probs = torch.stack(
-            [P[k, range(3), bin_indices[k, :]]
+        active_log_probs = torch.stack(
+            [log_P[k, range(3), bin_indices[k, :]]
              for k in range(total_num_shape_estimates)])
-        shape_loss = torch.mean(-torch.log(active_probs))
+        shape_loss = torch.mean(-active_log_probs)
 
         if loss_type == "l1":
             shape_loss = shape_loss + F.l1_loss(

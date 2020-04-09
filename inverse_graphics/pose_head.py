@@ -4,6 +4,7 @@ import torch
 from detectron2.layers import Conv2d, ConvTranspose2d, cat, get_norm
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.registry import Registry
+
 from torch import nn
 from torch.nn import functional as F
 
@@ -119,17 +120,21 @@ class RCNNPoseXyzHead(nn.Module):
             for layer in self.fcs:
                 x = F.relu(layer(x))
         x = x.reshape(x.shape[0], 3, self.num_bins)
-        P = F.softmax(x / torch.exp(self.log_T), dim=-1)
-        xyz_estimate = torch.sum(P * self.xyz_bin_corners, dim=2)
-        return xyz_estimate, P
+        log_P = F.log_softmax(x / torch.exp(self.log_T), dim=-1)
+        xyz_estimate = torch.sum(torch.exp(log_P) * self.xyz_bin_corners, dim=2)
 
-    def pose_xyz_rcnn_loss(self, pose_xyz_estimate, P,
+        if self.training:
+            get_event_storage().put_scalar("pose_xyz_log_T", self.log_T)
+
+        return xyz_estimate, log_P
+
+    def pose_xyz_rcnn_loss(self, pose_xyz_estimate, log_P,
                            instances, loss_weight=1.0, loss_type="l1"):
         """
         Compute the error between the estimated and actual pose.
         Args:
             pose_xyz_estimate (Tensor): A tensor of shape (B, 3) for batch size B.
-            P (Tensor): A tensor of shape (B, 3, N_bins) for batch size B,
+            log_P (Tensor): A tensor of shape (B, 3, N_bins) for batch size B,
                 and # of xyz bins N_bins.
             instances (list[Instances]): A list of N Instances, where N is the number of images
                 in the batch. These instances are in 1:1
@@ -142,9 +147,9 @@ class RCNNPoseXyzHead(nn.Module):
         """
         total_num_pose_estimates = pose_xyz_estimate.size(0)
         assert(pose_xyz_estimate.size(1) == 3)
-        assert(P.size(0) == total_num_pose_estimates)
-        assert(P.size(1) == 3)
-        assert(P.size(2) == self.num_bins)
+        assert(log_P.size(0) == total_num_pose_estimates)
+        assert(log_P.size(1) == 3)
+        assert(log_P.size(2) == self.num_bins)
 
         # Gather up gt xyz poses from the list of Instances objects
         all_gt_pose_xyz = []
@@ -165,10 +170,10 @@ class RCNNPoseXyzHead(nn.Module):
         bin_indices = (distance_into_bins / self.xyz_bin_widths).floor()
         bin_indices = torch.clamp(bin_indices, 0, self.num_bins).long()
 
-        active_probs = torch.stack(
-            [P[k, range(3), bin_indices[k, :]]
+        active_log_probs = torch.stack(
+            [log_P[k, range(3), bin_indices[k, :]]
              for k in range(total_num_pose_estimates)])
-        pose_loss = torch.mean(-torch.log(active_probs))
+        pose_loss = torch.mean(-active_log_probs)
 
         if loss_type == "l1":
             pose_loss = pose_loss + F.l1_loss(
@@ -300,15 +305,21 @@ class RCNNPoseRpyHead(nn.Module):
             for layer in self.fcs:
                 x = F.relu(layer(x))
         x = x.reshape(x.shape[0], 3, self.num_bins)
-        P = F.softmax(x / torch.exp(self.log_T), dim=-1)
+        log_P = F.log_softmax(x / torch.exp(self.log_T), dim=-1)
         # To get the estimate, take the *complex* expectation -- see
         # eq. (2) in the 3dRCNN paper.
+        P = torch.exp(log_P)
         real_total = torch.sum(P * self.rpy_bin_corners_real, dim=2)
         imag_total = torch.sum(P * self.rpy_bin_corners_imag, dim=2)
         rpy_estimate = torch.atan2(imag_total, real_total)
-        return rpy_estimate, P
 
-    def pose_rpy_rcnn_loss(self, pose_rpy_estimate, P,
+        if self.training:
+            get_event_storage().put_scalar("pose_rpy_log_T", self.log_T)
+
+
+        return rpy_estimate, log_P
+
+    def pose_rpy_rcnn_loss(self, pose_rpy_estimate, log_P,
                            instances, loss_weight=1.0, loss_type="l1"):
         """
         Compute the error between the estimated and actual pose.
@@ -327,9 +338,9 @@ class RCNNPoseRpyHead(nn.Module):
         """
         total_num_pose_estimates = pose_rpy_estimate.size(0)
         assert(pose_rpy_estimate.size(1) == 3)
-        assert(P.size(0) == total_num_pose_estimates)
-        assert(P.size(1) == 3)
-        assert(P.size(2) == self.num_bins)
+        assert(log_P.size(0) == total_num_pose_estimates)
+        assert(log_P.size(1) == 3)
+        assert(log_P.size(2) == self.num_bins)
 
         # Gather up gt rpy poses from the list of Instances objects
         all_gt_pose_rpy = []
@@ -350,10 +361,10 @@ class RCNNPoseRpyHead(nn.Module):
         bin_indices = (distance_into_bins / self.rpy_bin_widths).floor()
         bin_indices = torch.clamp(bin_indices, 0, self.num_bins).long()
 
-        active_probs = torch.stack(
-            [P[k, range(3), bin_indices[k, :]]
+        active_log_probs = torch.stack(
+            [log_P[k, range(3), bin_indices[k, :]]
              for k in range(total_num_pose_estimates)])
-        pose_loss = torch.mean(-torch.log(active_probs))
+        pose_loss = torch.mean(-active_log_probs)
 
         # In either loss case, collapse among the minimum (elementwise) loss among
         # the original angle estimate, as well as the angle estimate rotated left

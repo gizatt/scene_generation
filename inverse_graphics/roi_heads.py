@@ -202,13 +202,13 @@ class XenRCNNROIHeads(StandardROIHeads):
             Hinfs = torch.empty((0, 3, 3)).to(features.device)
         if self.training:
             losses = {}
-            pose_xyz_estimate, P_xyz = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
+            pose_xyz_estimate, log_P_xyz = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
             # Apply rotation
             #print("Pose xyz estimate before rot: ", pose_xyz_estimate[:4, :])
             #pose_xyz_estimate = qrot(quaternions, pose_xyz_estimate)
             #print("Pose xyz estimate after rot: ", pose_xyz_estimate[:4, :])
             pose_xyz = self.pose_xyz_head.pose_xyz_rcnn_loss(
-                pose_xyz_estimate, P_xyz, instances,
+                pose_xyz_estimate, log_P_xyz, instances,
                 loss_weight=self.pose_loss_weight,
                 loss_type=self.pose_loss_norm
             )
@@ -223,7 +223,7 @@ class XenRCNNROIHeads(StandardROIHeads):
                 )
                 losses.update({"loss_pose_6dof_rot": pose_6dof_rot_loss})
             else:
-                pose_rpy_estimate, P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+                pose_rpy_estimate, log_P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
                 #print("Pose rpy estiamte before rot: ", pose_rpy_estimate[:4, :])
                 #pose_quat_estimate = euler_to_quaternion(pose_rpy_estimate, order='zyx')
                 #print("Pose rpy as quat: ", pose_quat_estimate[:4, :])
@@ -233,7 +233,7 @@ class XenRCNNROIHeads(StandardROIHeads):
                 #print("Rotated rpy estimate: ", pose_rpy_estimate[:4, :])
                 # Compose the quaternion
                 pose_rpy_loss = self.pose_rpy_head.pose_rpy_rcnn_loss(
-                    pose_rpy_estimate, P_rpy, instances,
+                    pose_rpy_estimate, log_P_rpy, instances,
                     loss_weight=self.pose_loss_weight,
                     loss_type=self.pose_loss_norm
                 )
@@ -276,9 +276,9 @@ class XenRCNNROIHeads(StandardROIHeads):
         
         if self.training:
             losses = {}
-            shape_estimate, P = self.shape_head(features)
+            shape_estimate, log_P = self.shape_head(features)
             loss_shape = self.shape_head.shape_rcnn_loss(
-                shape_estimate, P, instances,
+                shape_estimate, log_P, instances,
                 loss_weight=self.shape_loss_weight,
                 loss_type=self.shape_loss_norm
             )
@@ -286,7 +286,7 @@ class XenRCNNROIHeads(StandardROIHeads):
             return losses
 
         else:
-            shape_estimate, P = self.shape_head(features)
+            shape_estimate, log_P = self.shape_head(features)
             num_instances_per_image = [len(i) for i in instances]
             pred_shapes_by_instance_group = shape_estimate.split(num_instances_per_image)
             for shape_estimate_k, instances_k in zip(pred_shapes_by_instance_group, instances):
