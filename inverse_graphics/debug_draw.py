@@ -47,7 +47,7 @@ def draw_shape_and_pose_predictions(input, pred, test_metadata):
                     trimesh.creation.box(extents=pred_shapes[obj_k, :]*2.,
                                          transform=tf_mat,
                                          face_colors=np.random.random([3])*255))
-            png = scene.save_image(background=[0, 0, 0])
+            png = scene.save_image(background=[0, 0, 0], resolution=shape)
             im_boxes = np.asarray(Image.open(BytesIO(png)))[:, :, -2::-1]
             # Get black and white original image
             bw_im = np.tile(cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)[:, :, None], [1, 1, 3])
