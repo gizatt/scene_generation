@@ -12,6 +12,8 @@ conda install numpy scipy matplotlib pyyaml ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
+Also `tqdm`, `attrs`, `scikit-image`
+
 Install pytorch 1.0.0, e.g. if you have CUDA 9.0, use:
 
 ```
