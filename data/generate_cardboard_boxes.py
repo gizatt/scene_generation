@@ -344,7 +344,19 @@ if __name__ == "__main__":
     # trimesh.util.attach_to_log()
 
     scene = trimesh.scene.scene.Scene()
-    sx, sy, sz = np.random.uniform(low=0.1, high=0.25, size=(3,))
+    #sx, sy, sz = np.random.uniform(low=0.1, high=0.25, size=(3,))
+
+    potential_sizes = np.array([
+        [0.2, 0.2, 0.2],
+        [0.25, 0.1, 0.1],
+        [0.25, 0.2, 0.15],
+        [0.1, 0.15, 0.18]
+    ])
+    k = -1
+    while (k < 0 or k >= 4):
+        k = np.random.geometric(0.33) - 1
+    sx, sy, sz = potential_sizes[k, :]
+    print("K: ", k)
     print("Box shape: ", sx, sy, sz)
     mesh, box_uvs_by_face, box_uv_scale_factor, box_verts_by_face, box_normals_by_face = generate_scaled_box_with_uvs(sx, sy, sz)
     print("Box uv scale factor: ", box_uv_scale_factor)

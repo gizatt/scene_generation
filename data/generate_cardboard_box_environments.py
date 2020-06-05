@@ -251,8 +251,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("num_scenes", type=int, help="Number of scenes to generate.")
     parser.add_argument("-i", "--data_dir", type=str,
-                        help="Directory containing a subdir 'cardboard_boxes' containing box model folders.",
+                        help="Directory containing a subdir containing box model folders.",
                         default="~/data/generated_cardboard_envs")
+    parser.add_argument("--box_folder_name", type=str,
+                        help="Name of subdir with box model folders.",
+                        default="cardboard_boxes")
     parser.add_argument("-n", "--num_cameras", type=int,
                         help="Number of simultaneous camera views.",
                         default=3)
@@ -266,8 +269,8 @@ if __name__ == "__main__":
 
     out_dir = args.output_dir
     os.system("mkdir -p %s" % out_dir)
-    assert(os.path.exists(args.data_dir) and os.path.exists(os.path.join(args.data_dir, 'cardboard_boxes')))
-    d = os.path.join(args.data_dir, 'cardboard_boxes')
+    assert(os.path.exists(args.data_dir) and os.path.exists(os.path.join(args.data_dir, args.box_folder_name)))
+    d = os.path.join(args.data_dir, args.box_folder_name)
     candidate_model_files = [
         os.path.abspath(os.path.join(d, o, "box.sdf")) for o in os.listdir(d) 
         if os.path.isdir(os.path.join(d ,o))
@@ -408,7 +411,7 @@ if __name__ == "__main__":
             q0_proj = result.GetSolution(q_dec)
             mbp.SetPositions(mbp_context, q0_proj)
             q0_initial = q0_proj.copy()
-            simulator.StepTo(args.sim_time + 0.1)
+            simulator.AdvanceTo(args.sim_time + 0.1)
             qf = mbp.GetPositions(mbp_context).copy()
 
             ## RENDERING STUFF

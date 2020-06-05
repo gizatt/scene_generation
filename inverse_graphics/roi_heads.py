@@ -242,13 +242,14 @@ class XenRCNNROIHeads(StandardROIHeads):
             return losses
 
         else:
-            pose_xyz_estimates, _ = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
+            pose_xyz_estimates, log_P_xyz = self.pose_xyz_head(features, Kcs, rotations, Hinfs)
             #pose_xyz_estimates = qrot(quaternions, pose_xyz_estimates)
             if self.with_6dof_rot:
                 pose_rot_estimates = self.pose_6dof_rot_head(features, Kcs, rotations, Hinfs)
                 pose_quat_estimates = rotation_matrix_to_quaternion(pose_rot_estimates)
+                log_P_rpy = torch.zeros(pose_quat_estimates.shape[0], 3, 0)
             else:
-                pose_rpy_estimates, _ = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
+                pose_rpy_estimates, log_P_rpy = self.pose_rpy_head(features, Kcs, rotations, Hinfs)
                 pose_quat_estimates = euler_to_quaternion(pose_rpy_estimates, order='zyx')
                 #pose_quat_estimates = qmul(quaternions, pose_quat_estimates)
 
@@ -257,8 +258,14 @@ class XenRCNNROIHeads(StandardROIHeads):
                  pose_xyz_estimates], dim=1)
             num_instances_per_image = [len(i) for i in instances]
             pose_by_instance_group = pose_estimates.split(num_instances_per_image)
-            for pose_estimate_k, instances_k in zip(pose_by_instance_group, instances):
+            log_P_xyz_by_instance_group = log_P_xyz.split(num_instances_per_image)
+            log_P_rpy_by_instance_group = log_P_rpy.split(num_instances_per_image)
+            for pose_estimate_k, log_P_xyz_k, log_P_rpy_k, instances_k in zip(
+                    pose_by_instance_group, log_P_xyz_by_instance_group, 
+                    log_P_rpy_by_instance_group, instances):
                 instances_k.pred_pose = pose_estimate_k
+                instances_k.pred_pose_xyz_log_P = log_P_xyz_k
+                instances_k.pred_pose_rpy_log_P = log_P_rpy_k
             return instances
 
     def _forward_shape(self, features, instances):
@@ -289,8 +296,11 @@ class XenRCNNROIHeads(StandardROIHeads):
             shape_estimate, log_P = self.shape_head(features)
             num_instances_per_image = [len(i) for i in instances]
             pred_shapes_by_instance_group = shape_estimate.split(num_instances_per_image)
-            for shape_estimate_k, instances_k in zip(pred_shapes_by_instance_group, instances):
+            log_P_by_instance_group = log_P.split(num_instances_per_image)
+            for shape_estimate_k, log_P_k, instances_k in zip(
+                    pred_shapes_by_instance_group, log_P_by_instance_group, instances):
                 instances_k.pred_shape_params = shape_estimate_k
+                instances_k.pred_shape_log_P = log_P_k
             return instances
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from detectron2.utils.visualizer import Visualizer
 
 from scene_generation.utils.type_convert import dict_to_matrix
 
-def draw_shape_and_pose_predictions(input, pred, test_metadata):
+def draw_shape_and_pose_predictions(input, pred, test_metadata, instances_to_draw='all'):
     with torch.no_grad():  # https://github.com/sphinx-doc/sphinx/issues/4258
         # Draw the prediction image itself
         im = input["image"].detach().cpu().numpy().transpose([1, 2, 0])
@@ -36,10 +36,12 @@ def draw_shape_and_pose_predictions(input, pred, test_metadata):
                focal=(K[0, 0], K[1, 1])),
            camera_transform=RigidTransform(rpy=RollPitchYaw(0, np.pi, np.pi), p=np.zeros(3)).matrix())
 
-        if len(pred["instances"]) > 0:
+        if instances_to_draw == 'all':
+            instances_to_draw = range(len(pred["instances"]))
+        if len(instances_to_draw) > 0:
             pred_shapes = pred["instances"].get("pred_shape_params").cpu().detach().numpy()
             pred_poses = pred["instances"].get("pred_pose").cpu().detach().numpy()
-            for obj_k in range(pred_shapes.shape[0]):
+            for obj_k in instances_to_draw:
                 pose = pred_poses[obj_k, :]
                 pose[:4] = pose[:4] / np.linalg.norm(pose[:4])
                 tf_mat = RigidTransform(quaternion=Quaternion(pose[:4]), p=pose[-3:]).matrix()
