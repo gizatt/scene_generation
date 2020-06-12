@@ -636,8 +636,8 @@ def DrawYamlEnvironment(yaml_environment, base_environment_type,
         return
 
     mbp.SetPositions(mbp_context, q0)
-    visualizer._DoPublish(mbp_context, [])
-    visualizer._DoPublish(mbp_context, [])
+    visualizer.DoPublish(mbp_context, [])
+    visualizer.DoPublish(mbp_context, [])
 
 
 def DrawYamlEnvironmentWithBlender(yaml_environment, base_environment_type, cam_isom=None):
