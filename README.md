@@ -28,6 +28,8 @@ they published 3.0, it could be gotten from `conda install pyro-ppl`, but
 the install from source is pretty painless since it's close to pure
 Python.
 
+And use detectron2 0.1.3 from https://github.com/facebookresearch/detectron2/tree/v0.1.3.
+
 ## Contents
 - `data`: Many data generation utilities and their generated datasets.
   - `generate_cardboard_boxes.py`: Generates cardboard box meshes, textures, + SDFs.

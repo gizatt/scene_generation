@@ -351,8 +351,9 @@ class XenRCNNMapper:
         """
         #dataset_dict = {key: value for key, value in dataset_dict.items()}
         dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
-        image = utils.read_image(dataset_dict["file_name"], format=self.img_format)
-        depth_image = utils.read_image(dataset_dict["depth_file_name"], format='I')
+        image = utils.read_image(dataset_dict["file_name"], format=self.img_format).astype(np.float32)/255.
+        # convert depth to meters
+        depth_image = utils.read_image(dataset_dict["depth_file_name"], format='I').astype(np.float32)/1000.
         utils.check_image_size(dataset_dict, image)
 
         orig_image_shape = image.shape[:2]
@@ -366,8 +367,8 @@ class XenRCNNMapper:
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
         dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype("float32"))
-        # Convert depth image to H W C (c = 1), and convert to meters
-        dataset_dict["depth_image"] = torch.as_tensor(np.expand_dims(depth_image, 0).astype("float32")) / 1000.
+        # Convert depth image to H W C (c = 1),
+        dataset_dict["depth_image"] = torch.as_tensor(np.expand_dims(depth_image, 0).astype("float32"))
         # Can use uint8 if it turns out to be slow some day
 
         dataset_dict["K"] = torch.as_tensor(dict_to_matrix(
