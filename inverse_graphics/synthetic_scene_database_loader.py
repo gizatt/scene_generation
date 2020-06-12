@@ -300,6 +300,9 @@ def annotations_to_instances(annos, image_size, camera_pose=None,
                 logprobs = dist.log_prob(batched_grid)
                 ind = np.argmin(np.abs(v - keypoint_types))
                 target.gt_heatmaps[k, ind, ...] += torch.exp(logprobs.view(target_heatmap_size, target_heatmap_size))
+            # Normalize the target images range
+            #for l in range(len(keypoint_types)):
+            #    target.gt_heatmaps[k, l, ...] /= (torch.sum(target.gt_heatmaps[k, l, ...]) + 1E-6)
     return target
 
 
