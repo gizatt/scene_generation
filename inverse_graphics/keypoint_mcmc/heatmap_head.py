@@ -61,7 +61,14 @@ class RCNNHeatmapHead(nn.Module):
                 stride=1,
                 pad=1,
                 dilation=1)
+
         print("Heatmap head has final output shape ", self._output_size)
+
+        # Finally, softmax to normalize the output across the width
+        # and height dimensions
+        self.softmaxes = [nn.Softmax(dim=1), nn.Softmax(dim=2)]
+        self.add_module("softmax_x", self.softmaxes[0])
+        self.add_module("softmax_y", self.softmaxes[1])
 
         for layer in self.conv_norm_relus:
             weight_init.c2_msra_fill(layer)
@@ -70,6 +77,10 @@ class RCNNHeatmapHead(nn.Module):
         # Pass through the conv layers
         for layer in self.conv_norm_relus:
             x = layer(x)
+
+        for softmax in self.softmaxes:
+            x = softmax(x)
+
         return x
 
     def heatmap_loss(self, heatmap_estimate,
