@@ -9,6 +9,7 @@ import json
 import numpy as np
 
 import torch
+from torch.distributions import MultivariateNormal
 from fvcore.common.timer import Timer
 from detectron2.data.transforms import RandomFlip
 from detectron2.data import detection_utils as utils
@@ -24,6 +25,9 @@ from scene_generation.utils.type_convert import (
     dict_to_matrix,
     rigidtransform_from_pose_vector,
     pose_vector_from_rigidtransform
+)
+from scene_generation.utils.torch_misc_math import (
+    conv_output_shape
 )
 from scene_generation.utils.torch_quaternion import qeuler
 
@@ -219,7 +223,8 @@ Category ids in annotations are not in [1, #categories]! We'll apply a mapping f
     return dataset_dicts
 
 
-def annotations_to_instances(annos, image_size, camera_pose=None):
+def annotations_to_instances(annos, image_size, camera_pose=None,
+                             target_heatmap_size=None):
     """
     Create an :class:`Instances` object used by the models,
     from instance annotations in the dataset dict.
@@ -270,60 +275,31 @@ def annotations_to_instances(annos, image_size, camera_pose=None):
         # Convert to RPY, should be range [-pi, pi]
         target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='zyx')
 
-    return target
+    if len(annos) and "keypoint_vals" in annos[0] and target_heatmap_size is not None:
+        # Build bbox-space keypoint heatmaps for the
+        # valid (visible) keypoints of each type
+        keypoint_types = np.array([0., 1.]) # Forcing this into just two manual keypoint types for now
+        target.gt_heatmaps = torch.zeros((len(annos), len(keypoint_types), target_heatmap_size, target_heatmap_size))
+        grid_x, grid_y = torch.meshgrid(torch.arange(target_heatmap_size), torch.arange(target_heatmap_size))
+        batched_grid = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=1).view(-1, 2)
 
-
-def annotations_to_instances(annos, image_size, camera_pose=None):
-    """
-    Create an :class:`Instances` object used by the models,
-    from instance annotations in the dataset dict.
-    Args:
-        annos (list[dict]): a list of annotations, one per instance.
-        image_size (tuple): height, width
-        camera_pose: quat xyz camera pose, np array or list
-    Returns:
-        Instances: It will contains fields "gt_boxes", "gt_classes",
-            "gt_masks", "gt_keypoints", if they can be obtained from `annos`.
-    """
-    boxes = [BoxMode.convert(obj["bbox"], obj["bbox_mode"], BoxMode.XYXY_ABS) for obj in annos]
-    target = Instances(image_size)
-    boxes = target.gt_boxes = Boxes(boxes)
-    boxes.clip(image_size)
-
-    classes = [obj["category_id"] for obj in annos]
-    classes = torch.tensor(classes, dtype=torch.int64)
-    target.gt_classes = classes
-
-    if len(annos) and "segmentation" in annos[0]:
-        masks = [obj["segmentation"] for obj in annos]
-        target.gt_masks = BitMasks(torch.stack(masks))
-
-    # camera calibration
-    #if len(annos) and "camera_calibration" in annos[0]:
-    #     K = [torch.tensor(
-    #             dict_to_matrix(
-    #                 obj["camera_calibration"]["camera_matrix"]))
-    #          for obj in annos]
-    #     target.gt_K = torch.stack(K, dim=0)
-
-    if len(annos) and "parameters" in annos[0]:
-        shape_params = [obj["parameters"] for obj in annos]
-        target.gt_shape_params = torch.stack(shape_params, dim=0)
-    
-    if len(annos) and "pose" in annos[0] and camera_pose is not None:
-        pose = []
-        cam_tf = rigidtransform_from_pose_vector(camera_pose)
-        for obj in annos:
-            obj_tf = rigidtransform_from_pose_vector(obj["pose"])
-            obj_in_cam = cam_tf.inverse().multiply(obj_tf)
-            pose.append(
-                torch.tensor(pose_vector_from_rigidtransform(obj_in_cam).astype("float32")))
-
-        target.gt_pose_quatxyz = torch.stack(pose, dim=0)
-
-        # Convert to RPY, should be range [-pi, pi]
-        target.gt_pose_rpy = qeuler(target.gt_pose_quatxyz[:, :4], order='zyx')
-
+        # Figure out x and y scaling from orig image to these coords
+        xy_scaling = torch.tensor([target_heatmap_size/image_size[0],
+                                   target_heatmap_size/image_size[1]])
+        for k, obj in enumerate(annos):
+            covar = torch.diag(torch.tensor([1., 1.]))
+            vals = obj["keypoint_vals"]
+            # unused
+            xyzs = torch.tensor(dict_to_matrix(obj["keypoint_pixelxy_depth"]).astype("float32"))
+            good_keypoints_mask = obj["keypoint_validity"][0]
+            #print(vals, xyz, good_keypoints_mask)
+            for v, xyz, m in zip(vals, xyzs.T, good_keypoints_mask):
+                if not m:
+                    continue
+                dist = MultivariateNormal(xyz[[1, 0]] * xy_scaling, covar)
+                logprobs = dist.log_prob(batched_grid)
+                ind = np.argmin(np.abs(v - keypoint_types))
+                target.gt_heatmaps[k, ind, ...] += torch.exp(logprobs.view(target_heatmap_size, target_heatmap_size))
     return target
 
 
@@ -341,11 +317,25 @@ class XenRCNNMapper:
         for gen in self.tfm_gens:
             if isinstance(gen, RandomFlip):
                 self.tfm_gens.remove(gen)
-        # fmt: off
         self.img_format     = cfg.INPUT.FORMAT
+        self.is_train       = is_train
 
-        # fmt: on
-        self.is_train = is_train
+        self.target_heatmap_size = None
+        if cfg.MODEL.ROI_HEATMAP_HEAD is not None:
+            res = [cfg.MODEL.ROI_HEATMAP_HEAD.POOLER_RESOLUTION,
+                   cfg.MODEL.ROI_HEATMAP_HEAD.POOLER_RESOLUTION]
+            for k in range(cfg.MODEL.ROI_HEATMAP_HEAD.NUM_CONV):
+                # Awkward -- have to synchronize these stride / pad / dilation
+                # configs with the ones in heatmap_head.py
+                res = conv_output_shape(
+                    res,
+                    kernel_size=cfg.MODEL.ROI_HEATMAP_HEAD.CONV_SIZES[k],
+                    stride=1,
+                    pad=1,
+                    dilation=1)
+            assert(res[0] == res[1])
+            self.target_heatmap_size = res[0] 
+
 
     def __call__(self, dataset_dict):
         """
@@ -394,7 +384,9 @@ class XenRCNNMapper:
                 if obj.get("iscrowd", 0) == 0
             ]
             # Should not be empty during training
-            instances = annotations_to_instances(annos, image_shape, camera_pose)
+            instances = annotations_to_instances(
+                annos, image_shape, camera_pose,
+                target_heatmap_size=self.target_heatmap_size)
             dataset_dict["instances"] = instances[instances.gt_boxes.nonempty()]
 
         return dataset_dict
