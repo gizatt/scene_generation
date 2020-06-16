@@ -57,10 +57,8 @@ class KeypointMCMCROIHeads(StandardROIHeads):
 
         if self.training:
             losses = self._forward_box(features, proposals)
-
             if self.with_mask:
                 losses.update(self._forward_mask(features, proposals))
-
             # During training the (fully labeled) proposals used by the box head are
             # used by the heatmap estimation head.
 

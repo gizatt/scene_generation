@@ -113,8 +113,10 @@ class RCNNHeatmapHead(nn.Module):
         gt_heatmaps = cat(all_gt_heatmaps, dim=0)
         assert gt_heatmaps.numel() > 0, gt_heatmaps.shape
 
-        heatmap_loss = F.mse_loss(
-            heatmap_estimate, gt_heatmaps, reduction='mean')
+        # Take total L2 error over each image and channel,
+        # and average the errors over the batch
+        heatmap_error = (heatmap_estimate - gt_heatmaps)**2
+        heatmap_loss = heatmap_error.sum(-1).sum(-1).sum(-1).mean()
         return heatmap_loss * loss_weight
 
 def build_heatmap_head(cfg, input_shape):
