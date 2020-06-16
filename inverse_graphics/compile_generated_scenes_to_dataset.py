@@ -229,16 +229,20 @@ class RawSyntheticSceneDatabase():
             pixel.x, pixel.y, depth_mm = keypoint_pixelxy_depth[:, i]
             valid = True
 
-            # The pixel must be in bounding box
+            # The pixel must be in bounding box (with gentle margin)
             bbx, bby, bbw, bbh = output_annotation["bbox"]
             if not imgproc.pixel_in_bbox(pixel,
-                                         imgproc.PixelCoord(x=bbx, y=bby),
-                                         imgproc.PixelCoord(x=bbx+bbw, y=bby+bbh)):
+                                         imgproc.PixelCoord(x=bbx-5, y=bby-5),
+                                         imgproc.PixelCoord(x=bbx+bbw+5, y=bby+bbh+5)):
+                valid = False
+            elif pixel.y < 0 or pixel.y >= depth_image.shape[0]:
+                valid = False
+            elif pixel.x < 0 or pixel.x >= depth_image.shape[1]:
                 valid = False
             elif depth_mm < 0:
                 valid = False
             elif depth_mm > (float(depth_image[int(pixel.y), int(pixel.x)]) + 10.):
-                # The depth cannot be behind the depth image (with 10mm margin):
+                # The depth cannot be behind the depth image (with 1cm margin):
                 valid = False
             # Invalid all the dimension
             if not valid:
@@ -372,21 +376,21 @@ class RawSyntheticSceneDatabase():
 
 
 if __name__ == '__main__':
-    #config = RawSyntheticSceneDatabaseConfig()
-    #config.data_root = "/home/gizatt/data/generated_cardboard_envs"
-    #config.scene_group_list_filepath = os.path.join(
-    #    config.data_root, "scene_groups_train.txt")
-    #db = RawSyntheticSceneDatabase(config)
-    #db.compile_generated_scenes_to_dataset(
-    #    output_filename=os.path.join(config.data_root, "train.json"))
+    config = RawSyntheticSceneDatabaseConfig()
+    config.data_root = "/home/gizatt/data/generated_cardboard_envs"
+    config.scene_group_list_filepath = os.path.join(
+        config.data_root, "scene_groups_train.txt")
+    db = RawSyntheticSceneDatabase(config)
+    db.compile_generated_scenes_to_dataset(
+        output_filename=os.path.join(config.data_root, "train.json"))
 #
-    #config = RawSyntheticSceneDatabaseConfig()
-    #config.data_root = "/home/gizatt/data/generated_cardboard_envs"
-    #config.scene_group_list_filepath = os.path.join(
-    #    config.data_root, "scene_groups_test.txt")
-    #db = RawSyntheticSceneDatabase(config)
-    #db.compile_generated_scenes_to_dataset(
-    #    output_filename=os.path.join(config.data_root, "test.json"))
+    config = RawSyntheticSceneDatabaseConfig()
+    config.data_root = "/home/gizatt/data/generated_cardboard_envs"
+    config.scene_group_list_filepath = os.path.join(
+        config.data_root, "scene_groups_test.txt")
+    db = RawSyntheticSceneDatabase(config)
+    db.compile_generated_scenes_to_dataset(
+        output_filename=os.path.join(config.data_root, "test.json"))
 
     config = RawSyntheticSceneDatabaseConfig()
     config.data_root = "/home/gizatt/data/generated_cardboard_envs"
