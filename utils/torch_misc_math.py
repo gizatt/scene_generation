@@ -45,3 +45,10 @@ def conv_output_shape(h_w, kernel_size=1, stride=1, pad=0, dilation=1):
     h = floor( ((h_w[0] + (2 * pad) - ( dilation * (kernel_size[0] - 1) ) - 1 )/ stride) + 1)
     w = floor( ((h_w[1] + (2 * pad) - ( dilation * (kernel_size[1] - 1) ) - 1 )/ stride) + 1)
     return h, w
+
+def conv_t_2d_output_shape(h_w, kernel_size=1, stride=1, pad=0, dilation=1):
+    if type(kernel_size) is not tuple:
+        kernel_size = (kernel_size, kernel_size)
+    h = (h_w[0] - 1)*stride - 2*pad + dilation*(kernel_size[0]-1) + pad + 1
+    w = (h_w[1] - 1)*stride - 2*pad + dilation*(kernel_size[1]-1) + pad + 1
+    return h, w

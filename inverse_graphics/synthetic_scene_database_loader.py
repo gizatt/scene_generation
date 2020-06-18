@@ -279,30 +279,36 @@ def annotations_to_instances(annos, image_size, camera_pose=None,
         # Build bbox-space keypoint heatmaps for the
         # valid (visible) keypoints of each type
         keypoint_types = np.array([0., 1.]) # Forcing this into just two manual keypoint types for now
-        target.gt_heatmaps = torch.zeros((len(annos), len(keypoint_types), target_heatmap_size, target_heatmap_size))
+        target.gt_heatmaps = torch.empty((len(annos), len(keypoint_types), target_heatmap_size, target_heatmap_size))
         grid_x, grid_y = torch.meshgrid(torch.arange(target_heatmap_size), torch.arange(target_heatmap_size))
         batched_grid = torch.stack([grid_x.flatten(), grid_y.flatten()], dim=1).view(-1, 2)
 
         # Figure out x and y scaling from orig image to these coords
-        xy_scaling = torch.tensor([target_heatmap_size/image_size[0],
-                                   target_heatmap_size/image_size[1]])
         for k, obj in enumerate(annos):
+            corners = boxes[k].tensor.flatten()
+            box_width = corners[2] - corners[0]
+            box_height = corners[3] - corners[1]
+            box_scaling = torch.tensor([target_heatmap_size/box_height,
+                                        target_heatmap_size/box_width])
             covar = torch.diag(torch.tensor([1., 1.]))
             vals = obj["keypoint_vals"]
-            # unused
             xyzs = torch.tensor(dict_to_matrix(obj["keypoint_pixelxy_depth"]).astype("float32"))
             good_keypoints_mask = obj["keypoint_validity"][0]
             #print(vals, xyz, good_keypoints_mask)
+            these_peaks = [[torch.ones((target_heatmap_size, target_heatmap_size))*1E-6] for k in range(len(keypoint_types))]
             for v, xyz, m in zip(vals, xyzs.T, good_keypoints_mask):
                 if not m:
                     continue
-                dist = MultivariateNormal(xyz[[1, 0]] * xy_scaling, covar)
+                dist = MultivariateNormal((xyz[[1, 0]] - corners[[1, 0]]) * box_scaling, covar)
                 logprobs = dist.log_prob(batched_grid)
                 ind = np.argmin(np.abs(v - keypoint_types))
-                target.gt_heatmaps[k, ind, ...] += torch.exp(logprobs.view(target_heatmap_size, target_heatmap_size))
+                these_peaks[ind].append(torch.exp(logprobs.view(target_heatmap_size, target_heatmap_size)))
+            for ind, peaks in enumerate(these_peaks):
+                if len(peaks) > 0:
+                    target.gt_heatmaps[k, ind, ...] = torch.max(torch.stack(peaks, -1), dim=-1)[0]
             # Normalize the target images range
-            #for l in range(len(keypoint_types)):
-            #    target.gt_heatmaps[k, l, ...] /= (torch.sum(target.gt_heatmaps[k, l, ...]) + 1E-6)
+            for l in range(len(keypoint_types)):
+                target.gt_heatmaps[k, l, ...] /= torch.sum(target.gt_heatmaps[k, l, ...])
     return target
 
 
@@ -323,21 +329,10 @@ class XenRCNNMapper:
         self.img_format     = cfg.INPUT.FORMAT
         self.is_train       = is_train
 
-        self.target_heatmap_size = None
-        if cfg.MODEL.ROI_HEATMAP_HEAD is not None:
-            res = [cfg.MODEL.ROI_HEATMAP_HEAD.POOLER_RESOLUTION,
-                   cfg.MODEL.ROI_HEATMAP_HEAD.POOLER_RESOLUTION]
-            for k in range(cfg.MODEL.ROI_HEATMAP_HEAD.NUM_CONV):
-                # Awkward -- have to synchronize these stride / pad / dilation
-                # configs with the ones in heatmap_head.py
-                res = conv_output_shape(
-                    res,
-                    kernel_size=cfg.MODEL.ROI_HEATMAP_HEAD.CONV_SIZES[k],
-                    stride=1,
-                    pad=1,
-                    dilation=1)
-            assert(res[0] == res[1])
-            self.target_heatmap_size = res[0] 
+        if hasattr(cfg.MODEL, "ROI_HEATMAP_HEAD"):
+            self.target_heatmap_size = cfg.MODEL.ROI_HEATMAP_HEAD.TARGET_HEATMAP_SIZE
+        else:
+            self.target_heatmap_size = None
 
 
     def __call__(self, dataset_dict):

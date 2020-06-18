@@ -1,13 +1,20 @@
 import fvcore.nn.weight_init as weight_init
 import numpy as np
 import torch
-from detectron2.layers import Conv2d, ConvTranspose2d, cat, get_norm
+from detectron2.layers import (
+    Conv2d,
+    ConvTranspose2d,
+    cat,
+    get_norm,
+    interpolate
+)
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.registry import Registry
 from torch import nn
 from torch.nn import functional as F
 from scene_generation.utils.torch_misc_math import (
-    conv_output_shape
+    conv_output_shape,
+    conv_t_2d_output_shape
 )
 
 ROI_HEATMAP_SHAPE_REGISTRY = Registry("ROI_HEATMAP_HEAD")
@@ -31,10 +38,13 @@ class RCNNHeatmapHead(nn.Module):
         super().__init__()
 
         # fmt: off
-        num_conv         = cfg.MODEL.ROI_HEATMAP_HEAD.NUM_CONV
-        conv_channels    = cfg.MODEL.ROI_HEATMAP_HEAD.CONV_CHANNELS
-        conv_sizes       = cfg.MODEL.ROI_HEATMAP_HEAD.CONV_SIZES
-        norm             = cfg.MODEL.ROI_HEATMAP_HEAD.NORM
+        num_conv          = cfg.MODEL.ROI_HEATMAP_HEAD.NUM_CONV
+        conv_channels     = cfg.MODEL.ROI_HEATMAP_HEAD.CONV_CHANNELS
+        conv_sizes        = cfg.MODEL.ROI_HEATMAP_HEAD.CONV_SIZES
+        norm              = cfg.MODEL.ROI_HEATMAP_HEAD.NORM
+        num_out_chans     = cfg.MODEL.ROI_HEATMAP_HEAD.NUM_KEYPOINT_TYPES
+        self.with_deconv  = cfg.MODEL.ROI_HEATMAP_HEAD.WITH_DECONV
+        self.with_upscale = cfg.MODEL.ROI_HEATMAP_HEAD.WITH_2X_UPSCALE
 
         # fmt: on
         assert num_conv > 0
@@ -62,25 +72,61 @@ class RCNNHeatmapHead(nn.Module):
                 pad=1,
                 dilation=1)
 
-        print("Heatmap head has final output shape ", self._output_size)
+        if self.with_deconv:
+            # Just using whatever's in Detectron2 keypoint roi head
+            deconv_kernel = 4
+            self.deconv = ConvTranspose2d(
+                self._output_size[0], num_out_chans,
+                deconv_kernel, stride=2,
+                padding=deconv_kernel // 2 - 1,
+                dilation=1
+            )
+            self._output_size[0] = num_out_chans
+            self._output_size[1:] = conv_t_2d_output_shape(
+                self._output_size[1:],
+                kernel_size=deconv_kernel,
+                stride=2,
+                pad=deconv_kernel // 2 - 1,
+                dilation=1)
 
-        # Finally, softmax to normalize the output across the width
-        # and height dimensions
-        #self.softmaxes = [nn.Softmax(dim=1), nn.Softmax(dim=2)]
-        #self.add_module("softmax_x", self.softmaxes[0])
-        #self.add_module("softmax_y", self.softmaxes[1])
+        #self.final = Conv2d(
+        #    self._output_size[0],
+        #    num_out_chans,
+        #    kernel_size=1,
+        #    padding=0,
+        #    bias=True,
+        #    #activation=F.sigmoid
+        #)
+        self._output_size[0] = num_out_chans
+        if self.with_upscale:
+            self.up_scale = 2
+        else:
+            self.up_scale = 1
+        self._output_size[1] *= self.up_scale
+        self._output_size[2] *= self.up_scale
+        # TODO(gizatt) This output size is wrong! It messes up
+        # at computing the conv transpose 2d output shape.
 
-        for layer in self.conv_norm_relus:
-            weight_init.c2_msra_fill(layer)
+        for name, param in self.named_parameters():
+            if "bias" in name:
+                nn.init.constant_(param, 0.)
+            elif "weight" in name:
+                # Caffe2 implementation uses MSRAFill, which in fact
+                # corresponds to kaiming_normal_ in PyTorch
+                nn.init.kaiming_normal_(param, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x):
         # Pass through the conv layers
         for layer in self.conv_norm_relus:
             x = layer(x)
-
-        #for softmax in self.softmaxes:
-        #    x = softmax(x)
-
+        if self.with_deconv:
+            x = self.deconv(x)
+        #x = self.final(x)
+        #x = F.sigmoid(x)
+        if self.with_upscale:
+            x = interpolate(x, scale_factor=self.up_scale, mode="bilinear", align_corners=False)
+        # Finally, softmax over each channel
+        x = F.softmax(x.reshape(x.size(0), x.size(1), -1), 2).view_as(x)
         return x
 
     def heatmap_loss(self, heatmap_estimate,
@@ -115,8 +161,16 @@ class RCNNHeatmapHead(nn.Module):
 
         # Take total L2 error over each image and channel,
         # and average the errors over the batch
-        heatmap_error = (heatmap_estimate - gt_heatmaps)**2
+        heatmap_error = torch.pow(heatmap_estimate - gt_heatmaps, 2.)
         heatmap_loss = heatmap_error.sum(-1).sum(-1).sum(-1).mean()
+        print("Heatmap loss: ", heatmap_loss)
+        print("Predicted range: ", torch.min(heatmap_estimate), torch.max(heatmap_estimate))
+        print("Actual range: ", torch.min(gt_heatmaps), torch.max(gt_heatmaps))
+        print("Loss range: ", torch.min(heatmap_error), torch.max(heatmap_error))
+        
+        storage = get_event_storage()  
+        storage.put_scalar("heatmap_predicted_min", torch.min(heatmap_estimate))
+        storage.put_scalar("heatmap_predicted_max", torch.max(heatmap_estimate))
         return heatmap_loss * loss_weight
 
 def build_heatmap_head(cfg, input_shape):
