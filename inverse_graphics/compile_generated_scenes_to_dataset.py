@@ -310,6 +310,11 @@ class RawSyntheticSceneDatabase():
 
                     encoded_mask = self._get_encoded_mask(mask)
                     x, y, width, height = self._get_bounding_box(encoded_mask)
+                    bbox_padding = 10
+                    x -= bbox_padding
+                    y -= bbox_padding
+                    width += bbox_padding*2
+                    height += bbox_padding*2
                     area = self._get_area_of_encoded_mask(encoded_mask)
                     segmentation = self._get_polygons(mask)
                     new_annotation_id = len(output_db["annotations"])

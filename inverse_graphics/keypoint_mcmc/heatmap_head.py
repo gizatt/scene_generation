@@ -122,11 +122,11 @@ class RCNNHeatmapHead(nn.Module):
         if self.with_deconv:
             x = self.deconv(x)
         #x = self.final(x)
-        #x = F.sigmoid(x)
+        x = F.sigmoid(x)
         if self.with_upscale:
             x = interpolate(x, scale_factor=self.up_scale, mode="bilinear", align_corners=False)
         # Finally, softmax over each channel
-        x = F.softmax(x.reshape(x.size(0), x.size(1), -1), 2).view_as(x)
+        #x = F.softmax(x.reshape(x.size(0), x.size(1), -1), 2).view_as(x)
         return x
 
     def heatmap_loss(self, heatmap_estimate,
@@ -161,8 +161,10 @@ class RCNNHeatmapHead(nn.Module):
 
         # Take total L2 error over each image and channel,
         # and average the errors over the batch
-        heatmap_error = torch.pow(heatmap_estimate - gt_heatmaps, 2.)
-        heatmap_loss = heatmap_error.sum(-1).sum(-1).sum(-1).mean()
+        #heatmap_error = torch.pow(heatmap_estimate - gt_heatmaps, 2.)
+        heatmap_error = F.binary_cross_entropy(heatmap_estimate, gt_heatmaps, reduction='mean')
+        heatmap_loss = heatmap_error.sum()
+        #heatmap_loss = heatmap_error.sum(-1).sum(-1).sum(-1).mean()
         print("Heatmap loss: ", heatmap_loss)
         print("Predicted range: ", torch.min(heatmap_estimate), torch.max(heatmap_estimate))
         print("Actual range: ", torch.min(gt_heatmaps), torch.max(gt_heatmaps))
