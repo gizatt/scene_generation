@@ -12,7 +12,7 @@ conda install numpy scipy matplotlib pyyaml ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
-Also `tqdm`, `attrs`, `scikit-image`
+Also `tqdm`, `attrs`, `scikit-image`, and `trimesh==3.4.0`. (More recent trimesh breaks on boolean mesh stuff.)
 
 Install pytorch 1.0.0, e.g. if you have CUDA 9.0, use:
 
