@@ -302,6 +302,17 @@ def rotation_matrix_to_quaternion(
         trace > 0., trace_positive_cond(), where_1)
     return quaternion
 
+def transParamsToHomMatrix(q, t):
+    """q = [V, 4], t = [V,3]"""
+    N = q.size(0)
+    R = quat2mat(q) # [V,3,3]
+    Rt = torch.cat([R, t.unsqueeze(-1)], dim=2) # [V,3,4]
+    hom_aug = torch.cat([torch.zeros([N, 1, 3]).double(),
+                         torch.ones([N, 1, 1]).double()],
+                        dim=2).to(Rt.device)
+    RtHom = torch.cat([Rt, hom_aug], dim=1) # [V,4,4]
+    return RtHom
+
 if __name__ == "__main__":
     print("Starting tests to try to find correspondence with Drake conventions")
 
