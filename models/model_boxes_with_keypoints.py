@@ -360,7 +360,7 @@ def sample_transform_given_correspondences(C, model_pts, observed_pts):
     return R, scaling, t
 
 
-def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.01):
+def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.025):
     colors = np.ones((3, pts.shape[1]))
     colors[val_channel, :] = vals[:]
     vis[name].set_object(
@@ -548,7 +548,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
             draw_corresp_with_meshcat(vis, "fitting/corresp",
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
-            input()
+            #time.sleep(0.025)
 
     model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
     if vis is not None:
@@ -561,7 +561,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
         draw_corresp_with_meshcat(vis, "fitting/corresp",
             model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
             best_params[3])
-        input()
+        #time.sleep(0.25)
     return all_scores, all_params, best_score, best_params
 
 

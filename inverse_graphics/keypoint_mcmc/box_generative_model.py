@@ -181,7 +181,7 @@ class Box():
 # drawn from a GMM with components from each keypoint plus an "outlier" component.
 # The number of observed keypoints is drawn from an (uninformative) discrete
 # uniform distribution. (Maybe something with infinite support would be better?)
-def model_keypoint_observations_gmm(keypoints, vals):
+def model_keypoint_observations_gmm(keypoints):
     max_num_keypoints = keypoints.shape[1] + 5
     num_keypoints = pyro.sample(
         "num_observed_keypoints_minus_one",
@@ -205,11 +205,10 @@ def model_keypoint_observations_gmm(keypoints, vals):
         constraint=constraints.positive)
 
     # Make the model components
-    locs = torch.cat([keypoints, vals], dim=0)
-    scales = torch.cat([torch.ones(keypoints.shape).double()*keypoint_var,
-                        torch.ones(vals.shape).double()*val_var])
+    locs = keypoints
+    scales = torch.ones(keypoints.shape).double()*keypoint_var
     # Add the outlier component
-    locs = torch.cat([locs, torch.zeros(locs.shape[0], 1).double()], dim=1)
+    locs = torch.cat([locs, torch.zeros(locs.shape[0], 1).double()], dim=-1)
     scales = torch.cat([scales, torch.ones(locs.shape[0], 1).double()*outlier_var], dim=1)
 
     # Component weights
@@ -224,16 +223,17 @@ def model_keypoint_observations_gmm(keypoints, vals):
         coord_scale=torch.t(scales),
         component_logits=component_logits).expand(num_keypoints)
 
-    observed_keypoints_and_vals = pyro.sample(
-        "observed_keypoints_and_vals", generation_dist)
+    observed_keypoints = pyro.sample(
+        "observed_keypoints", generation_dist)
 
 def full_model():
-    box = box.sample()
-    keypoints, vals = box.generate_keypoints()
-    model_keypoint_observations_gmm(keypoints, vals)
+    box = Box.sample()
+    keypoints = box.generate_keypoints()[0]
 
-def sample_correspondences(R, scaling, t, C, model_pts, model_vals,
-                           observed_pts, observed_vals,
+    model_keypoint_observations_gmm(keypoints)
+
+def sample_correspondences(R, scaling, t, C, model_pts,
+                           observed_pts,
                            spatial_variance=0.01,
                            feature_variance=0.01,
                            num_mh_iters=5,
@@ -248,20 +248,17 @@ def sample_correspondences(R, scaling, t, C, model_pts, model_vals,
     N_s = observed_pts.shape[1]
     N_m = model_pts.shape[1]
     D_spatial = model_pts.shape[0]
-    assert(len(model_vals.shape) == 2)
-    D_feature = model_vals.shape[0]
     # Build the pairwise distance matrix in the complete feature space
     def compute_pairwise_distances(R, scaling, t):
         # Get affine transformation of the model points
         transformed_model_pts = torch.mm(R, torch.mm(scaling, model_pts)) + t
-        # Concatenate both model and observed with their vals
-        m_with_vals = torch.cat([transformed_model_pts, 100.*model_vals], dim=0)
-        s_with_vals = torch.cat([observed_pts, 100.*observed_vals], dim=0)
-        
         # Reshape each of these into D x N_m x N_s matrix so we can take distances
-        m_expanded = m_with_vals.unsqueeze(-1).permute(0, 1, 2).repeat(1, 1, N_s)
-        s_expanded = s_with_vals.unsqueeze(-1).permute(0, 2, 1).repeat(1, N_m, 1)
+        m_expanded = transformed_model_pts.unsqueeze(-1).permute(0, 1, 2).repeat(1, 1, N_s)
+        s_expanded = observed_pts.unsqueeze(-1).permute(0, 2, 1).repeat(1, N_m, 1)
         distances = torch.norm(m_expanded - s_expanded, dim=0)
+        print("Model pts: ", transformed_model_pts)
+        print("Observed: ", observed_pts)
+        print("Dists: ", distances)
         return distances
 
     pairwise_distances = compute_pairwise_distances(R, scaling, t)
@@ -285,10 +282,13 @@ def sample_correspondences(R, scaling, t, C, model_pts, model_vals,
         # Sample a new correspondence set by randomly flipping some number of correspondences.
         C_new = C.clone().detach()
         num_to_flip = dist.Binomial(probs=0.5).sample() + 1
+        print("C: ", C)
+        print("Dists: ", pairwise_distances)
         for flip_k in range(int(num_to_flip)):
             to_add_ind_s = torch.randint(N_s, (1, 1))
-            to_add_ind_m = dist.Categorical(
-                probs=(pairwise_distances*(1. - C))[:, to_add_ind_s].squeeze()).sample()
+            probs = (pairwise_distances*(1. - C))[:, to_add_ind_s].squeeze() + 1E-6
+            print(probs)
+            to_add_ind_m = dist.Categorical(probs=probs).sample()
             if to_add_ind_m != N_m:
                 C_new[to_add_ind_m, :] = 0.
             C_new[:, to_add_ind_s] = 0.
@@ -360,9 +360,8 @@ def sample_transform_given_correspondences(C, model_pts, observed_pts):
     return R, scaling, t
 
 
-def draw_pts_with_meshcat(vis, name, pts, val_channel, vals, size=0.01):
+def draw_pts_with_meshcat(vis, name, pts, size=0.01):
     colors = np.ones((3, pts.shape[1]))
-    colors[val_channel, :] = vals[:]
     vis[name].set_object(
         g.PointCloud(position=pts, color=colors, size=size))
 
@@ -380,34 +379,30 @@ def draw_corresp_with_meshcat(vis, name, pts_A, pts_B, C, size=0.01):
             g.PointsGeometry(position=pts),
             g.PointsMaterial(size=size)))
 
-def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
+def sample_box_from_observed_points(observed_keypoints, n_samples=200,
                                     vis=None, verbose=False):
-    observed_pts = torch.tensor(observed_keypoints_and_vals[:3, :]).double()
-    observed_vals = torch.tensor(observed_keypoints_and_vals[3:, :]).double()
+    observed_pts = torch.tensor(observed_keypoints[:3, :]).double()
+
+    random_box = pyro.poutine.block(Box.sample)()
 
     # From the observed keypoints and values, sample correspondences and
     # a box pose.
+    def sample_model_pts():
+        box = Box.sample("box")
+        keypoints = box.generate_keypoints()
+        return keypoints[0, ...]
 
-    # Start by randomly initializing a box
-    random_box = pyro.poutine.block(generate_single_box)()
-
+    print("Input observed pts: ", observed_pts)
     site_values = {
-        "box_xyz": random_box.pose[-3:].clone().detach(),
-        "box_quat": random_box.pose[:4].clone().detach(),
-        "box_dimensions": random_box.dimensions.clone().detach(),
-        "box_label_face": torch.tensor([0]).long(), # TODO(gizatt) Should this vary?
-        "box_label_uv": random_box.label_uv.clone().detach(),
+        "box_xyz": random_box.pose[0, -3:].clone().detach(),
+        "box_quat": random_box.pose[0, :4].clone().detach(),
+        "box_dimensions": random_box.dimensions[0, :].clone().detach(),
         "num_observed_keypoints_minus_one": torch.tensor([observed_pts.shape[1] - 1]).long(),
-        "observed_keypoints_and_vals": torch.t(torch.cat([observed_pts, observed_vals], dim=0))
+        "observed_keypoints": observed_pts.T
     }
-    def sample_model_pts_and_vals():
-        box = generate_single_box()
-        label_origin, label_size = get_label_info_from_box_with_label(box)
-        keypoints, vals = generate_keypoints_from_box_with_label(box)
-        return keypoints, vals
-    model_pts, model_vals = pyro.poutine.block(
+    model_pts = pyro.poutine.block(
         pyro.poutine.condition(
-            sample_model_pts_and_vals,
+            sample_model_pts,
             data=site_values
         ))()
 
@@ -418,7 +413,7 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
     # model point, plus one spare row for correspondence with "outlier"
     C = torch.eye(n=(model_pts.shape[1] + 1), m=observed_pts.shape[1])
 
-    best_score = -1000.
+    best_score = -np.inf
     all_scores = []
     best_params = None
     all_params = []
@@ -428,21 +423,19 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
 
         # Regenerate model-frame model points and values given current guesses
         # of some key latents
-        model_pts, model_vals = pyro.poutine.block(
+        model_pts = pyro.poutine.block(
                     pyro.poutine.condition(
-                        sample_model_pts_and_vals,
+                        sample_model_pts,
                         data={
                             "box_xyz": torch.zeros(3).double(),
                             "box_quat": torch.tensor([1., 0., 0., 0.]).double(),
-                            "box_dimensions": torch.ones(3).double(),
-                            "box_label_face": site_values["box_label_face"],
-                            "box_label_uv": site_values["box_label_uv"]
+                            "box_dimensions": torch.ones(3).double()
                         }
                     ))()
 
         C = sample_correspondences(
-            R, scaling, t, C, model_pts, model_vals,
-            observed_pts, observed_vals)
+            R, scaling, t, C, model_pts,
+            observed_pts)
         if torch.sum(C[:-1, :]) > 0: # Skip transform if there are no non-outlier corresps
             R, scaling, t = sample_transform_given_correspondences(
                 C, model_pts, observed_pts)
@@ -450,44 +443,12 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
         site_values["box_quat"] = rotation_matrix_to_quaternion(R).detach()
         #R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
         site_values["box_dimensions"] = torch.diag(scaling).detach()
-
-        # Now set box_label_face and box_label_uv to the maximum likelihood setting
-        # if there's an observed label keypoint.
-        # TODO(gizatt) This is a huge cludge. The label keypoints appear
-        # in the registration step as well as being just additional keypoints (with
-        # a different value, so they only get registered to the model's label keypoint).
-        # That and this seem like they might break / interact badly...
-        # but I want to see if this works first. This whole system needs a rewrite anyway
-        # once I find a config I'm OK with.
-        model_val = torch.tensor([1.])
-        observed_label_pt_index = (torch.norm(observed_vals - model_val, dim=0) < 0.01).nonzero()
-        if len(observed_label_pt_index) > 0:
-            observed_label_pt_index = observed_label_pt_index[0]
-            observed_label_pt = observed_pts[:, observed_label_pt_index]
-            # Reverse that point into body frame of the box
-            inverse_rot = torch.t(quaternionToRotMatrix(site_values["box_quat"].unsqueeze(0))[0, ...])
-            inverse_t = -torch.mm(inverse_rot, site_values["box_xyz"].reshape(3, 1))
-            observed_label_pt_body = (torch.mm(inverse_rot, observed_label_pt) + inverse_t).squeeze()
-            # Rescale into unit cube and assign it to a face based on the unit direction the ray most faces
-            observed_label_pt_body /= site_values["box_dimensions"]
-            face_ind = torch.argmax(torch.abs(observed_label_pt_body))
-            face_sign = observed_label_pt_body[face_ind] > 0.
-            face_string = "np"[face_sign] + "xyz"[face_ind]
-            if face_ind == 0:
-                uv = observed_label_pt_body[1:] + 0.5
-            elif face_ind == 1:
-                uv = observed_label_pt_body[[0, 2]] + 0.5
-            else:
-                uv = observed_label_pt_body[:2] + 0.5
-            site_values["box_label_face"] = torch.tensor(index_to_label_map.index(face_string)).long()
-            site_values["box_label_uv"] = uv
-
-        site_values["box_label_uv"].data = torch.clamp(site_values["box_label_uv"].data, 0.01, 0.99)
         site_values["box_quat"].data = site_values["box_quat"].data / torch.norm(site_values["box_quat"].data)
-        R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+        R = quat2mat(site_values["box_quat"].reshape(1, -1))[0, :, :]
         t = site_values["box_xyz"].reshape(-1, 1)
         scaling = torch.diag(site_values["box_dimensions"])
 
+        print(site_values)
         # Compute score using the Pyro models
         conditioned_model = pyro.poutine.condition(
             full_model,
@@ -534,34 +495,29 @@ def sample_box_from_observed_points(observed_keypoints_and_vals, n_samples=200,
             
 
         scaling = torch.diag(site_values["box_dimensions"])
-        R = quaternionToRotMatrix(site_values["box_quat"].reshape(1, -1))[0, :, :]
+        R = quat2mat(site_values["box_quat"].reshape(1, -1))[0, :, :]
         t = site_values["box_xyz"].reshape(-1, 1)
         model_pts_tf = torch.mm(R, torch.mm(scaling, model_pts)) + t
 
         if vis is not None:
             draw_pts_with_meshcat(vis, "fitting/observed", 
-                                  observed_pts.detach().numpy(),
-                                  val_channel=0, vals=observed_vals.detach().numpy())
+                                  observed_pts.detach().numpy())
             draw_pts_with_meshcat(vis, "fitting/fit", 
-                                  model_pts_tf.detach().numpy(),
-                                  val_channel=2, vals=model_vals.detach().numpy())
+                                  model_pts_tf.detach().numpy())
             draw_corresp_with_meshcat(vis, "fitting/corresp",
                 model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
                 C)
-            input()
-
+            time.sleep(0.05)
     model_pts_tf = torch.mm(best_params[0], torch.mm(best_params[1], model_pts)) + best_params[2]
     if vis is not None:
         draw_pts_with_meshcat(vis, "fitting/observed", 
-                              observed_pts.detach().numpy(),
-                              val_channel=0, vals=observed_vals.detach().numpy())
+                              observed_pts.detach().numpy())
         draw_pts_with_meshcat(vis, "fitting/fit", 
-                              model_pts_tf.detach().numpy(),
-                              val_channel=2, vals=model_vals.detach().numpy())
+                              model_pts_tf.detach().numpy())
         draw_corresp_with_meshcat(vis, "fitting/corresp",
             model_pts_tf.detach().numpy(), observed_pts.detach().numpy(),
             best_params[3])
-        input()
+        time.sleep(0.1)
     return all_scores, all_params, best_score, best_params
 
 
