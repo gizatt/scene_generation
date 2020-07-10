@@ -150,10 +150,10 @@ def expmap_to_quaternion(e):
     original_shape[-1] = 4
     e = e.reshape(-1, 3)
 
-    theta = np.linalg.norm(e, axis=1).reshape(-1, 1)
-    w = np.cos(0.5*theta).reshape(-1, 1)
-    xyz = 0.5*np.sinc(0.5*theta/np.pi)*e
-    return np.concatenate((w, xyz), axis=1).reshape(original_shape)
+    theta = torch.norm(e, dim=1).reshape(-1, 1)
+    w = torch.cos(0.5*theta).reshape(-1, 1)
+    xyz = torch.sin(0.5*theta)* (e / theta)
+    return torch.cat((w, xyz), dim=1).reshape(original_shape)
 
 def euler_to_quaternion(e, order):
     """
@@ -204,7 +204,7 @@ def quat2mat(quat):
     Returns:
         Rotation matrix corresponding to the quaternion -- size = [B, 3, 3]
     """
-    norm_quat = torch.cat([quat[:,:1].detach()*0 + 1, quat], dim=1)
+    norm_quat = quat #torch.cat([quat[:,:1].detach()*0 + 1, quat], dim=1)
     norm_quat = norm_quat/norm_quat.norm(p=2, dim=1, keepdim=True)
     w, x, y, z = norm_quat[:,0], norm_quat[:,1], norm_quat[:,2], norm_quat[:,3]
 
