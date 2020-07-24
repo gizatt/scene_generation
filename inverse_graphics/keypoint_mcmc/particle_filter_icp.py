@@ -448,6 +448,7 @@ def plot_all_particles(R_history, R_vec_history, t_history, S_history, score_his
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
+    plt.show()
 
 def plot_kde(R_history, R_vec_history, t_history, S_history, score_history):
     print("Building KDE")
@@ -463,8 +464,8 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history):
     # plt.plot(xi, density)
     # plt.show()
 
-    mins = np.array([0.5, 1.5, 0.])
-    maxes = np.array([1.5, 2.5, 1.])
+    mins = np.array([1.5, 0.5, 0.])
+    maxes = np.array([2.5, 1.5, 1.])
     num_samples = np.array([30, 30, 30])
     spacing = (maxes - mins) / num_samples
     print((maxes-mins)/spacing)
@@ -511,7 +512,7 @@ def do_analysis_of_saved_runs(save_dir="test_runs.pt"):
     data = torch.load(save_dir)
     score_history = data["all_scores"].numpy()
     keep_iters = int(len(score_history)*keep_frac)
-    print("Keeping history of %d iters.", keep_iters)
+    print("Keeping history of %d iters." % keep_iters)
     score_history = score_history[-keep_iters:]
     # Normalize scores
     score_history -= logsumexp(score_history)
@@ -524,9 +525,11 @@ def do_analysis_of_saved_runs(save_dir="test_runs.pt"):
     ).squeeze().numpy()
     t_history = data["all_ts"].numpy()[-keep_iters:]
     S_history = data["all_Ss"].numpy()[-keep_iters:]
-    #plot_all_particles(R_history, R_vec_history,
-    #                   t_history, S_history,
-    #                   score_history)
+    # Sort shape into ascending order
+    S_history = np.sort(S_history, axis=1)[:, ::-1]
+    plot_all_particles(R_history, R_vec_history,
+                       t_history, S_history,
+                       score_history)
 
     plot_kde(R_history, R_vec_history,
              t_history, S_history,
