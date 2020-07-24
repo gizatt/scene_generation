@@ -1,12 +1,18 @@
+from copy import deepcopy
 from collections import namedtuple
 import math
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import numpy as np
 import os
 import time
 import sys
 
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import numpy as np
+from scipy.stats import gaussian_kde
+from scipy.special import logsumexp
+from skimage import measure
 import trimesh
 
 import meshcat
@@ -133,9 +139,9 @@ class ParticleFilterIcp():
             concentration=shape_prior_shape, rate=shape_prior_shape/shape_prior_mean)
 
         self.inlier_dist = dist.Normal(
-            torch.tensor([0.]), torch.tensor([0.01]))
+            torch.tensor([0.]), torch.tensor([0.1]))
         self.outlier_dist = dist.Normal(
-            torch.tensor([0.]), torch.tensor([1.0]))
+            torch.tensor([0.]), torch.tensor([10.0]))
 
         self.outlier_dist
         self.particles = None
@@ -161,17 +167,17 @@ class ParticleFilterIcp():
             S=all_S, t=all_t, R=all_R)
 
     def _compute_correspondences(self, scene_pts, p2p=False):
-        batched_model_pts = self.particles.transform_points(self.model_pts)
-        batched_model_normals = self.particles.transform_normals(self.model_normals)
+        batched_model_pts = self.particles.transform_points(self.model_pts).cuda()
+        batched_model_normals = self.particles.transform_normals(self.model_normals).cuda()
         # Batch up the scene pts as well
-        batched_scene_pts = scene_pts.unsqueeze(0).repeat(self.num_particles, 1, 1)
+        batched_scene_pts = scene_pts.unsqueeze(0).repeat(self.num_particles, 1, 1).cuda()
         # Get all pairwise distances
         num_model_pts = batched_model_pts.shape[-1]
         num_scene_pts = batched_scene_pts.shape[-1]
         # Model pts in the rows, scene pts in the cols
-        expanded_model_pts = batched_model_pts.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts)
-        expanded_model_normals = batched_model_normals.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts)
-        expanded_scene_pts = batched_scene_pts.unsqueeze(-2).repeat(1, 1, num_model_pts, 1)
+        expanded_model_pts = batched_model_pts.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts).cuda()
+        expanded_model_normals = batched_model_normals.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts).cuda()
+        expanded_scene_pts = batched_scene_pts.unsqueeze(-2).repeat(1, 1, num_model_pts, 1).cuda()
 
         # Pure L2 distances
         if p2p:
@@ -185,11 +191,11 @@ class ParticleFilterIcp():
         min_distances_per_scene_pt, inds = torch.min(pairwise_distances, dim=-2)
         
         return self.p2p_corresp_info_struct(
-            batched_model_pts=batched_model_pts,
-            batched_scene_pts=batched_scene_pts,
-            batched_model_normals=batched_model_normals,
-            min_distances_per_scene_pt=min_distances_per_scene_pt,
-            closest_model_ind_per_scene_pt=inds
+            batched_model_pts=batched_model_pts.cpu(),
+            batched_scene_pts=batched_scene_pts.cpu(),
+            batched_model_normals=batched_model_normals.cpu(),
+            min_distances_per_scene_pt=min_distances_per_scene_pt.cpu(),
+            closest_model_ind_per_scene_pt=inds.cpu()
         )
 
     def get_corresponded_model_pts_in_world(self, p2p_corresp_info):
@@ -294,7 +300,6 @@ class ParticleFilterIcp():
             R_estimate = torch.bmm(u, v.transpose(1, 2))
             # Eq(8) update to scaling terms
             numerator = torch.sum(M * R_estimate, dim=1)
-            print(numerator/denomerator)
             scale_estimate = torch.diag_embed(numerator / denomerator)
 
         # Limit the amount the scale estimate can change per step
@@ -302,10 +307,8 @@ class ParticleFilterIcp():
         scale_estimate = torch.clamp(scale_estimate, 0.9, 1.1)
 
         self.particles.S = self.particles.S * torch.diagonal(scale_estimate, dim1=1, dim2=2)
-        print(self.particles.S)
-        self.particles.R = torch.bmm(R_estimate, self.particles.R)
+        self.particles.R = torch.bmm(self.particles.R, R_estimate)
 
-        print(self.particles.S)
     def _do_process_update(self, scene_pts):
         #if torch.rand(1) <= self.random_walk_process_prob:
         self._do_random_step()
@@ -313,7 +316,7 @@ class ParticleFilterIcp():
         for k in range(self.num_icp_steps_per_update):
             self._do_icp_step(scene_pts)
 
-    def _do_resampling(self, scene_pts):
+    def _score_current_particles(self, scene_pts):
         p2p_corresp_info = self._compute_correspondences(scene_pts, p2p=True)
         min_distances_per_scene_pt = p2p_corresp_info.min_distances_per_scene_pt
 
@@ -326,20 +329,18 @@ class ParticleFilterIcp():
         # Add to it the shape score vs the prior
         # TODO(gizatt) Isn't this going to be *totally overwhelmed* by the point score?
         shape_prior_log_score = torch.sum(self.shape_prior_dist.log_prob(self.particles.S), dim=1)
-        print("Shape prior scores: ", shape_prior_log_score)
         scores = scores + shape_prior_log_score
-        print("Scores: ", scores)
+        return scores
+
+    def _do_resampling(self, scene_pts):
+        scores = self._score_current_particles(scene_pts)
 
         # Resampling time!
         # Pure duplication resampling
         normalized_scores = scores - torch.logsumexp(scores, dim=0)
-        print("Normalized scores: ", normalized_scores)
         resample_dist = dist.Categorical(logits=normalized_scores)
         new_inds = resample_dist.sample(sample_shape=(self.num_particles,))
         # Finally, repopulate our particles using those
-        print("New inds: ", new_inds)
-        print("S: ", self.particles.S)
-        print("New S: ", self.particles.S[new_inds, ...])
         self.particles = ParticleFilterIcp_Particles(
             S=self.particles.S[new_inds, ...].clone(),
             R=self.particles.R[new_inds, ...].clone(),
@@ -360,21 +361,18 @@ class ParticleFilterIcp():
         self._run(num_outer_steps, num_inner_steps, scene_pts)
         return self.particles
 
-
-if __name__ == "__main__":
-    torch.set_default_tensor_type(torch.DoubleTensor)
-
+def collect_test_runs(save_dir="test_runs.pt"):
     vis = meshcat.Visualizer(zmq_url="tcp://127.0.0.1:6000")
     vis.delete()
 
-    model_pts, model_normals = make_unit_box_pts_and_normals(N=250)
+    model_pts, model_normals = make_unit_box_pts_and_normals(N=200)
     model_pts[2, :] *= 2.
     model_colors = np.zeros((3, model_pts.shape[1]))
     model_colors[0, :] = 1.
 
 
-    scene_pts, _ = make_unit_box_pts_and_normals(N=250)
-    scene_pts[0, :] *= 2.
+    scene_pts, _ = make_unit_box_pts_and_normals(N=200)
+    scene_pts[1, :] *= 2.
     scene_pts = scene_pts[:, scene_pts[2, :] > 0.25]
     scene_colors = np.zeros((3, scene_pts.shape[1]))
     scene_colors[1, :] = 1.
@@ -388,18 +386,154 @@ if __name__ == "__main__":
             g.PointCloud(
                 position=scene_pts.numpy(),
                 color=scene_colors,
-                size=0.02))
+                size=0.05))
 
     #vis["scene"].delete()
 
     icp = ParticleFilterIcp(
         model_pts=model_pts,
-        model_normals=model_normals, num_particles = 10,
+        model_normals=model_normals, num_particles = 50,
         vis=None) #vis["icp_internal"])
     icp._reset_particles(scene_pts)
-    for k in range(1000):
+    all_particle_history = []
+    for k in range(10):
         for j in range(10):
             icp._do_process_update(scene_pts)
             icp.particles.draw(vis["model"], model_pts, size=0.02)
+            scores = icp._score_current_particles(scene_pts)
+            print(scores)
+            all_particle_history.append((scores, deepcopy(icp.particles)))
         icp._do_resampling(scene_pts)
-    
+        print("Resampling iter %02d" % k)
+
+    # Collate the runs into some simple array formats
+    all_Rs = []
+    all_ts = []
+    all_Ss = []
+    all_scores = []
+    for score, particle in all_particle_history:
+        all_Rs.append(particle.R)
+        all_ts.append(particle.t)
+        all_Ss.append(particle.S)
+        all_scores.append(score)
+    all_Rs = torch.cat(all_Rs, dim=0)
+    all_ts = torch.cat(all_ts, dim=0)
+    all_Ss = torch.cat(all_Ss, dim=0)
+    all_scores = torch.cat(all_scores, dim=0)
+
+    torch.save({"all_Rs": all_Rs,
+                "all_ts": all_ts,
+                "all_Ss": all_Ss,
+                "all_scores": all_scores},
+                save_dir)
+
+def plot_all_particles(R_history, R_vec_history, t_history, S_history, score_history):
+    # Analysis of posterior shape distribution
+    fig = plt.figure()
+    ax = fig.add_subplot(211, projection='3d')
+    colors = mpl.cm.get_cmap('jet')(score_history / np.max(score_history))
+    ax.scatter(S_history[:, 0], S_history[:, 1], S_history[:, 2],
+               s=25, c=colors, alpha=0.01)
+    ax.set_title("All shape samples")
+    ax.set_xlabel('x')
+    ax.set_xlim(1.5, 2.5)
+    ax.set_ylim(0.5, 1.5)
+    ax.set_zlim(0, 1)
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    ax = fig.add_subplot(212, projection='3d')
+    ax.scatter(R_vec_history[:, 0], R_vec_history[:, 1], R_vec_history[:, 2],
+               c=colors, alpha=0.01)
+    ax.set_title("Rotation directions of +x")
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+
+def plot_kde(R_history, R_vec_history, t_history, S_history, score_history):
+    print("Building KDE")
+    kde = gaussian_kde(S_history.T,
+                       weights=score_history)
+    # 1D slice
+    # xi = np.linspace(0, 5., 10000)
+    # yi = np.zeros(xi.shape) + 1.
+    # zi = np.zeros(xi.shape) + 1.
+    # coords = np.vstack([item.ravel() for item in [xi, yi, zi]])
+    # density = kde(coords)
+    # plt.figure()
+    # plt.plot(xi, density)
+    # plt.show()
+
+    mins = np.array([0.5, 1.5, 0.])
+    maxes = np.array([1.5, 2.5, 1.])
+    num_samples = np.array([30, 30, 30])
+    spacing = (maxes - mins) / num_samples
+    print((maxes-mins)/spacing)
+    xi, yi, zi = np.mgrid[mins[0]:maxes[0]:spacing[0],
+                          mins[1]:maxes[1]:spacing[1],
+                          mins[2]:maxes[2]:spacing[2]]
+    coords = np.vstack([item.ravel() for item in [xi, yi, zi]]) 
+    density = kde(coords).reshape(xi.shape)
+
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    levels = [1000, 100, 10, 2]
+    cm = mpl.cm.get_cmap('jet')
+    for k, levelset_divider in enumerate(levels):
+        levelset = np.max(density)/levelset_divider
+        print("Starting marching cubes at density %f / (out off max %f)"
+                % (levelset, np.max(density)))
+        verts, faces, normals, values = measure.marching_cubes_lewiner(
+            density, levelset, spacing=spacing)
+        verts += mins
+        # Fancy indexing: `verts[faces]` to generate a collection of triangles
+        color = cm(float(k) / len(levels))
+        mesh = Poly3DCollection(
+            verts[faces], alpha=0.2,
+            edgecolors=None,
+            facecolors=color)
+        ax.add_collection3d(mesh)
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+
+    ax.set_xlim(mins[0], maxes[0])
+    ax.set_ylim(mins[1], maxes[1])
+    ax.set_zlim(mins[2], maxes[2])
+
+    plt.tight_layout()
+    plt.show()
+
+def do_analysis_of_saved_runs(save_dir="test_runs.pt"):
+    keep_frac = 0.5
+
+    data = torch.load(save_dir)
+    score_history = data["all_scores"].numpy()
+    keep_iters = int(len(score_history)*keep_frac)
+    print("Keeping history of %d iters.", keep_iters)
+    score_history = score_history[-keep_iters:]
+    # Normalize scores
+    score_history -= logsumexp(score_history)
+    score_history = np.exp(score_history)
+        
+    R_history = data["all_Rs"][-keep_iters:]
+    R_vec_history = torch.bmm(
+        R_history,
+        torch.tensor([1., 0., 0.]).unsqueeze(0).unsqueeze(-1).repeat(R_history.shape[0], 1, 1)
+    ).squeeze().numpy()
+    t_history = data["all_ts"].numpy()[-keep_iters:]
+    S_history = data["all_Ss"].numpy()[-keep_iters:]
+    #plot_all_particles(R_history, R_vec_history,
+    #                   t_history, S_history,
+    #                   score_history)
+
+    plot_kde(R_history, R_vec_history,
+             t_history, S_history,
+             score_history)
+
+if __name__ == "__main__":
+    torch.set_default_tensor_type(torch.DoubleTensor)
+
+    #collect_test_runs("test_runs.pt")
+    do_analysis_of_saved_runs("test_runs.pt")
