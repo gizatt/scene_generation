@@ -36,8 +36,8 @@ from scene_generation.utils.torch_quaternion import (
 def make_unit_box_pts_and_normals(N):
     box = trimesh.creation.box()
     pts, faces = trimesh.sample.sample_surface_even(box, count=N)
-    pts = torch.tensor(pts.T.copy(), dtype=torch.float64)
-    normals = torch.stack([torch.tensor(box.face_normals[k].copy()) for k in faces]).T
+    pts = torch.tensor(pts.T.copy(), dtype=torch.float32)
+    normals = torch.stack([torch.tensor(box.face_normals[k].copy(), dtype=torch.float32) for k in faces]).T
     return pts, normals
 
 class ParticleFilterIcp_Particles():
@@ -115,8 +115,8 @@ class ParticleFilterIcp():
     def __init__(self, model_pts, model_normals,
                  num_particles = 10,
                  random_walk_process_prob = 0.25,
-                 shape_prior_mean = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float64),
-                 shape_prior_shape = torch.tensor([2., 2., 2.], dtype=torch.float64),# Bigger is wider
+                 shape_prior_mean = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32),
+                 shape_prior_shape = torch.tensor([2., 2., 2.], dtype=torch.float32),# Bigger is wider
                  vis=None): 
         assert len(model_pts.shape) == 2 and model_pts.shape[0] == 3, model_pts.shape
         assert model_pts.shape == model_normals.shape
@@ -128,9 +128,9 @@ class ParticleFilterIcp():
         self.vis = vis
 
         # TODO make these optional args?
-        self.random_walk_shape_step_var = 0.2
-        self.random_walk_trans_step_var = 0.05
-        self.random_walk_rot_step_var = 0.05  # Radians
+        self.random_walk_shape_step_var = 0.05
+        self.random_walk_trans_step_var = 0.025
+        self.random_walk_rot_step_var = 0.1  # Radians
         self.num_icp_steps_per_update = 10
 
         assert(shape_prior_mean.shape == (3,))
@@ -139,9 +139,9 @@ class ParticleFilterIcp():
             concentration=shape_prior_shape, rate=shape_prior_shape/shape_prior_mean)
 
         self.inlier_dist = dist.Normal(
-            torch.tensor([0.]), torch.tensor([0.1]))
+            torch.tensor([0.]), torch.tensor([0.001]))
         self.outlier_dist = dist.Normal(
-            torch.tensor([0.]), torch.tensor([10.0]))
+            torch.tensor([0.]), torch.tensor([1.0]))
 
         self.outlier_dist
         self.particles = None
@@ -246,7 +246,7 @@ class ParticleFilterIcp():
         quats_step = expmap_to_quaternion(
             (axes*angles).squeeze(-1))
         Rs_step = quat2mat(quats_step)
-        self.particles.S = torch.clamp(self.particles.S + size_step, 0.01)
+        self.particles.S = torch.clamp(self.particles.S + size_step, 0.05)
         self.particles.t = self.particles.t + trans_step
         self.particles.R = torch.bmm(Rs_step, self.particles.R)
 
@@ -304,9 +304,10 @@ class ParticleFilterIcp():
 
         # Limit the amount the scale estimate can change per step
         # to prevent divergence in the first few steps.
-        scale_estimate = torch.clamp(scale_estimate, 0.9, 1.1)
+        scale_estimate = torch.clamp(scale_estimate, 0.95, 1.05)
 
         self.particles.S = self.particles.S * torch.diagonal(scale_estimate, dim1=1, dim2=2)
+        self.particles.S = torch.clamp(self.particles.S, 0.05, 2.0)
         self.particles.R = torch.bmm(self.particles.R, R_estimate)
 
     def _do_process_update(self, scene_pts):
@@ -325,7 +326,7 @@ class ParticleFilterIcp():
         # formulated...
         log_inlier_scores = self.inlier_dist.log_prob(min_distances_per_scene_pt)
         log_outlier_scores = self.outlier_dist.log_prob(min_distances_per_scene_pt)
-        scores = torch.sum(torch.max(log_inlier_scores, log_outlier_scores), dim=1)
+        scores = torch.mean(torch.max(log_inlier_scores, log_outlier_scores), dim=1)
         # Add to it the shape score vs the prior
         # TODO(gizatt) Isn't this going to be *totally overwhelmed* by the point score?
         shape_prior_log_score = torch.sum(self.shape_prior_dist.log_prob(self.particles.S), dim=1)
@@ -401,7 +402,6 @@ def collect_test_runs(save_dir="test_runs.pt"):
             icp._do_process_update(scene_pts)
             icp.particles.draw(vis["model"], model_pts, size=0.02)
             scores = icp._score_current_particles(scene_pts)
-            print(scores)
             all_particle_history.append((scores, deepcopy(icp.particles)))
         icp._do_resampling(scene_pts)
         print("Resampling iter %02d" % k)
@@ -450,7 +450,8 @@ def plot_all_particles(R_history, R_vec_history, t_history, S_history, score_his
     ax.set_zlabel('z')
     plt.show()
 
-def plot_kde(R_history, R_vec_history, t_history, S_history, score_history):
+def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
+             mins, maxes, num_samples):
     print("Building KDE")
     kde = gaussian_kde(S_history.T,
                        weights=score_history)
@@ -463,10 +464,6 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history):
     # plt.figure()
     # plt.plot(xi, density)
     # plt.show()
-
-    mins = np.array([1.5, 0.5, 0.])
-    maxes = np.array([2.5, 1.5, 1.])
-    num_samples = np.array([30, 30, 30])
     spacing = (maxes - mins) / num_samples
     print((maxes-mins)/spacing)
     xi, yi, zi = np.mgrid[mins[0]:maxes[0]:spacing[0],
@@ -525,18 +522,23 @@ def do_analysis_of_saved_runs(save_dir="test_runs.pt"):
     ).squeeze().numpy()
     t_history = data["all_ts"].numpy()[-keep_iters:]
     S_history = data["all_Ss"].numpy()[-keep_iters:]
-    # Sort shape into ascending order
+    # Sort shape into ascending order 
     S_history = np.sort(S_history, axis=1)[:, ::-1]
     plot_all_particles(R_history, R_vec_history,
                        t_history, S_history,
                        score_history)
 
+
+    mins = np.array([1.5, 0.5, 0.])
+    maxes = np.array([2.5, 1.5, 1.])
+    num_samples = np.array([30, 30, 30])
     plot_kde(R_history, R_vec_history,
              t_history, S_history,
-             score_history)
+             score_history,
+             mins, maxes, num_samples)
 
 if __name__ == "__main__":
-    torch.set_default_tensor_type(torch.DoubleTensor)
+    torch.set_default_tensor_type(torch.FloatTensor)
 
-    #collect_test_runs("test_runs.pt")
+    collect_test_runs("test_runs.pt")
     do_analysis_of_saved_runs("test_runs.pt")

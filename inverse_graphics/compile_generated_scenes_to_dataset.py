@@ -102,7 +102,8 @@ class RawSyntheticSceneDatabase():
 
     def _add_image_set_to_db(
             self, rgb_img_path, depth_img_path, label_img_path,
-            camera_pose_dict, calibration, output_db):
+            camera_pose_dict, calibration,
+            scene_id, subscene_id, output_db):
         rgb_id = len(output_db["images"])
         depth_id = rgb_id + 1
         label_id = rgb_id + 2
@@ -117,7 +118,9 @@ class RawSyntheticSceneDatabase():
                 "pose": camera_pose_dict,
                 "calibration": calibration,
                 "height": calibration["image_height"],
-                "width": calibration["image_width"]
+                "width": calibration["image_width"],
+                "scene_id": scene_id,
+                "subscene_id": subscene_id
             })
         output_db["images"].append(
             {
@@ -130,7 +133,9 @@ class RawSyntheticSceneDatabase():
                 "pose": camera_pose_dict,
                 "calibration": calibration,
                 "height": calibration["image_height"],
-                "width": calibration["image_width"]
+                "width": calibration["image_width"],
+                "scene_id": scene_id,
+                "subscene_id": subscene_id
             })
         output_db["images"].append(
             {
@@ -143,7 +148,9 @@ class RawSyntheticSceneDatabase():
                 "pose": camera_pose_dict,
                 "calibration": calibration,
                 "height": calibration["image_height"],
-                "width": calibration["image_width"]
+                "width": calibration["image_width"],
+                "scene_id": scene_id,
+                "subscene_id": subscene_id
             })
         return rgb_id, depth_id, label_id
 
@@ -254,7 +261,7 @@ class RawSyntheticSceneDatabase():
 
 
     def _compile_entries_from_scene(
-            self, yaml_path, scene_root, category_name2id, output_db):
+            self, yaml_path, scene_root, category_name2id, scene_id, output_db):
         ''' Adds entries from the given yaml_path and scene_root to the
         output_db in-place. '''
 
@@ -267,7 +274,7 @@ class RawSyntheticSceneDatabase():
         assert num_cameras > 0
 
         # For each time step in observing this scene...
-        for entry_map in datamap["data"]:
+        for subscene_id, entry_map in enumerate(datamap["data"]):
             # For each camera observing this scene...
             assert(len(entry_map["camera_frames"].keys()) == num_cameras)
             for camera_name in camera_name_list:
@@ -284,7 +291,8 @@ class RawSyntheticSceneDatabase():
                     camera_entry_info_map['label_image_filename'])
                 rgb_image_id, depth_image_id, label_image_id = self._add_image_set_to_db(
                     rgb_img_path, depth_img_path, label_img_path,
-                    camera_pose_dict, camera_info_map["calibration"], output_db)
+                    camera_pose_dict, camera_info_map["calibration"],
+                    scene_id, subscene_id, output_db)
 
                 # Pre-load the label and depth images here so they don't have to be
                 # loaded for each annotation.
@@ -343,6 +351,7 @@ class RawSyntheticSceneDatabase():
             self, output_filename, description="XenCOCO", human_readable=False):
         # Make the base dictionary
         output_db = {
+            "scene_id_to_root": [scene_root for _, scene_root in self._scene_info_list],
             "info": {
                 "description": description,
                 "year": int(datetime.datetime.now().year),
@@ -367,10 +376,10 @@ class RawSyntheticSceneDatabase():
             category_name2id[category_info['name']] = category_info['id']
 
         # Process each sub-scene.
-        for yaml_path, scene_root in self._scene_info_list:
+        for scene_id, (yaml_path, scene_root) in enumerate(self._scene_info_list):
             if self._config.verbose:
-                print('Processing: ', scene_root)
-            self._compile_entries_from_scene(yaml_path, scene_root, category_name2id, output_db)
+                print('Processing %03d: ' % scene_id, scene_root)
+            self._compile_entries_from_scene(yaml_path, scene_root, category_name2id, scene_id, output_db)
 
         # Save it out!
         with open(output_filename, 'w') as output_json_file:
