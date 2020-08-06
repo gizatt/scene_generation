@@ -91,11 +91,34 @@ if __name__ == "__main__":
                                         dataset=dataset)
     dcn = dce.load_network_from_config("test_run_2500")
 
-    for k in range(10):
-        plt.figure(dpi=300).set_size_inches(4, 4)
-        rgb, _, mask, res = dce.evaluate_a_random_image(dcn)
-        plt.subplot(2, 1, 1)
-        plt.imshow(rgb)
-        plt.subplot(2, 1, 2)
-        plt.imshow(res)
-        plt.show()
+    fig = plt.figure(dpi=300)
+    fig.set_size_inches(4, 4)
+    rgb_a, _, mask_a, res_a = dce.evaluate_a_random_image(dcn)
+    rgb_b, _, mask_b, res_b = dce.evaluate_a_random_image(dcn)
+    ax_to_mouseover = plt.subplot(2, 2, 1)
+    plt.imshow(rgb_a)
+    plt.subplot(2, 2, 2)
+    plt.imshow(res_a)
+
+    rgb_b = np.asarray(rgb_b).astype(float) / 255.
+    ax_to_update = plt.subplot(2, 2, 3)
+    imshow_to_update = plt.imshow(rgb_b)
+    plt.subplot(2, 2, 4)
+    plt.imshow(res_b)
+
+
+    def hover(event):
+        if ax_to_mouseover.contains(event)[0]:
+            u = int(event.xdata)
+            v = int(event.ydata)
+            descriptor = res_a[v, u]
+            # Distance from second descriptor image to this one
+            distances = np.linalg.norm(res_b - descriptor, axis=-1, keepdims=True)
+            distances = np.tile(distances, (1, 1, 3))
+            im_updated = rgb_b * 0.5 + rgb_b * 0.5 * (distances < 0.1)
+            imshow_to_update.set_data(im_updated)
+        fig.canvas.draw_idle()
+
+    # add callback for mouse moves
+    fig.canvas.mpl_connect('motion_notify_event', hover)           
+    plt.show()
