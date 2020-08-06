@@ -363,6 +363,13 @@ class SyntheticCorrespondenceDataset(DenseCorrespondenceDataset):
         height = camera_config['calibration']['image_height']
         return CameraIntrinsics(cx, cy, fx, fy, width, height)
 
+    def get_random_rgbd_make_pose(self):
+        scene_name = self.get_random_scene_name()
+        time_idx = self.get_random_time_index(scene_name)
+        image_a_cam_idx = self.get_random_camera_index_at_time(scene_name, time_idx, num_distinct_indices=1)[0]
+        image_a_string_index = self.make_image_string_index(time_idx, image_a_cam_idx)
+        return self.get_rgbd_mask_pose(scene_name, image_a_string_index)
+
     def get_random_camera_index_at_time(self, scene_name, time_index, num_distinct_indices=1):
         """
         Returns a random camera index from a given scene and time
@@ -665,6 +672,10 @@ class SyntheticCorrespondenceDataset(DenseCorrespondenceDataset):
 
 
         return image_a_rgb, image_b_rgb, matches_a, matches_b, masked_non_matches_a, masked_non_matches_b, background_non_matches_a, background_non_matches_b, blind_non_matches_a, blind_non_matches_b
+
+    def return_empty_data(self, image_a_rgb, image_b_rgb):
+        empty = SyntheticCorrespondenceDataset.empty_tensor()
+        return image_a_rgb, image_b_rgb, empty, empty, empty, empty, empty, empty, empty, empty
 
     def create_non_matches(self, uv_a, uv_b_non_matches, multiplier):
         """

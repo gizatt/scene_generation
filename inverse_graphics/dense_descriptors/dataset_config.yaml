@@ -1,6 +1,7 @@
 scenes_root_path: /home/gizatt/data/generated_cardboard_envs/
 object_id_list: ["prime_box"]
 train:
-- "scene_group_200"
+- "scene_group_topdown_views_50"
+- "scene_group_topdown_views_50_2"
 test:
-- "scene_group_mini"
+- "scene_group_topdown_views_10"
