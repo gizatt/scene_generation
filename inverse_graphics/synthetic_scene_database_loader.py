@@ -377,15 +377,15 @@ class XenRCNNMapper:
         # Pytorch's dataloader is efficient on torch.Tensor due to shared-memory,
         # but not efficient on large generic data structures due to the use of pickle & mp.Queue.
         # Therefore it's important to use torch.Tensor.
-        dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype("float32"))
+        dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype("float32").copy())
         # Convert depth image to H W C (c = 1),
         if depth_image is not None:
-            dataset_dict["depth_image"] = torch.as_tensor(np.expand_dims(depth_image, 0).astype("float32"))
+            dataset_dict["depth_image"] = torch.as_tensor(np.expand_dims(depth_image, 0).astype("float32").copy())
         # Can use uint8 if it turns out to be slow some day
 
         if "camera_calibration" in dataset_dict.keys():
             dataset_dict["K"] = torch.as_tensor(dict_to_matrix(
-                dataset_dict["camera_calibration"]["camera_matrix"]).astype("float32"))
+                dataset_dict["camera_calibration"]["camera_matrix"]).astype("float32").copy())
 
         if not self.is_train:
             dataset_dict.pop("annotations", None)
@@ -431,5 +431,5 @@ class XenRCNNMapper:
         # applies image transformations to mask
         mask = np.array(polygons_to_bitmask(mask, image_size[0], image_size[1]), dtype=np.uint8)
         mask = transforms.apply_image(mask)
-        mask = torch.as_tensor(np.ascontiguousarray(mask), dtype=torch.float32) / 255.0
+        mask = torch.as_tensor(np.ascontiguousarray(mask).copy(), dtype=torch.float32) / 255.0
         return mask

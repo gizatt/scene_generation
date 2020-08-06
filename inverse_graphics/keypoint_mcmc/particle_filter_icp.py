@@ -128,10 +128,10 @@ class ParticleFilterIcp():
         self.vis = vis
 
         # TODO make these optional args?
-        self.random_walk_shape_step_var = 0.05
-        self.random_walk_trans_step_var = 0.025
-        self.random_walk_rot_step_var = 0.1  # Radians
-        self.num_icp_steps_per_update = 10
+        self.random_walk_shape_step_var = 0.005
+        self.random_walk_trans_step_var = 0.005
+        self.random_walk_rot_step_var = 0.025  # Radians
+        self.num_icp_steps_per_update = 3
 
         assert(shape_prior_mean.shape == (3,))
         assert(shape_prior_shape.shape == (3,))
@@ -451,7 +451,7 @@ def plot_all_particles(R_history, R_vec_history, t_history, S_history, score_his
     plt.show()
 
 def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
-             mins, maxes, num_samples):
+             mins, maxes, num_samples, additional_points_to_plot=None):
     print("Building KDE")
     kde = gaussian_kde(S_history.T,
                        weights=score_history)
@@ -475,7 +475,7 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    levels = [1000, 100, 10, 2]
+    levels = [100, 10, 2]
     cm = mpl.cm.get_cmap('jet')
     for k, levelset_divider in enumerate(levels):
         levelset = np.max(density)/levelset_divider
@@ -499,6 +499,14 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
     ax.set_xlim(mins[0], maxes[0])
     ax.set_ylim(mins[1], maxes[1])
     ax.set_zlim(mins[2], maxes[2])
+
+    if additional_points_to_plot is not None:
+        ax.scatter(additional_points_to_plot[:, 0],
+                   additional_points_to_plot[:, 1],
+                   additional_points_to_plot[:, 2],
+                   s=50,
+                   c="red")
+
 
     plt.tight_layout()
     plt.show()
