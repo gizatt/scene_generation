@@ -424,8 +424,8 @@ if __name__ == "__main__":
                     0., 0., np.random.uniform(0., np.pi*2.)).ToQuaternion()
                 cam_tf_base = Isometry3(quaternion=cam_quat_base,
                                         translation=cam_trans_base)
-                # Rotate that camera away from vertical by up to pi/2
-                cam_tf_base = Isometry3(quaternion=RollPitchYaw(np.random.uniform(-np.pi/2, np.pi/2), 0., 0.).ToQuaternion(),
+                # Rotate that camera away from vertical by up to pi/4
+                cam_tf_base = Isometry3(quaternion=RollPitchYaw(np.random.uniform(-np.pi/4, np.pi/4), 0., 0.).ToQuaternion(),
                                         translation=[0, 0, 0]).multiply(cam_tf_base)
                 # And then rotate again around z axis
                 cam_tf_base = Isometry3(quaternion=RollPitchYaw(0., 0., np.random.uniform(-np.pi/2, np.pi/2)).ToQuaternion(),
