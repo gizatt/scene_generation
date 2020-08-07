@@ -568,8 +568,8 @@ if __name__ == "__main__":
 
     train_config_file = "training_config.yaml"
     train_config = utils.getDictFromYamlFilename(train_config_file)
-    logging_dir = "trained_models/test_run_2500"
-    num_iterations = 2500
+    logging_dir = "trained_models/test_run_25000"
+    num_iterations = 25000
     d = 3 # the descriptor dimension
     name = "prime_box"
     train_config["training"]["logging_dir_name"] = name
