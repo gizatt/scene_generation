@@ -1,0 +1,8 @@
+params:
+  num_image_pairs: 25
+  num_matches_per_image_pair: 100
+
+networks:
+  test_run:
+    path_to_network_params: projects/scene_generation/inverse_graphics/supervised_dense_descriptors/trained_models/test_run/prime_box/001001.pth
+output_dir: analysis
