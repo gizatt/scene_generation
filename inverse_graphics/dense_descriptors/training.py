@@ -340,6 +340,8 @@ class DenseCorrespondenceTrainingForSceneGeneration():
                 loss.backward()
                 optimizer.step()
 
+                print("%04d loss: %f" % (loss_current_iteration, loss.item()))
+
                 #if i % 10 == 0:
                 # TPV.update(self._dataset, dcn, loss_current_iteration, now_training_object_id=metadata["object_id"])
 
@@ -568,8 +570,8 @@ if __name__ == "__main__":
 
     train_config_file = "training_config.yaml"
     train_config = utils.getDictFromYamlFilename(train_config_file)
-    logging_dir = "trained_models/test_run_25000"
-    num_iterations = 25000
+    logging_dir = "trained_models/test_run_single_box"
+    num_iterations = 2500
     d = 3 # the descriptor dimension
     name = "prime_box"
     train_config["training"]["logging_dir_name"] = name

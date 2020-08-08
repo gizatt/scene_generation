@@ -14,7 +14,7 @@ training:
   batch_size: 1
   # Datset config
   domain_randomize: True
-  num_matching_attempts: 10000
+  num_matching_attempts: 30000
   sample_matches_only_off_mask: True
   num_non_matches_per_match: 150
   fraction_masked_non_matches: 0.5

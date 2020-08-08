@@ -3,6 +3,8 @@ params:
   num_matches_per_image_pair: 100
 
 networks:
+  test_run_single_box:
+    path_to_network_params: projects/scene_generation/inverse_graphics/dense_descriptors/trained_models/test_run_single_box/prime_box/002501.pth
   test_run:
     path_to_network_params: projects/scene_generation/inverse_graphics/dense_descriptors/trained_models/test_run/prime_box/000501.pth
   test_run_2500:

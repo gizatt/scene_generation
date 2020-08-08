@@ -436,7 +436,7 @@ class SyntheticCorrespondenceDataset(DenseCorrespondenceDataset):
         7th, 8th rtype: 1-dimensional torch.LongTensor of shape (num_non_matches)
 
         9th, 10th return args: blind_non_matches_a, blind_non_matches_b
-        9th, 10th rtype: 1-dimensional torch.LongTensor of shape (num_non_matches)
+        9th, 10th rtype: 1-dimensional torch.LongTensor of shape( num_non_matches)
 
         11th return arg: metadata useful for plotting, and-or other flags for loss functions
         11th rtype: dict

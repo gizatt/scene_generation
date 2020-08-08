@@ -300,7 +300,7 @@ if __name__ == "__main__":
 
             parser = Parser(mbp, scene_graph)
 
-            n_objects = np.random.randint(3, 10)
+            n_objects = 1 # np.random.randint(3, 10)
             poses = []  # [quat, pos]
             object_info_dicts = []
             classes = []
