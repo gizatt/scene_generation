@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from PIL import Image
 from pyrr import Matrix44
 import moderngl
@@ -9,8 +10,9 @@ from scene_generation.utils.type_convert import (
     dict_to_matrix
 )
 import matplotlib.cm as cm
+import tqdm
 
-if __name__ == '__main__':
+def prep_program():
     ctx = moderngl.create_context(standalone=True, backend='egl')
     ctx.enable(moderngl.DEPTH_TEST)
 
@@ -46,8 +48,10 @@ if __name__ == '__main__':
     colormap_texture.use(location=0)
     prog['colorMap'] = 0
 
-    scene_info_path = "/home/gizatt/data/generated_cardboard_envs/scene_group_200/scene_000/scene_info.yaml"
-    base_data_path = "/home/gizatt/data/generated_cardboard_envs/"
+    return ctx, prog
+
+def render_descriptor_map(scene_folder, ctx, prog):
+    scene_info_path = os.path.join(scene_folder, "scene_info.yaml")
     with open(scene_info_path, 'r') as f:
         scene_info = yaml.load(f, Loader=yaml.FullLoader)
     for scene_k, scene_view in enumerate(scene_info["data"]):
@@ -101,6 +105,38 @@ if __name__ == '__main__':
                     ])
                 vao.render(mode=moderngl.TRIANGLES)
 
+            # Output next to the RGB image with a postfix (like the many other label image types)
+            filename = scene_view["camera_frames"][camera_name]["rgb_image_filename"]
+            filename = filename[:-4] + "_descriptors.png"
             image = Image.frombytes('RGBA', (width, height), fbo.read(components=4))
             image = image.transpose(Image.FLIP_TOP_BOTTOM)
-            image.save('%d_%s.png' % (scene_k, camera_name), format='png')
+            image.save(os.path.join(scene_folder, filename),
+                       format='png')
+
+if __name__ == '__main__':
+    ctx, prog = prep_program()
+
+    scene_groups_to_render = [
+        "scene_group_200",
+        "scene_group_5_types_100   ",
+        "scene_group_single_box_topdown_50",
+        "scene_group_topdown_views_10",
+        "scene_group_mini",
+        "scene_group_topdown_views_50",
+        "scene_group_topdown_views_50_2",
+    ]
+    base_data_path = "/home/gizatt/data/generated_cardboard_envs/"
+
+    print("Collecting folders...")
+    scene_folders_to_render = []
+    for scene_group_folder in scene_groups_to_render:
+        folder = os.path.join(base_data_path, scene_group_folder)
+        if os.path.isdir(folder):
+            for scene_folder in os.listdir(folder):
+                subfolder = os.path.join(folder, scene_folder)
+                scene_info_path = os.path.join(subfolder, "scene_info.yaml")
+                if os.path.exists(scene_info_path):
+                    scene_folders_to_render.append(subfolder)
+    print("Rendering descriptor maps...")
+    for subfolder in tqdm.tqdm(scene_folders_to_render):
+        render_descriptor_map(subfolder, ctx, prog)
