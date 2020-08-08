@@ -117,8 +117,8 @@ if __name__ == '__main__':
     ctx, prog = prep_program()
 
     scene_groups_to_render = [
+        "scene_group_5_types_100",
         "scene_group_200",
-        "scene_group_5_types_100   ",
         "scene_group_single_box_topdown_50",
         "scene_group_topdown_views_10",
         "scene_group_mini",
