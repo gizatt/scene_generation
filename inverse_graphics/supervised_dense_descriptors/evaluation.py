@@ -12,6 +12,7 @@ import pandas as pd
 import random
 import scipy.stats as ss
 import itertools
+from PIL import Image
 
 import torch
 from torch.autograd import Variable
@@ -75,6 +76,10 @@ class SupervisedDescriptorEvaluation(object):
             pred_descriptors
         )
 
+    def evaluate_image(self, dcn, rgb):
+        rgb_tensor = self.dataset.rgb_image_to_tensor(np.asarray(rgb).copy(), normalize=True)
+        return dcn.forward_single_image_tensor(rgb_tensor).data.cpu().numpy()
+
 if __name__ == "__main__":
     data_config_filename = "dataset_config.yaml"
     data_config = utils.getDictFromYamlFilename(data_config_filename)
@@ -87,21 +92,81 @@ if __name__ == "__main__":
                                         dataset=dataset)
     dcn = sce.load_network_from_config("test_run")
 
+    # Show a couple generated descriptor maps
+    if (0):
+        fig = plt.figure(dpi=300)
+        fig.set_size_inches(4, 4)
+        height = 4
+        for k in range(height):
+            rgb, target, predicted = sce.evaluate_a_random_image(dcn)
+            plt.subplot(height, 3, k*3 + 1)
+            if k == 0:
+                plt.title("Input")
+            plt.imshow(rgb)
+            plt.subplot(height, 3, k*3 + 2)
+            if k == 0:
+                plt.title("Target")
+            plt.imshow(target)
+            plt.subplot(height, 3, k*3 + 3)
+            if k == 0:
+                plt.title("Predicted")
+            plt.imshow(predicted)
+
+        # Descriptor maps on real images
+        plt.figure(dpi=300)
+        fig.set_size_inches(8, 2)
+        ims_dir = "/home/gizatt/data/generated_cardboard_envs/real_prime_box_images"
+        ims = os.listdir(ims_dir)
+        for k, im in enumerate(ims):
+            plt.subplot(len(ims), 2, k*2 + 1)
+            rgb = Image.open(os.path.join(ims_dir, im))
+            w, h = rgb.width, rgb.height
+            factor = 640. / w
+            rgb = rgb.resize((int(factor * w), int(factor * h)))
+            plt.imshow(rgb)
+            plt.subplot(len(ims), 2, k*2 + 2)
+            plt.imshow(sce.evaluate_image(dcn, rgb))
+
+
+    # Show a pair of side-by-side descripts + interactively highlight
     fig = plt.figure(dpi=300)
     fig.set_size_inches(4, 4)
-    height = 4
-    for k in range(height):
-        rgb, target, predicted = sce.evaluate_a_random_image(dcn)
-        plt.subplot(height, 3, k*3 + 1)
-        if k == 0:
-            plt.title("Input")
-        plt.imshow(rgb)
-        plt.subplot(height, 3, k*3 + 2)
-        if k == 0:
-            plt.title("Target")
-        plt.imshow(target)
-        plt.subplot(height, 3, k*3 + 3)
-        if k == 0:
-            plt.title("Predicted")
-        plt.imshow(predicted)
+    rgb_a, _, res_a = sce.evaluate_a_random_image(dcn)
+    rgb_b, _, res_b = sce.evaluate_a_random_image(dcn)
+    ax_to_mouseover = plt.subplot(2, 2, 1)
+    rgb_a = np.asarray(rgb_a).astype(float) / 255.
+    rgb_a_im = plt.imshow(rgb_a)
+    plt.subplot(2, 2, 2)
+    plt.imshow(res_a)
+
+    rgb_b = np.asarray(rgb_b).astype(float) / 255.
+    ax_to_update = plt.subplot(2, 2, 3)
+    rgb_b_im = plt.imshow(rgb_b)
+    plt.subplot(2, 2, 4)
+    plt.imshow(res_b)
+
+    def hover(event):
+        if ax_to_mouseover.contains(event)[0]:
+            u = int(event.xdata)
+            v = int(event.ydata)
+            descriptor = res_a[v, u]
+            # Distance from First descriptor image to this one
+            distances = np.linalg.norm(res_a - descriptor, axis=-1, keepdims=True)
+            distances = np.tile(distances, (1, 1, 3))
+            im_updated = rgb_a * 0.5 + rgb_a * 0.5 * (distances < 0.1)
+            rgb_a_im.set_data(im_updated)
+
+            # Distance from second descriptor image to this one
+            distances = np.linalg.norm(res_b - descriptor, axis=-1, keepdims=True)
+            distances = np.tile(distances, (1, 1, 3))
+            im_updated = rgb_b * 0.5 + rgb_b * 0.5 * (distances < 0.1)
+            rgb_b_im.set_data(im_updated)
+        else:
+            rgb_a_im.set_data(rgb_a)
+            rgb_b_im.set_data(rgb_b)
+        fig.canvas.draw_idle()
+
+    # add callback for mouse moves
+    fig.canvas.mpl_connect('motion_notify_event', hover)           
     plt.show()
+
