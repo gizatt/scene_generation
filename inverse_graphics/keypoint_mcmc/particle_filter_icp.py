@@ -110,22 +110,36 @@ class ParticleFilterIcp():
          'batched_scene_pts',
          'batched_model_normals',
          'min_distances_per_scene_pt',
-         'closest_model_ind_per_scene_pt']
+         'min_distances_per_model_pt',
+         'closest_model_ind_per_scene_pt',
+         'closest_scene_ind_per_model_pt']
     )
     def __init__(self, model_pts, model_normals,
+                 model_descriptors=None,
+                 descriptor_scaling=1.0,
+                 keep_ratio=0.5,
                  num_particles = 10,
+                 top_N=3,
+                 min_corresp_distance=0.05,
                  random_walk_process_prob = 0.25,
-                 shape_prior_mean = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32),
+                 shape_prior_mean = torch.tensor([0.25, 0.25, 0.25], dtype=torch.float32),
                  shape_prior_shape = torch.tensor([2., 2., 2.], dtype=torch.float32),# Bigger is wider
                  vis=None): 
         assert len(model_pts.shape) == 2 and model_pts.shape[0] == 3, model_pts.shape
         assert model_pts.shape == model_normals.shape
         self.model_pts = model_pts
         self.model_normals = model_normals
+        if model_descriptors is not None:
+            assert (len(model_descriptors.shape) == 2 and
+                    model_descriptors.shape[1] == model_pts.shape[1]), model_descriptors.shape
+        self.model_descriptors = model_descriptors
+        self.descriptor_scaling = descriptor_scaling
         self.num_particles = num_particles
         self.random_walk_process_prob = random_walk_process_prob
-
+        self.keep_ratio = keep_ratio
+        self.min_corresp_distance = min_corresp_distance
         self.vis = vis
+        self.top_N = top_N
 
         # TODO make these optional args?
         self.random_walk_shape_step_var = 0.005
@@ -155,6 +169,7 @@ class ParticleFilterIcp():
             average_translation = torch.mean(scene_pts, dim=1)
         self.particles = []
         all_S = self.shape_prior_dist.sample(sample_shape=(self.num_particles,))
+        all_S = torch.tensor([0.4, 0.15, 0.15]).repeat((self.num_particles, 1))
         all_t = dist.MultivariateNormal(
             loc=average_translation,
             covariance_matrix=torch.eye(3, 3)).sample(sample_shape=(self.num_particles,))
@@ -166,9 +181,10 @@ class ParticleFilterIcp():
         self.particles = ParticleFilterIcp_Particles(
             S=all_S, t=all_t, R=all_R)
 
-    def _compute_correspondences(self, scene_pts, p2p=False):
+    def _compute_correspondences(self, scene_pts, scene_descriptors=None, p2p=False):
         batched_model_pts = self.particles.transform_points(self.model_pts).cuda()
         batched_model_normals = self.particles.transform_normals(self.model_normals).cuda()
+
         # Batch up the scene pts as well
         batched_scene_pts = scene_pts.unsqueeze(0).repeat(self.num_particles, 1, 1).cuda()
         # Get all pairwise distances
@@ -179,44 +195,138 @@ class ParticleFilterIcp():
         expanded_model_normals = batched_model_normals.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts).cuda()
         expanded_scene_pts = batched_scene_pts.unsqueeze(-2).repeat(1, 1, num_model_pts, 1).cuda()
 
-        # Pure L2 distances
+        # Geometric scene point distances
         if p2p:
+            # Point to plane            
             pairwise_distances = torch.abs(
                 torch.sum((expanded_model_pts - expanded_scene_pts)*expanded_model_normals,
                 dim=1))
         else:
+            # Pure L2 distances
             pairwise_distances = torch.norm(expanded_model_pts - expanded_scene_pts, p=2, dim=1)
-        # Point to plane distances
+
+        # Plus descriptor distances, if they're being done
+        if scene_descriptors is not None:
+            assert scene_descriptors.shape[0] == self.model_descriptors.shape[0]
+            batched_model_descriptors = self.model_descriptors.unsqueeze(0).repeat(self.num_particles, 1, 1).cuda()
+            batched_scene_descriptors = scene_descriptors.unsqueeze(0).repeat(self.num_particles, 1, 1).cuda()
+            expanded_model_descriptors = batched_model_descriptors.unsqueeze(-1).repeat(1, 1, 1, num_scene_pts).cuda()
+            expanded_scene_descriptors = batched_scene_descriptors.unsqueeze(-2).repeat(1, 1, num_model_pts, 1).cuda()
+            pairwise_distances += torch.norm(expanded_model_descriptors - expanded_scene_descriptors, p=2, dim=1)*self.descriptor_scaling
+
         # Get min per scene point
-        min_distances_per_scene_pt, inds = torch.min(pairwise_distances, dim=-2)
-        
+        if self.top_N == 1:
+            # Faster, I'm guessing?
+            min_distances_per_scene_pt, inds_per_scene_pt = torch.min(pairwise_distances, dim=-2)
+            min_distances_per_scene_pt = min_distances_per_scene_pt.unsqueeze(1)
+            inds_per_scene_pt = inds_per_scene_pt.unsqueeze(1)
+            min_distances_per_model_pt, inds_per_model_pt = torch.min(pairwise_distances, dim=-1)
+            min_distances_per_model_pt = min_distances_per_model_pt.unsqueeze(1)
+            inds_per_model_pt = inds_per_model_pt.unsqueeze(1)
+        else:
+            min_distances_per_scene_pt, inds_per_scene_pt = torch.sort(pairwise_distances, dim=-2)
+            min_distances_per_scene_pt = min_distances_per_scene_pt[:, :self.top_N, :]
+            inds_per_scene_pt = inds_per_scene_pt[:, :self.top_N, :]
+            min_distances_per_model_pt, inds_per_model_pt = torch.sort(pairwise_distances, dim=-1)
+            min_distances_per_model_pt = min_distances_per_model_pt[:, :, :self.top_N].permute((0, 2, 1))
+            inds_per_model_pt = inds_per_model_pt[:, :, :self.top_N].permute((0, 2, 1))
+
         return self.p2p_corresp_info_struct(
             batched_model_pts=batched_model_pts.cpu(),
             batched_scene_pts=batched_scene_pts.cpu(),
             batched_model_normals=batched_model_normals.cpu(),
             min_distances_per_scene_pt=min_distances_per_scene_pt.cpu(),
-            closest_model_ind_per_scene_pt=inds.cpu()
+            min_distances_per_model_pt=min_distances_per_model_pt.cpu(),
+            closest_model_ind_per_scene_pt=inds_per_scene_pt.cpu(),
+            closest_scene_ind_per_model_pt=inds_per_model_pt.cpu()
         )
 
     def get_corresponded_model_pts_in_world(self, p2p_corresp_info):
         # Optional ICP-step-specific post-processing on the p2p corresp info
         # struct.
-        corresponded_model_pts = []
-        corresponded_model_normals = []
+        all_corresponded_model_pts = []
         for k in range(self.num_particles):
-            corresponded_model_pts.append(
-                torch.index_select(
-                    p2p_corresp_info.batched_model_pts[k, :],
-                    dim=-1,
-                    index=p2p_corresp_info.closest_model_ind_per_scene_pt[k, :]))
-            corresponded_model_normals.append(
-                torch.index_select(
-                    p2p_corresp_info.batched_model_normals[k, :],
-                    dim=-1,
-                    index=p2p_corresp_info.closest_model_ind_per_scene_pt[k, :]))
-        corresponded_model_pts = torch.stack(corresponded_model_pts, dim=0)
-        corresponded_model_normals = torch.stack(corresponded_model_normals, dim=0)
-        return corresponded_model_pts, corresponded_model_normals
+            corresponded_model_pts = []
+            for rank in range(self.top_N):
+                corresponded_model_pts.append(
+                    torch.index_select(
+                        p2p_corresp_info.batched_model_pts[k, :],
+                        dim=-1,
+                        index=p2p_corresp_info.closest_model_ind_per_scene_pt[k, rank, :]))
+            all_corresponded_model_pts.append(torch.stack(corresponded_model_pts, dim=0))
+
+        return (p2p_corresp_info.batched_scene_pts.unsqueeze(1).repeat((1, self.top_N, 1, 1)),
+                torch.stack(all_corresponded_model_pts, dim=0))
+
+    def get_corresponded_scene_pts_in_world(self, p2p_corresp_info):
+        # Optional ICP-step-specific post-processing on the p2p corresp info
+        # struct.
+        all_corresponded_scene_pts = []
+        for k in range(self.num_particles):
+            corresponded_scene_pts = []
+            for rank in range(self.top_N):
+                corresponded_scene_pts.append(
+                    torch.index_select(
+                        p2p_corresp_info.batched_scene_pts[k, :],
+                        dim=-1,
+                        index=p2p_corresp_info.closest_scene_ind_per_model_pt[k, rank, :]))
+            all_corresponded_scene_pts.append(torch.stack(corresponded_scene_pts, dim=0))
+        return (torch.stack(all_corresponded_scene_pts, dim=0),
+                p2p_corresp_info.batched_model_pts.unsqueeze(1).repeat((1, self.top_N, 1, 1)))
+
+    def get_full_correspondence_set(self, p2p_corresp_info):
+        # [n_particles, N_closest_points, 3, N_scene_pts]
+        corresponded_scene_pts_s2m, corresponded_model_pts_s2m = \
+            self.get_corresponded_model_pts_in_world(p2p_corresp_info)
+        # [n_particles, N_closest_points, 3, N_model_pts]
+        corresponded_scene_pts_m2s, corresponded_model_pts_m2s = \
+            self.get_corresponded_scene_pts_in_world(p2p_corresp_info)
+        corresponded_scene_pts = torch.cat([corresponded_scene_pts_s2m, corresponded_scene_pts_m2s], dim=-1)
+        corresponded_model_pts = torch.cat([corresponded_model_pts_s2m, corresponded_model_pts_m2s], dim=-1)
+
+        # Use distances to discard points, taking mean over the top_N
+        s2m_dists = torch.mean(p2p_corresp_info.min_distances_per_scene_pt, dim=1)
+        m2s_dists = torch.mean(p2p_corresp_info.min_distances_per_model_pt, dim=1)
+
+        # Discard those that are too far, to start with
+        s2m_not_close_enough = s2m_dists >= self.min_corresp_distance
+        m2s_not_close_enough = m2s_dists >= self.min_corresp_distance
+        # But if too few, don't bother doing this step
+        n_in_range = torch.sum(~s2m_not_close_enough) + torch.sum(~m2s_not_close_enough)
+        print("In range: %d" % n_in_range)
+        if n_in_range > 20:
+            # Discard them
+            not_close_enough = torch.cat([s2m_not_close_enough, m2s_not_close_enough], dim=-1)
+            big = torch.max(s2m_dists) + torch.max(m2s_dists)
+            s2m_dists[s2m_not_close_enough] += big
+            m2s_dists[m2s_not_close_enough] += big
+            for k in range(self.num_particles):
+                corresponded_scene_pts[k, :, :, not_close_enough[k, :]] = 0.
+                corresponded_model_pts[k, :, :, not_close_enough[k, :]] = 0.
+        # Keep a ratio of points from both scene + model
+        N_s2m = int(self.keep_ratio * s2m_dists.shape[-1])
+        N_m2s = int(self.keep_ratio * m2s_dists.shape[-1])
+
+        _, keep_s2m = torch.sort(s2m_dists, dim=-1, descending=False)
+        _, keep_m2s = torch.sort(m2s_dists, dim=-1, descending=False)
+
+        keep_inds = torch.cat([
+            keep_s2m[:, :N_s2m], keep_m2s[:, :N_m2s] + s2m_dists.shape[-1]], dim=-1)
+
+        downselected_scene_pts = []
+        downselected_model_pts = []
+        for k in range(self.num_particles):
+            downselected_scene_pts.append(corresponded_scene_pts[k, :, :, keep_inds[k, :]])
+            downselected_model_pts.append(corresponded_model_pts[k, :, :, keep_inds[k, :]])
+        corresponded_scene_pts = torch.stack(downselected_scene_pts, dim=0)
+        corresponded_model_pts = torch.stack(downselected_model_pts, dim=0)
+
+        # Now we can stack them back into a more manage-able shape...
+        corresponded_model_pts = torch.cat(
+            [corresponded_model_pts[:, k, :, :] for k in range(self.top_N)], dim=-1)
+        corresponded_scene_pts = torch.cat(
+            [corresponded_scene_pts[:, k, :, :] for k in range(self.top_N)], dim=-1)
+        return corresponded_scene_pts, corresponded_model_pts
 
     def _do_random_step(self):
         # Process update: lazy mode is just random steps
@@ -250,8 +360,8 @@ class ParticleFilterIcp():
         self.particles.t = self.particles.t + trans_step
         self.particles.R = torch.bmm(Rs_step, self.particles.R)
 
-    def _do_icp_step(self, scene_pts):
-        p2p_corresp_info = self._compute_correspondences(scene_pts, p2p=False)
+    def _do_icp_step(self, scene_pts, scene_descriptors=None):
+        p2p_corresp_info = self._compute_correspondences(scene_pts, scene_descriptors=scene_descriptors, p2p=False)
         
         # Laziest, unfounded method I'll try first to get some
         # basic machinery online:
@@ -260,11 +370,8 @@ class ParticleFilterIcp():
         # then solve for a combined rotation+scale matrix
         # to align the clouds.
 
-        # Pick out vectors of the corresponding scene and model pts.
-        batched_scene_pts = p2p_corresp_info.batched_scene_pts
-        N_pts = batched_scene_pts.shape[-1]
-        corresponded_model_pts, corresponded_model_normals = \
-            self.get_corresponded_model_pts_in_world(p2p_corresp_info)
+        corresponded_scene_pts, corresponded_model_pts = self.get_full_correspondence_set(p2p_corresp_info)
+        N_pts = corresponded_scene_pts.shape[-1]
 
         if self.vis is not None:
             # Draw transformed model points
@@ -275,15 +382,16 @@ class ParticleFilterIcp():
 
             # Draw correspondence lines
             for k in range(self.num_particles):
-                verts = np.empty((3, batched_scene_pts.shape[-1]*2))
-                verts[:, 0::2] = batched_scene_pts[k, ...].reshape(3, -1)
-                verts[:, 1::2] = corresponded_model_pts[k, ...].reshape(3, -1)
-                self.vis['corresp_%02d' % k].set_object(
+                verts = np.empty((3, N_pts*2))
+                verts[:, 0::2] = corresponded_scene_pts[k, :, :].reshape(3, -1)
+                verts[:, 1::2] = corresponded_model_pts[k, :, :].reshape(3, -1)
+                self.vis['corresp_%02d' % (k)].set_object(
                     g.LineSegments(g.PointsGeometry(verts),
                                    g.LineBasicMaterial(width=0.001)))
 
-        model_centroids = torch.mean(corresponded_model_pts, dim=2)
-        scene_centroids = torch.mean(batched_scene_pts, dim=2)
+
+        model_centroids = torch.mean(corresponded_model_pts, dim=-1)
+        scene_centroids = torch.mean(corresponded_scene_pts, dim=-1)
         T_update = (scene_centroids - model_centroids)
         aligned_model_pts = corresponded_model_pts + T_update.unsqueeze(-1).repeat(1, 1, N_pts)
         self.particles.t = self.particles.t + T_update
@@ -291,11 +399,11 @@ class ParticleFilterIcp():
         # Orthogonal-but-not-orthonormal Procrustes
         # via the tandem algorithm, see 2.1
         # http://empslocal.ex.ac.uk/people/staff/reverson/uploads/Site/procrustes.pdf
-        M = torch.bmm(batched_scene_pts, aligned_model_pts.transpose(1, 2))
+        M = torch.bmm(corresponded_scene_pts, aligned_model_pts.transpose(1, 2))
         # Pre-compute part of eq (8)
         denomerator = torch.sum(aligned_model_pts ** 2, dim=2)
         scale_estimate = torch.eye(3, 3).unsqueeze(0).repeat(self.num_particles, 1, 1) #torch.diag_embed(self.particles.S)
-        for k in range(2):
+        for k in range(1):
             u, s, v = torch.svd(torch.bmm(M, scale_estimate))
             R_estimate = torch.bmm(u, v.transpose(1, 2))
             # Eq(8) update to scaling terms
@@ -304,21 +412,23 @@ class ParticleFilterIcp():
 
         # Limit the amount the scale estimate can change per step
         # to prevent divergence in the first few steps.
-        scale_estimate = torch.clamp(scale_estimate, 0.95, 1.05)
+        scale_estimate = torch.clamp(scale_estimate, 1.0, 1.0)
 
-        self.particles.S = self.particles.S * torch.diagonal(scale_estimate, dim1=1, dim2=2)
-        self.particles.S = torch.clamp(self.particles.S, 0.05, 2.0)
+        self.particles.S = self.particles. S* torch.diagonal(scale_estimate, dim1=1, dim2=2)
+        self.particles.S = torch.clamp(self.particles.S, 0.05, 1.0)
         self.particles.R = torch.bmm(self.particles.R, R_estimate)
 
-    def _do_process_update(self, scene_pts):
+    def _do_process_update(self, scene_pts, scene_descriptors=None):
         #if torch.rand(1) <= self.random_walk_process_prob:
-        self._do_random_step()
+        #self._do_random_step()
         #else:
         for k in range(self.num_icp_steps_per_update):
-            self._do_icp_step(scene_pts)
+            self._do_icp_step(scene_pts, scene_descriptors=scene_descriptors)
 
-    def _score_current_particles(self, scene_pts):
-        p2p_corresp_info = self._compute_correspondences(scene_pts, p2p=True)
+    def _score_current_particles(self, scene_pts, scene_descriptors=None):
+        # Get the distances to the nearest few points
+        p2p_corresp_info = self._compute_correspondences(scene_pts, scene_descriptors=scene_descriptors, p2p=True)
+        # Dims here are going to be [n_particles x self.top_N x n_scene_pts]
         min_distances_per_scene_pt = p2p_corresp_info.min_distances_per_scene_pt
 
         # Evaluate the actual score according to maximum likelihood under
@@ -326,15 +436,15 @@ class ParticleFilterIcp():
         # formulated...
         log_inlier_scores = self.inlier_dist.log_prob(min_distances_per_scene_pt)
         log_outlier_scores = self.outlier_dist.log_prob(min_distances_per_scene_pt)
-        scores = torch.mean(torch.max(log_inlier_scores, log_outlier_scores), dim=1)
+        scores = torch.mean(torch.max(log_inlier_scores, log_outlier_scores), dim=(1, 2))
         # Add to it the shape score vs the prior
         # TODO(gizatt) Isn't this going to be *totally overwhelmed* by the point score?
         shape_prior_log_score = torch.sum(self.shape_prior_dist.log_prob(self.particles.S), dim=1)
         scores = scores + shape_prior_log_score
         return scores
 
-    def _do_resampling(self, scene_pts):
-        scores = self._score_current_particles(scene_pts)
+    def _do_resampling(self, scene_pts, scene_descriptors=None):
+        scores = self._score_current_particles(scene_pts, scene_descriptors=scene_descriptors)
 
         # Resampling time!
         # Pure duplication resampling
@@ -347,7 +457,7 @@ class ParticleFilterIcp():
             R=self.particles.R[new_inds, ...].clone(),
             t=self.particles.t[new_inds, ...].clone())
         
-    def _run(self, num_outer_steps, num_inner_steps, scene_pts):
+    def _run(self, num_outer_steps, num_inner_steps, scene_pts, scene_descriptors=None):
         ''' Run the particle filter for the given number of steps. '''
         for step_j in range(num_outer_steps):
             for step_k in range(num_inner_steps):
@@ -355,11 +465,11 @@ class ParticleFilterIcp():
             self._do_resampling(scene_pts)
 
 
-    def infer(self, scene_pts, num_outer_steps, num_inner_steps):
+    def infer(self, scene_pts, num_outer_steps, num_inner_steps, scene_descriptors=None):
         ''' Initialize and run the filter on the provided scene points,
         and return the resulting particle set. '''
         self._reset_particles(scene_pts)
-        self._run(num_outer_steps, num_inner_steps, scene_pts)
+        self._run(num_outer_steps, num_inner_steps, scene_pts, scene_descriptors=scene_descriptors)
         return self.particles
 
 def collect_test_runs(save_dir="test_runs.pt"):
