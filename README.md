@@ -10,6 +10,7 @@ Mostly a project sandbox. Personal notes:
 conda create -n py27_pyro python=2.7
 conda install numpy scipy matplotlib pyyaml ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
+conda install -c open3d-admin open3d=0.9.0.0
 ```
 
 Also `tqdm`, `attrs`, `scikit-image`, and `trimesh==3.4.0`. (More recent trimesh breaks on boolean mesh stuff.)
