@@ -4,7 +4,7 @@ training:
   learning_rate_decay: 0.9
   steps_between_learning_rate_decay: 250 # decay the learning rate after this many steps
   weight_decay: 1.0e-4
-  num_iterations: 1000 # number of iterations to train for
+  num_iterations: 2000 # number of iterations to train for
   # Dataset loader config
   num_workers: 5 # num threads/workers for dataset loading
   compute_test_loss: False
@@ -43,7 +43,7 @@ dense_correspondence_network:
   backbone:
     model_class: "Resnet"         # options: {Resnet, Unet}
     # If Resnet
-    resnet_name: "Resnet34_8s"  # options: {Resnet34_8s, Resnet101_8s, etc.}
+    resnet_name: "Resnet34_8s"  # options: {Resnet34, Resnet101, etc.}
     # If Unet
     # currently no options supported
 

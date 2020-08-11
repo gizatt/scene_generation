@@ -12,6 +12,14 @@ from scene_generation.utils.type_convert import (
 import matplotlib.cm as cm
 import tqdm
 
+'''
+The descriptors generated here are, for each box, the
+euclidean distance from the point on the surface to the
+center of the face (if the box were scaled to unit size),
+divided by 1.414 (so it's 1 at the corners), passed through
+the matplotlib viridis color map.
+'''
+
 def prep_program():
     ctx = moderngl.create_context(standalone=True, backend='egl')
     ctx.enable(moderngl.DEPTH_TEST)
@@ -66,6 +74,8 @@ def render_descriptor_map(scene_folder, ctx, prog):
             verts_norms_uvs = obj.to_array().T # 9 x 36
             norms = verts_norms_uvs[3:6, :]
             verts = verts_norms_uvs[:3, :] # 3 x 36
+            # Compute the body-frame, scale-invariant local vertex coordinates
+            # on each face for computing the descriptors.
             verts_local = (verts / np.abs(verts)) * (norms == 0.0)
             verts_global = np.dot(object_tf, np.vstack([verts, np.ones((1, verts.shape[1]))]))[:3, :]
             verts_vbos.append(ctx.buffer(np.ascontiguousarray(verts_global.astype(np.float32).T)))

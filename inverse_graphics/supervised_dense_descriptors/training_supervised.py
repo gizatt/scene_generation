@@ -10,12 +10,12 @@ import subprocess
 import copy
 import yaml
 
-import tensorboard_logger
+from torch.utils.tensorboard import SummaryWriter
 
 import dense_correspondence_manipulation.utils.utils as utils
 utils.add_dense_correspondence_to_python_path()
 from dense_correspondence.network.dense_correspondence_network import DenseCorrespondenceNetwork
-from labeled_descriptors_dataset import LabeledDescriptorsDataset
+from scene_generation.inverse_graphics.supervised_dense_descriptors.labeled_descriptors_dataset import LabeledDescriptorsDataset
 
 # Import torch *after* dense correspondence so we load the same version they do
 # torch
@@ -238,21 +238,23 @@ class DenseCorrespondenceTrainingForSceneGeneration():
                 start_iter = time.time()
 
                 rgb, target_descriptor = data
+                assert(len(rgb.shape) == 4)
+                assert(len(target_descriptor.shape) == 4)
+                rgb_tensor = self.dataset.rgb_image_to_tensor(np.asarray(rgb).copy(), normalize=True)
+                # Assume batched
+                target_descriptor_tensor = torch.tensor(np.asarray(target_descriptor).astype(np.float)).permute([0, 3, 1, 2]) / 255. # Recale range to 0, 1
 
-                rgb = self.dataset.rgb_image_to_tensor(np.asarray(rgb).copy(), normalize=True)
-                descriptor = torch.tensor(np.asarray(descriptor)/255.).permute([2, 0, 1]) # Clamp range to 0, 1
-
-                rgb = Variable(rgb.cuda(), requires_grad=False)
-                target_descriptor = Variable(target_descriptor.cuda(), requires_grad=False)
+                rgb_tensor = Variable(rgb_tensor.cuda(), requires_grad=False)
+                target_descriptor_tensor = Variable(target_descriptor_tensor.cuda(), requires_grad=False)
 
                 optimizer.zero_grad()
                 self.adjust_learning_rate(optimizer, loss_current_iteration)
 
                 # run both images through the network
-                pred_descriptor = dcn.forward(rgb)
+                pred_descriptor = dcn.forward(rgb_tensor)
 
                 # get loss
-                loss = nn.MSELoss()(target_descriptor, pred_descriptor)
+                loss = nn.MSELoss()(target_descriptor_tensor, pred_descriptor)
 
                 loss.backward()
                 optimizer.step()
@@ -262,7 +264,7 @@ class DenseCorrespondenceTrainingForSceneGeneration():
 
                 elapsed = time.time() - start_iter
 
-                def update_plots(losss):
+                def update_plots():
                     """
                     Updates the tensorboard plots with current loss function information
                     :return:
@@ -271,12 +273,17 @@ class DenseCorrespondenceTrainingForSceneGeneration():
 
                     learning_rate = DenseCorrespondenceTrainingForSceneGeneration.get_learning_rate(optimizer)
                     self._logging_dict['train']['learning_rate'].append(learning_rate)
-                    self._tensorboard_logger.log_value("learning rate", learning_rate, loss_current_iteration)
+                    self._tensorboard_writer.add_scalar("learning_rate", learning_rate, loss_current_iteration)
 
                     # loss is never zero
-                    self._tensorboard_logger.log_value("train loss", loss.item(), loss_current_iteration)
+                    self._tensorboard_writer.add_scalar("train_loss", loss.item(), loss_current_iteration)
 
-                update_plots(loss)
+                    if (loss_current_iteration % 50 == 1):
+                        self._tensorboard_writer.add_images("rgb", torch.tensor(rgb), loss_current_iteration, dataformats="NHWC")
+                        self._tensorboard_writer.add_images("target", target_descriptor_tensor, loss_current_iteration, dataformats="NCHW")
+                        self._tensorboard_writer.add_images("predicted", torch.clamp(pred_descriptor, 0., 1.), loss_current_iteration, dataformats="NCHW")
+
+                update_plots()
 
                 if loss_current_iteration % save_rate == 0:
                     self.save_network(dcn, optimizer, loss_current_iteration, logging_dict=self._logging_dict)
@@ -448,7 +455,7 @@ class DenseCorrespondenceTrainingForSceneGeneration():
         # cmd = "python -m tensorboard.main"
         logging.info("setting up tensorboard_logger")
         cmd = "tensorboard --logdir=%s" %(self._tensorboard_log_dir)
-        self._tensorboard_logger = tensorboard_logger.Logger(self._tensorboard_log_dir)
+        self._tensorboard_writer = SummaryWriter(log_dir=self._tensorboard_log_dir)
         logging.info("tensorboard logger started")
 
     @staticmethod
@@ -466,7 +473,7 @@ if __name__ == "__main__":
     train_config_file = "training_config.yaml"
     with open(train_config_file, "r") as f:
             train_config = yaml.load(f)
-    logging_dir = "trained_models/test_run"
+    logging_dir = "trained_models/test_run_updated_torch"
     d = 3 # the descriptor dimension
     name = "prime_box"
     train_config["training"]["logging_dir_name"] = name

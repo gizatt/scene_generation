@@ -24,7 +24,7 @@ my synthetic datset format.
 
 class LabeledDescriptorsDataset(Dataset):
 
-    def __init__(self, config, mode="train", verbose=False, debug=False):
+    def __init__(self, config, mode="train", verbose=False, debug=False, augmentation=True):
         """
         :param config: This is for creating a dataset from a dataset config file.
 
@@ -33,6 +33,7 @@ class LabeledDescriptorsDataset(Dataset):
 
         self._verbose = verbose
         self._debug = debug
+        self._augmentation = augmentation
 
         # Parse and load in config values
         self._collect_scene_data(config)
@@ -54,13 +55,14 @@ class LabeledDescriptorsDataset(Dataset):
         rgb = np.asarray(Image.open(rgb_image_path).convert('RGB'))
         descriptor = np.asarray(Image.open(descriptor_image_path).convert('RGB'))
 
-        mask = 1. - np.all(descriptor == 0., axis=-1)
-        rgb = correspondence_augmentation.random_domain_randomize_background(rgb, mask)
+        if self._augmentation:
+            mask = 1. - np.all(descriptor == 0., axis=-1)
+            rgb = np.asarray(correspondence_augmentation.random_domain_randomize_background(rgb, mask))
 
-        # Sometimes do flipping
-        if random.random() >= 0.5:
-            rgb = np.flip(rgb, axis=[0, 1])
-            descriptor = np.flip(descriptor, axis=[0, 1])
+            # Sometimes do flipping
+            if random.random() >= 0.5:
+                rgb = np.flip(rgb, axis=[0, 1]).copy()
+                descriptor = np.flip(descriptor, axis=[0, 1]).copy()
 
         if self._debug:
             plt.figure()
@@ -70,7 +72,7 @@ class LabeledDescriptorsDataset(Dataset):
             plt.imshow(descriptor)
             plt.show()
 
-        return rgb, descriptor / 255.
+        return rgb, descriptor
 
     def __len__(self):
         return len(self._all_image_paths[self.mode])
@@ -154,9 +156,14 @@ class LabeledDescriptorsDataset(Dataset):
         :rtype:
         """
         if normalize:
-            return self._rgb_image_to_tensor_normalized(img.copy())
+            func = self._rgb_image_to_tensor_normalized
         else:
-            return self._rgb_image_to_tensor_unnormalized(img.copy())
+            func = self._rgb_image_to_tensor_unnormalized
+        if len(img.shape) == 4:
+            # torchvision ToTensor / Normalize do not like batch operations :()
+            return torch.stack([func(img[k, :, :, :].copy()) for k in range(img.shape[0])], dim=0)
+        else:
+            return func(img.copy())
 
     @property
     def config(self):

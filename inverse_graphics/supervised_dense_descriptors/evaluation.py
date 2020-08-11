@@ -2,9 +2,7 @@
 
 
 import os
-import dense_correspondence_manipulation.utils.utils as utils
 import logging
-utils.add_dense_correspondence_to_python_path()
 import matplotlib.pyplot as plt
 import cv2
 import numpy as np
@@ -14,13 +12,15 @@ import scipy.stats as ss
 import itertools
 from PIL import Image
 
+import dense_correspondence_manipulation.utils.utils as utils
+utils.add_dense_correspondence_to_python_path()
+
 import torch
 from torch.autograd import Variable
 from torchvision import transforms
 
-
 from dense_correspondence.network.dense_correspondence_network import DenseCorrespondenceNetwork
-from labeled_descriptors_dataset import LabeledDescriptorsDataset
+from scene_generation.inverse_graphics.supervised_dense_descriptors.labeled_descriptors_dataset import LabeledDescriptorsDataset
 
 ''' Vastly cut down from pytorch_dense_correspondence's evaluation.py, which
 was dataset-specific and included lots of extra functionality. '''
@@ -83,14 +83,14 @@ class SupervisedDescriptorEvaluation(object):
 if __name__ == "__main__":
     data_config_filename = "dataset_config.yaml"
     data_config = utils.getDictFromYamlFilename(data_config_filename)
-    dataset = LabeledDescriptorsDataset(data_config, debug=False)
+    dataset = LabeledDescriptorsDataset(data_config, debug=False, augmentation=False)
 
     eval_config_filename = "evaluation_config.yaml"
     eval_config = utils.getDictFromYamlFilename(eval_config_filename)
     
     sce = SupervisedDescriptorEvaluation(config=eval_config,
                                         dataset=dataset)
-    dcn = sce.load_network_from_config("test_run")
+    dcn = sce.load_network_from_config("test_run_updated_torch")
 
     # Show a couple generated descriptor maps
     if (0):
