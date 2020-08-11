@@ -11,5 +11,7 @@ networks:
     path_to_network_params: projects/scene_generation/inverse_graphics/dense_descriptors/trained_models/test_run_2500/prime_box/002501.pth
   test_run_25000:
     path_to_network_params: projects/scene_generation/inverse_graphics/dense_descriptors/trained_models/test_run_25000/prime_box/025000.pth
+  test_run_25000_but_at_3000:
+    path_to_network_params: projects/scene_generation/inverse_graphics/dense_descriptors/trained_models/test_run_25000/prime_box/003000.pth
 
 output_dir: analysis
