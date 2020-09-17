@@ -120,6 +120,7 @@ class ParticleFilterIcp():
                  keep_ratio=0.5,
                  num_particles = 10,
                  top_N=3,
+                 resample_thresh=-2,
                  min_corresp_distance=0.05,
                  random_walk_process_prob = 0.25,
                  shape_prior_mean = torch.tensor([0.25, 0.25, 0.25], dtype=torch.float32),
@@ -140,6 +141,7 @@ class ParticleFilterIcp():
         self.min_corresp_distance = min_corresp_distance
         self.vis = vis
         self.top_N = top_N
+        self.resample_thresh = resample_thresh
 
         # TODO make these optional args?
         self.random_walk_shape_step_var = 0.005
@@ -274,7 +276,7 @@ class ParticleFilterIcp():
         return (torch.stack(all_corresponded_scene_pts, dim=0),
                 p2p_corresp_info.batched_model_pts.unsqueeze(1).repeat((1, self.top_N, 1, 1)))
 
-    def get_full_correspondence_set(self, p2p_corresp_info):
+    def get_full_correspondence_set(self, p2p_corresp_info, include_model_to_scene=False):
         # [n_particles, N_closest_points, 3, N_scene_pts]
         corresponded_scene_pts_s2m, corresponded_model_pts_s2m = \
             self.get_corresponded_model_pts_in_world(p2p_corresp_info)
@@ -293,7 +295,6 @@ class ParticleFilterIcp():
         m2s_not_close_enough = m2s_dists >= self.min_corresp_distance
         # But if too few, don't bother doing this step
         n_in_range = torch.sum(~s2m_not_close_enough) + torch.sum(~m2s_not_close_enough)
-        print("In range: %d" % n_in_range)
         if n_in_range > 20:
             # Discard them
             not_close_enough = torch.cat([s2m_not_close_enough, m2s_not_close_enough], dim=-1)
@@ -305,7 +306,10 @@ class ParticleFilterIcp():
                 corresponded_model_pts[k, :, :, not_close_enough[k, :]] = 0.
         # Keep a ratio of points from both scene + model
         N_s2m = int(self.keep_ratio * s2m_dists.shape[-1])
-        N_m2s = int(self.keep_ratio * m2s_dists.shape[-1])
+        if include_model_to_scene:
+            N_m2s = int(self.keep_ratio * m2s_dists.shape[-1])
+        else:
+            N_m2s = 0
 
         _, keep_s2m = torch.sort(s2m_dists, dim=-1, descending=False)
         _, keep_m2s = torch.sort(m2s_dists, dim=-1, descending=False)
@@ -404,23 +408,26 @@ class ParticleFilterIcp():
         denomerator = torch.sum(aligned_model_pts ** 2, dim=2)
         scale_estimate = torch.eye(3, 3).unsqueeze(0).repeat(self.num_particles, 1, 1) #torch.diag_embed(self.particles.S)
         for k in range(1):
-            u, s, v = torch.svd(torch.bmm(M, scale_estimate))
-            R_estimate = torch.bmm(u, v.transpose(1, 2))
+            try:
+                u, s, v = torch.svd(torch.bmm(M, scale_estimate))
+                R_estimate = torch.bmm(u, v.transpose(1, 2))
+            except RuntimeError:
+                R_estimate = torch.eye(3, 3).unsqueeze(0).repeat(self.num_particles, 1, 1)
             # Eq(8) update to scaling terms
             numerator = torch.sum(M * R_estimate, dim=1)
             scale_estimate = torch.diag_embed(numerator / denomerator)
 
         # Limit the amount the scale estimate can change per step
         # to prevent divergence in the first few steps.
-        scale_estimate = torch.clamp(scale_estimate, 1.0, 1.0)
+        scale_estimate = torch.clamp(scale_estimate, 0.9, 1.1)
 
-        self.particles.S = self.particles. S* torch.diagonal(scale_estimate, dim1=1, dim2=2)
+        self.particles.S = self.particles.S * torch.diagonal(scale_estimate, dim1=1, dim2=2)
         self.particles.S = torch.clamp(self.particles.S, 0.05, 1.0)
         self.particles.R = torch.bmm(self.particles.R, R_estimate)
 
     def _do_process_update(self, scene_pts, scene_descriptors=None):
         #if torch.rand(1) <= self.random_walk_process_prob:
-        #self._do_random_step()
+        self._do_random_step()
         #else:
         for k in range(self.num_icp_steps_per_update):
             self._do_icp_step(scene_pts, scene_descriptors=scene_descriptors)
@@ -448,7 +455,9 @@ class ParticleFilterIcp():
 
         # Resampling time!
         # Pure duplication resampling
+        scores[~torch.isfinite(scores)] = -10000
         normalized_scores = scores - torch.logsumexp(scores, dim=0)
+        # Remove bad scores
         resample_dist = dist.Categorical(logits=normalized_scores)
         new_inds = resample_dist.sample(sample_shape=(self.num_particles,))
         # Finally, repopulate our particles using those
@@ -456,7 +465,7 @@ class ParticleFilterIcp():
             S=self.particles.S[new_inds, ...].clone(),
             R=self.particles.R[new_inds, ...].clone(),
             t=self.particles.t[new_inds, ...].clone())
-        
+
     def _run(self, num_outer_steps, num_inner_steps, scene_pts, scene_descriptors=None):
         ''' Run the particle filter for the given number of steps. '''
         for step_j in range(num_outer_steps):
@@ -562,7 +571,6 @@ def plot_all_particles(R_history, R_vec_history, t_history, S_history, score_his
 
 def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
              mins, maxes, num_samples, additional_points_to_plot=None):
-    print("Building KDE")
     kde = gaussian_kde(S_history.T,
                        weights=score_history)
     # 1D slice
@@ -575,7 +583,6 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
     # plt.plot(xi, density)
     # plt.show()
     spacing = (maxes - mins) / num_samples
-    print((maxes-mins)/spacing)
     xi, yi, zi = np.mgrid[mins[0]:maxes[0]:spacing[0],
                           mins[1]:maxes[1]:spacing[1],
                           mins[2]:maxes[2]:spacing[2]]
@@ -589,8 +596,6 @@ def plot_kde(R_history, R_vec_history, t_history, S_history, score_history,
     cm = mpl.cm.get_cmap('jet')
     for k, levelset_divider in enumerate(levels):
         levelset = np.max(density)/levelset_divider
-        print("Starting marching cubes at density %f / (out off max %f)"
-                % (levelset, np.max(density)))
         verts, faces, normals, values = measure.marching_cubes_lewiner(
             density, levelset, spacing=spacing)
         verts += mins
