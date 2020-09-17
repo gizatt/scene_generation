@@ -11,6 +11,7 @@ from scene_generation.utils.type_convert import (
 )
 import matplotlib.cm as cm
 import tqdm
+import trimesh.creation
 
 '''
 The descriptors generated here are, for each box, the
@@ -122,6 +123,64 @@ def render_descriptor_map(scene_folder, ctx, prog):
             image = image.transpose(Image.FLIP_TOP_BOTTOM)
             image.save(os.path.join(scene_folder, filename),
                        format='png')
+
+# Equivalent version that only does a single view into a scene with a single object
+def render_single_box_descriptor_image(object_tf_mat, shape, view_tf, camera_calibration_dict):
+    ctx, prog = prep_program()
+    # Set up the scene
+    verts_vbos = []
+    vert_local_vbos = []
+
+    box = trimesh.creation.box(extents=2.*shape)
+    verts = []
+    norms = []
+    for k, face in enumerate(box.faces):
+        verts.append(box.vertices[face, :])
+        norms.append(np.array([box.face_normals[k]]*len(face)))
+    verts = np.vstack(verts).T
+    norms = np.vstack(norms).T
+    
+    # Compute the body-frame, scale-invariant local vertex coordinates
+    # on each face for computing the descriptors.
+    verts_local = (verts / np.abs(verts)) * (norms == 0.0)
+    verts_global = np.dot(object_tf_mat, np.vstack([verts, np.ones((1, verts.shape[1]))]))[:3, :]
+    verts_vbos.append(ctx.buffer(np.ascontiguousarray(verts_global.astype(np.float32).T)))
+    vert_local_vbos.append(
+        ctx.buffer(np.ascontiguousarray(verts_local.astype(np.float32).T)))
+
+    height = camera_calibration_dict["image_height"]
+    width = camera_calibration_dict["image_width"]
+
+    fbo = ctx.simple_framebuffer((width, height), components=4)
+    fbo.use()
+    fbo.clear(0.0, 0.0, 0.0, 0.0)
+
+    near = 0.1
+    far = 10.0
+    orig_projection_matrix = dict_to_matrix(camera_calibration_dict["projection_matrix"])
+    aspect = float(width) / float(height)
+    fovy = 2. * np.arctan2(height,  2. * orig_projection_matrix[1, 1])
+    proj = Matrix44.perspective_projection(fovy*180./np.pi, aspect, near, far)
+    cam_origin = view_tf[:3, 3]
+    cam_forward = view_tf[:3, :3].dot(np.array([0., 0., 1.]))
+    cam_up = view_tf[:3, :3].dot(np.array([0., -1., 0.]))
+
+    look_at = Matrix44.look_at(cam_origin,
+                               cam_origin+cam_forward,
+                               cam_up)
+    prog['Mvp'].write((proj * look_at).astype(np.float32))
+
+    for vert_vbo, vert_local_vbo in zip(verts_vbos, vert_local_vbos):
+        vao = ctx.vertex_array(prog,
+            [
+                (vert_vbo, "3f", 'in_position'),
+                (vert_local_vbo, "3f", 'in_vert_local')
+            ])
+        vao.render(mode=moderngl.TRIANGLES)
+
+    image = Image.frombytes('RGBA', (width, height), fbo.read(components=4))
+    image = image.transpose(Image.FLIP_TOP_BOTTOM)
+    return np.asarray(image).astype(np.float)/255.
 
 if __name__ == '__main__':
     ctx, prog = prep_program()
