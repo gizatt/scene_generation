@@ -8,7 +8,9 @@ import cv2
 import numpy as np
 import pandas as pd
 import random
+import scipy as sp
 import scipy.stats as ss
+import sys
 import itertools
 from PIL import Image
 
@@ -93,7 +95,7 @@ if __name__ == "__main__":
     dcn = sce.load_network_from_config("test_run_updated_torch")
 
     # Show a couple generated descriptor maps
-    if (0):
+    if (1):
         fig = plt.figure(dpi=300)
         fig.set_size_inches(4, 4)
         height = 4
@@ -125,9 +127,11 @@ if __name__ == "__main__":
             rgb = rgb.resize((int(factor * w), int(factor * h)))
             plt.imshow(rgb)
             plt.subplot(len(ims), 2, k*2 + 2)
-            plt.imshow(sce.evaluate_image(dcn, rgb))
+            out = sce.evaluate_image(dcn, rgb)
+            plt.imshow(out)
+            Image.fromarray((np.clip(out, 0., 1.)*255).astype(np.uint8)).save(im + "_pred.png")
 
-
+    sys.exit(0)
     # Show a pair of side-by-side descripts + interactively highlight
     fig = plt.figure(dpi=300)
     fig.set_size_inches(4, 4)
